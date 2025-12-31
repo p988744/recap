@@ -2,7 +2,7 @@
 
 自動同步開發活動到 Jira Tempo Worklog 的 CLI 工具。
 
-從 Claude Code sessions、Outlook 行事曆等多種來源收集工作紀錄，透過 LLM 自動彙整描述，一鍵上傳到 Jira Tempo。
+從 Claude Code sessions 等多種來源收集工作紀錄，透過 LLM 自動彙整描述，一鍵上傳到 Jira Tempo。
 
 ## 功能特點
 
@@ -128,13 +128,13 @@ tempo outlook-logout
 - 工作時間
 - 對話內容摘要
 
-### Outlook 行事曆（已支援，需設定）
+### Outlook 行事曆（實驗性，需管理員授權）
 
 整合 Microsoft 365 行事曆，自動加入：
 - 會議時間
 - 請假記錄
 
-需要 Azure AD 應用程式註冊，詳見下方 [Outlook 整合設定](#outlook-整合設定)。
+⚠️ **注意**：此功能需要 Azure AD 管理員授權，大多數企業環境需要 IT 部門協助設定。詳見 [Outlook 整合設定](#outlook-整合設定)。
 
 ### Git Commits（規劃中）
 

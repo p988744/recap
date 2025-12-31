@@ -1,6 +1,6 @@
 """Tempo Sync - Sync development activity to Jira Tempo worklogs."""
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
 
 from .session_parser import WorklogHelper, ClaudeSessionParser
 from .config import Config, ProjectMapping
