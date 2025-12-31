@@ -1,8 +1,8 @@
-"""Worklog Helper - Generate Jira Tempo worklogs from Claude Code sessions."""
+"""Tempo Sync - Sync development activity to Jira Tempo worklogs."""
 
 __version__ = "0.1.0"
 
-from .worklog_helper import WorklogHelper, ClaudeSessionParser
+from .session_parser import WorklogHelper, ClaudeSessionParser
 from .config import Config, ProjectMapping
 from .tempo_api import WorklogUploader, WorklogEntry
 from .llm_helper import summarize_work, batch_summarize

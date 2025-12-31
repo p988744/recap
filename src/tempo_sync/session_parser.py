@@ -560,7 +560,7 @@ def interactive_mode():
 
 def save_pending(worklog: WeeklyWorklog, projects: list[ProjectSummary]):
     """保存待上傳的 worklog"""
-    pending_file = Path.home() / ".worklog-helper" / "pending.json"
+    pending_file = Path.home() / ".tempo-sync" / "pending.json"
     pending_file.parent.mkdir(parents=True, exist_ok=True)
 
     data = {

@@ -1,14 +1,14 @@
 [project]
-name = "worklog-helper"
+name = "tempo-sync"
 version = "0.1.0"
-description = "Generate Jira Tempo worklogs from Claude Code sessions"
+description = "Sync development activity to Jira Tempo worklogs"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
     { name = "Wei-Fan Liao" }
 ]
-keywords = ["jira", "tempo", "worklog", "claude", "cli"]
+keywords = ["jira", "tempo", "worklog", "sync", "cli"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
@@ -51,18 +51,18 @@ outlook = [
 ]
 
 [project.scripts]
-worklog = "worklog_helper.cli:app"
+tempo = "tempo_sync.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/weifanliao/worklog-helper"
-Repository = "https://github.com/weifanliao/worklog-helper"
+Homepage = "https://github.com/weifanliao/tempo-sync"
+Repository = "https://github.com/weifanliao/tempo-sync"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/worklog_helper"]
+packages = ["src/tempo_sync"]
 
 [tool.ruff]
 line-length = 100

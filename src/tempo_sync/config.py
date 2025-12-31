@@ -8,7 +8,7 @@ from dataclasses import dataclass, asdict
 from typing import Optional
 
 
-CONFIG_DIR = Path.home() / ".worklog-helper"
+CONFIG_DIR = Path.home() / ".tempo-sync"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 MAPPING_FILE = CONFIG_DIR / "project_mapping.json"
 

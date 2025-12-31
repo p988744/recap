@@ -15,7 +15,7 @@ GRAPH_API_ENDPOINT = "https://graph.microsoft.com/v1.0"
 SCOPES = ["Calendars.Read"]
 
 # Token cache path
-TOKEN_CACHE_FILE = Path.home() / ".worklog-helper" / "outlook_token_cache.json"
+TOKEN_CACHE_FILE = Path.home() / ".tempo-sync" / "outlook_token_cache.json"
 
 
 @dataclass
@@ -62,7 +62,7 @@ class OutlookClient:
         try:
             import msal
         except ImportError:
-            raise ImportError("請安裝 outlook 依賴: pip install worklog-helper[outlook]")
+            raise ImportError("請安裝 outlook 依賴: pip install tempo-sync[outlook]")
 
         self.client_id = client_id or "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
         # 使用租戶 ID 或 organizations (適用於工作/學校帳戶)
@@ -222,7 +222,7 @@ class OutlookClient:
 
         token = self.get_access_token()
         if not token:
-            raise Exception("未認證，請先執行 worklog outlook-login")
+            raise Exception("未認證，請先執行 tempo outlook-login")
 
         # 轉換日期格式
         start_dt = datetime.strptime(start_date, "%Y-%m-%d")

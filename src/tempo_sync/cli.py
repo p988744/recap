@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Worklog Helper CLI - 現代化的命令列介面
+Tempo Sync CLI - 現代化的命令列介面
 
 使用 Typer + Rich 提供美觀的互動體驗
 """
@@ -15,13 +15,13 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
-from .worklog_helper import WorklogHelper, WeeklyWorklog, ProjectSummary
+from .session_parser import WorklogHelper, WeeklyWorklog, ProjectSummary
 from .config import Config
 from .tempo_api import WorklogUploader
 
 app = typer.Typer(
-    name="worklog",
-    help="從 Claude Code session 自動生成 Jira Tempo worklog",
+    name="tempo",
+    help="同步開發活動到 Jira Tempo worklog",
     no_args_is_help=False,
 )
 console = Console()
@@ -244,8 +244,8 @@ def interactive_date_selection(helper: WorklogHelper, show_header: bool = True) 
     """互動式日期選擇"""
     if show_header:
         console.print(Panel.fit(
-            "[bold]Worklog Helper[/bold]\n"
-            "從 Claude Code Session 生成 Jira Worklog",
+            "[bold]Tempo Sync[/bold]\n"
+            "同步開發活動到 Jira Tempo",
             title="🕐",
         ))
 
@@ -319,7 +319,7 @@ def interactive_date_selection(helper: WorklogHelper, show_header: bool = True) 
 def get_outlook_status(config) -> tuple[bool, str]:
     """取得 Outlook 連接狀態"""
     if not config.outlook_enabled:
-        return False, "[dim]未啟用[/dim] [dim](worklog outlook-login)[/dim]"
+        return False, "[dim]未啟用[/dim] [dim](tempo outlook-login)[/dim]"
 
     try:
         from .outlook_helper import OutlookClient
@@ -328,9 +328,9 @@ def get_outlook_status(config) -> tuple[bool, str]:
         if user:
             return True, f"[green]✓[/green] {user}"
         else:
-            return False, "[yellow]需重新登入[/yellow] [dim](worklog outlook-login)[/dim]"
+            return False, "[yellow]需重新登入[/yellow] [dim](tempo outlook-login)[/dim]"
     except ImportError:
-        return False, "[dim]未安裝[/dim] [dim](pip install worklog-helper[outlook])[/dim]"
+        return False, "[dim]未安裝[/dim] [dim](pip install tempo-sync[outlook])[/dim]"
     except Exception:
         return False, "[yellow]需重新登入[/yellow]"
 
@@ -344,13 +344,13 @@ def display_config_status(helper: WorklogHelper):
         auth_info = "PAT" if config.auth_type == "pat" else config.jira_email
         jira_status = f"[green]✓[/green] {config.jira_url} [dim]({auth_info})[/dim]"
     else:
-        jira_status = "[red]✗ 未配置[/red] [dim](worklog setup)[/dim]"
+        jira_status = "[red]✗ 未配置[/red] [dim](tempo setup)[/dim]"
 
     # LLM 狀態
     if config.has_llm_config():
         llm_status = f"[green]✓[/green] {config.llm_provider} ({config.llm_model or '預設'})"
     else:
-        llm_status = "[dim]未配置[/dim] [dim](worklog setup-llm)[/dim]"
+        llm_status = "[dim]未配置[/dim] [dim](tempo setup-llm)[/dim]"
 
     # Outlook 狀態
     _, outlook_status = get_outlook_status(config)
@@ -363,8 +363,8 @@ def display_config_status(helper: WorklogHelper):
 def interactive_main_loop(helper: WorklogHelper):
     """主要互動循環 - 分析、調整、上傳"""
     console.print(Panel.fit(
-        "[bold]Worklog Helper[/bold]\n"
-        "從 Claude Code Session 生成 Jira Worklog",
+        "[bold]Tempo Sync[/bold]\n"
+        "同步開發活動到 Jira Tempo",
         title="🕐",
     ))
     display_config_status(helper)
@@ -554,7 +554,7 @@ def upload_entries(helper: WorklogHelper, entries: list[dict]):
     # 檢查配置
     if not helper.config.is_configured():
         console.print("\n[red]⚠️ 尚未配置 Jira 連接資訊[/red]")
-        console.print("請執行: [cyan]worklog setup[/cyan]")
+        console.print("請執行: [cyan]tempo setup[/cyan]")
         return
 
     if not helper.setup_uploader():
@@ -864,7 +864,7 @@ def outlook_login():
         from .outlook_helper import OutlookClient
     except ImportError:
         console.print("[red]請先安裝 outlook 依賴:[/red]")
-        console.print("  pip install worklog-helper[outlook]")
+        console.print("  pip install tempo-sync[outlook]")
         return
 
     console.print(Panel.fit(
@@ -976,14 +976,14 @@ def dates():
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context):
     """
-    Worklog Helper - 從 Claude Code session 自動生成 Jira Tempo worklog
+    Tempo Sync - 同步開發活動到 Jira Tempo worklog
 
     使用方式:
-      worklog              # 互動模式
-      worklog analyze -w   # 分析本週
-      worklog analyze -u   # 分析後上傳
-      worklog setup        # 配置 Jira
-      worklog dates        # 列出可用日期
+      tempo              # 互動模式
+      tempo analyze -w   # 分析本週
+      tempo analyze -u   # 分析後上傳
+      tempo setup        # 配置 Jira
+      tempo dates        # 列出可用日期
     """
     if ctx.invoked_subcommand is None:
         # 預設行為：進入互動循環
