@@ -65,6 +65,54 @@ def get_outlook_events(helper, start_date: str, end_date: str) -> dict[str, list
         return {}
 
 
+def normalize_daily_hours(entries: list[dict], daily_hours: float = 8.0) -> list[dict]:
+    """
+    將每日工時正規化為標準工時。
+
+    例如：一天有 3 個任務分別花了 2h, 3h, 1h（共 6h），
+    正規化到 8h 後變成：2.67h, 4h, 1.33h
+
+    Args:
+        entries: 要上傳的 entries 列表
+        daily_hours: 每日標準工時（預設 8 小時）
+
+    Returns:
+        正規化後的 entries 列表（新增 normalized_minutes 欄位）
+    """
+    daily_minutes = daily_hours * 60
+
+    # 按日期分組
+    by_date: dict[str, list[dict]] = {}
+    for e in entries:
+        if e.get('entry'):
+            date = e['entry'].date
+            original_minutes = e['entry'].minutes
+        else:
+            date = e['date']
+            original_minutes = e['minutes']
+
+        e['original_minutes'] = original_minutes
+
+        if date not in by_date:
+            by_date[date] = []
+        by_date[date].append(e)
+
+    # 對每天進行正規化
+    for date, day_entries in by_date.items():
+        # 計算當天總分鐘數
+        total_minutes = sum(e['original_minutes'] for e in day_entries)
+
+        if total_minutes == 0:
+            continue
+
+        # 按比例分配標準工時
+        for e in day_entries:
+            ratio = e['original_minutes'] / total_minutes
+            e['normalized_minutes'] = int(ratio * daily_minutes)
+
+    return entries
+
+
 def summarize_worklog_entries(worklog: WeeklyWorklog, helper, outlook_events: dict = None) -> dict[str, str]:
     """使用 LLM 彙整所有工作項目，返回 {(date, project_name): description}"""
     from .llm_helper import summarize_work
@@ -513,38 +561,67 @@ def select_llm_provider(helper: WorklogHelper = None):
         return config
 
 
-def display_upload_preview_entries(entries: list[dict]):
+def display_upload_preview_entries(entries: list[dict], show_normalized: bool = False):
     """顯示上傳預覽 (entries 格式)"""
     table = Table(title="📤 即將上傳的 Worklog")
 
     table.add_column("Jira Issue", style="cyan")
     table.add_column("來源", style="dim")
     table.add_column("日期", style="green")
-    table.add_column("時數", style="magenta", justify="right")
+    if show_normalized:
+        table.add_column("原始", style="dim", justify="right")
+        table.add_column("上傳", style="magenta", justify="right")
+    else:
+        table.add_column("時數", style="magenta", justify="right")
     table.add_column("描述", style="dim", max_width=40)
+
+    total_original = 0
+    total_normalized = 0
 
     for e in entries:
         if e.get('entry'):
             # Code entry
-            table.add_row(
-                e['jira_id'],
-                e['project'].project_name,
-                e['entry'].date,
-                f"{e['entry'].minutes/60:.1f}h",
-                (e['description'][:40] + "...") if len(e['description']) > 40 else e['description']
-            )
+            original_minutes = e.get('original_minutes', e['entry'].minutes)
+            upload_minutes = e.get('normalized_minutes', e['entry'].minutes)
+            date = e['entry'].date
+            source = e['project'].project_name
         else:
             # Outlook event
+            original_minutes = e.get('original_minutes', e['minutes'])
+            upload_minutes = e.get('normalized_minutes', e['minutes'])
+            date = e['date']
+            source = "📅 Outlook"
+
+        total_original += original_minutes
+        total_normalized += upload_minutes
+
+        desc = (e['description'][:40] + "...") if len(e['description']) > 40 else e['description']
+
+        if show_normalized:
             table.add_row(
                 e['jira_id'],
-                "📅 Outlook",
-                e['date'],
-                f"{e['minutes']/60:.1f}h",
-                (e['description'][:40] + "...") if len(e['description']) > 40 else e['description']
+                source,
+                date,
+                f"{original_minutes/60:.1f}h",
+                f"{upload_minutes/60:.1f}h",
+                desc
+            )
+        else:
+            table.add_row(
+                e['jira_id'],
+                source,
+                date,
+                f"{upload_minutes/60:.1f}h",
+                desc
             )
 
     console.print(table)
-    console.print(f"\n[bold]共 {len(entries)} 筆 worklog 待上傳[/bold]")
+
+    if show_normalized:
+        console.print(f"\n[bold]共 {len(entries)} 筆 worklog[/bold] "
+                      f"[dim](原始 {total_original/60:.1f}h → 上傳 {total_normalized/60:.1f}h)[/dim]")
+    else:
+        console.print(f"\n[bold]共 {len(entries)} 筆 worklog 待上傳[/bold]")
 
 
 def upload_entries(helper: WorklogHelper, entries: list[dict]):
@@ -570,11 +647,14 @@ def upload_entries(helper: WorklogHelper, entries: list[dict]):
         if e.get('entry'):
             # Code entry
             date = e['entry'].date
-            minutes = e['entry'].minutes
+            original_minutes = e['entry'].minutes
         else:
             # Outlook event
             date = e['date']
-            minutes = e['minutes']
+            original_minutes = e['minutes']
+
+        # 使用正規化後的時間（如果有的話）
+        minutes = e.get('normalized_minutes', original_minutes)
 
         worklog_entry = WorklogEntry(
             issue_key=e['jira_id'],
@@ -732,8 +812,16 @@ def interactive_upload_by_day(helper: WorklogHelper, worklog: WeeklyWorklog, sum
         console.print("[yellow]沒有任何項目被指定 Jira ID，已取消[/yellow]")
         return
 
+    # 正規化工時
+    if helper.config.normalize_hours:
+        entries_to_upload = normalize_daily_hours(
+            entries_to_upload,
+            helper.config.daily_work_hours
+        )
+        console.print(f"\n[dim]📊 工時已正規化為每日 {helper.config.daily_work_hours:.0f} 小時[/dim]")
+
     # 預覽
-    display_upload_preview_entries(entries_to_upload)
+    display_upload_preview_entries(entries_to_upload, show_normalized=helper.config.normalize_hours)
 
     if not Confirm.ask("\n確認上傳?", default=False):
         console.print("[yellow]已取消上傳[/yellow]")

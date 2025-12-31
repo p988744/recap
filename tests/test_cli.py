@@ -5,7 +5,7 @@ from unittest.mock import patch, MagicMock
 from typer.testing import CliRunner
 from datetime import datetime, timedelta
 
-from tempo_sync.cli import app, get_week_range, get_last_week_range
+from tempo_sync.cli import app, get_week_range, get_last_week_range, normalize_daily_hours
 
 
 runner = CliRunner()
@@ -174,6 +174,89 @@ class TestAnalyzeCommand:
             # Just check it ran without error, mocking is complex with typer
             # The function may output "no sessions" message
             assert result.exit_code == 0 or "找不到" in result.output or mock_instance.analyze_range.called
+
+
+class TestNormalizeDailyHours:
+    """Tests for time normalization function."""
+
+    def test_normalize_single_day(self):
+        """Test normalizing entries for a single day."""
+        entries = [
+            {'entry': MagicMock(date="2025-01-01", minutes=120), 'jira_id': 'PROJ-1'},
+            {'entry': MagicMock(date="2025-01-01", minutes=180), 'jira_id': 'PROJ-2'},
+            {'entry': MagicMock(date="2025-01-01", minutes=60), 'jira_id': 'PROJ-3'},
+        ]
+
+        result = normalize_daily_hours(entries, daily_hours=8.0)
+
+        # Total original: 360 minutes (6 hours)
+        # Should be normalized to 480 minutes (8 hours)
+        # Entry 1: 120/360 * 480 = 160
+        # Entry 2: 180/360 * 480 = 240
+        # Entry 3: 60/360 * 480 = 80
+
+        assert result[0]['normalized_minutes'] == 160
+        assert result[1]['normalized_minutes'] == 240
+        assert result[2]['normalized_minutes'] == 80
+
+        # Total normalized should be 480 (8 hours)
+        total = sum(e['normalized_minutes'] for e in result)
+        assert total == 480
+
+    def test_normalize_multiple_days(self):
+        """Test normalizing entries across multiple days."""
+        entries = [
+            {'entry': MagicMock(date="2025-01-01", minutes=120), 'jira_id': 'PROJ-1'},
+            {'entry': MagicMock(date="2025-01-01", minutes=120), 'jira_id': 'PROJ-2'},
+            {'entry': MagicMock(date="2025-01-02", minutes=180), 'jira_id': 'PROJ-3'},
+        ]
+
+        result = normalize_daily_hours(entries, daily_hours=8.0)
+
+        # Day 1: 240 min → 480 min (each entry gets 240)
+        # Day 2: 180 min → 480 min
+        assert result[0]['normalized_minutes'] == 240
+        assert result[1]['normalized_minutes'] == 240
+        assert result[2]['normalized_minutes'] == 480
+
+    def test_normalize_outlook_entries(self):
+        """Test normalizing Outlook event entries."""
+        entries = [
+            {'entry': MagicMock(date="2025-01-01", minutes=120), 'jira_id': 'PROJ-1'},
+            {'date': '2025-01-01', 'minutes': 60, 'jira_id': 'MEET-1'},  # Outlook event
+        ]
+
+        result = normalize_daily_hours(entries, daily_hours=8.0)
+
+        # Total: 180 min → 480 min
+        # Entry 1: 120/180 * 480 = 320
+        # Entry 2: 60/180 * 480 = 160
+        assert result[0]['normalized_minutes'] == 320
+        assert result[1]['normalized_minutes'] == 160
+
+    def test_normalize_preserves_original(self):
+        """Test that original minutes are preserved."""
+        entries = [
+            {'entry': MagicMock(date="2025-01-01", minutes=120), 'jira_id': 'PROJ-1'},
+        ]
+
+        result = normalize_daily_hours(entries, daily_hours=8.0)
+
+        assert result[0]['original_minutes'] == 120
+        assert result[0]['normalized_minutes'] == 480  # Single entry gets full 8 hours
+
+    def test_normalize_custom_daily_hours(self):
+        """Test normalization with custom daily hours."""
+        entries = [
+            {'entry': MagicMock(date="2025-01-01", minutes=60), 'jira_id': 'PROJ-1'},
+            {'entry': MagicMock(date="2025-01-01", minutes=60), 'jira_id': 'PROJ-2'},
+        ]
+
+        result = normalize_daily_hours(entries, daily_hours=4.0)  # 4 hour day
+
+        # Total: 120 min → 240 min (4 hours)
+        assert result[0]['normalized_minutes'] == 120
+        assert result[1]['normalized_minutes'] == 120
 
 
 class TestConfigDisplay:

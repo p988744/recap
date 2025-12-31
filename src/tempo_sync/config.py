@@ -27,6 +27,9 @@ class Config:
     llm_model: str = ""                   # 模型名稱，空則使用預設
     llm_api_key: str = ""                 # LLM API Key
     llm_base_url: str = ""                # OpenAI 相容端點 URL
+    # 工時正規化配置
+    daily_work_hours: float = 8.0         # 每日標準工時（小時）
+    normalize_hours: bool = True          # 是否將每日工時正規化為標準工時
     # Outlook 配置
     outlook_enabled: bool = False         # 是否啟用 Outlook 整合
     outlook_client_id: str = ""           # Azure AD 應用程式 ID
