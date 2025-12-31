@@ -134,6 +134,166 @@ class WeeklyWorklog:
         return sorted(summaries, key=lambda s: s.total_minutes, reverse=True)
 
 
+class GitSessionParser:
+    """解析 Git commit 歷史數據"""
+
+    def __init__(self, repo_paths: list[str] = None):
+        """
+        初始化 Git Session Parser
+
+        Args:
+            repo_paths: Git 倉庫路徑列表，如果為空則從配置讀取
+        """
+        self.repo_paths = []
+        if repo_paths:
+            self.repo_paths = [Path(p).expanduser() for p in repo_paths]
+
+    def add_repo(self, path: str):
+        """添加一個倉庫路徑"""
+        repo_path = Path(path).expanduser()
+        if repo_path.exists() and (repo_path / ".git").exists():
+            self.repo_paths.append(repo_path)
+            return True
+        return False
+
+    def get_available_dates(self) -> list[str]:
+        """獲取有 commit 的日期列表"""
+        import subprocess
+
+        dates = set()
+        for repo_path in self.repo_paths:
+            if not repo_path.exists():
+                continue
+            try:
+                result = subprocess.run(
+                    ["git", "log", "--format=%ai", "--since=90 days ago"],
+                    cwd=repo_path,
+                    capture_output=True,
+                    text=True
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.strip().split('\n'):
+                        if line:
+                            # 格式: 2025-12-31 10:30:00 +0800
+                            date_str = line.split()[0]
+                            dates.add(date_str)
+            except Exception:
+                continue
+        return sorted(dates, reverse=True)
+
+    def parse_date_range(self, start_date: str, end_date: str) -> WeeklyWorklog:
+        """解析日期範圍內的所有 commits"""
+        import subprocess
+
+        worklog = WeeklyWorklog(start_date=start_date, end_date=end_date)
+
+        for repo_path in self.repo_paths:
+            if not repo_path.exists():
+                continue
+
+            project_name = repo_path.name
+
+            try:
+                # 使用 git log 獲取指定範圍的 commits
+                # --since 和 --until 使用日期
+                result = subprocess.run(
+                    [
+                        "git", "log",
+                        f"--since={start_date} 00:00:00",
+                        f"--until={end_date} 23:59:59",
+                        "--format=%H|%ai|%s",  # hash|datetime|subject
+                        "--no-merges"
+                    ],
+                    cwd=repo_path,
+                    capture_output=True,
+                    text=True
+                )
+
+                if result.returncode != 0:
+                    continue
+
+                # 按日期分組 commits
+                by_date: dict[str, list[dict]] = defaultdict(list)
+
+                for line in result.stdout.strip().split('\n'):
+                    if not line or '|' not in line:
+                        continue
+
+                    parts = line.split('|', 2)
+                    if len(parts) < 3:
+                        continue
+
+                    commit_hash, datetime_str, subject = parts
+                    # 格式: 2025-12-31 10:30:00 +0800
+                    date_str = datetime_str.split()[0]
+                    time_str = datetime_str.split()[1]
+
+                    by_date[date_str].append({
+                        'hash': commit_hash,
+                        'datetime': datetime_str,
+                        'time': time_str,
+                        'subject': subject
+                    })
+
+                # 為每天創建 WorkSession
+                for date_str, commits in by_date.items():
+                    if not commits:
+                        continue
+
+                    # 解析時間
+                    times = []
+                    subjects = []
+                    for c in commits:
+                        try:
+                            dt = datetime.strptime(
+                                f"{date_str} {c['time']}",
+                                "%Y-%m-%d %H:%M:%S"
+                            )
+                            times.append(dt)
+                            subjects.append(c['subject'])
+                        except ValueError:
+                            continue
+
+                    if not times:
+                        continue
+
+                    start_time = min(times)
+                    end_time = max(times)
+
+                    # 估算工作時間：
+                    # - 如果只有一個 commit，預設 30 分鐘
+                    # - 如果有多個，使用時間跨度 + 30 分鐘緩衝
+                    if len(times) == 1:
+                        duration = 30
+                    else:
+                        duration = int((end_time - start_time).total_seconds() / 60)
+                        duration = max(duration, 30)  # 至少 30 分鐘
+                        duration += 30  # 加上工作緩衝時間
+
+                    worklog.sessions.append(WorkSession(
+                        project_path=str(repo_path),
+                        project_name=project_name,
+                        session_id=f"git-{date_str}-{project_name}",
+                        start_time=start_time,
+                        end_time=end_time,
+                        duration_minutes=duration,
+                        date=date_str,
+                        summary=subjects[:5],  # commit messages 作為摘要
+                        todos=subjects[:10]    # commit messages 也作為完成項目
+                    ))
+
+            except Exception as e:
+                print(f"Error parsing git repo {repo_path}: {e}")
+                continue
+
+        worklog.sessions.sort(key=lambda s: s.start_time)
+        return worklog
+
+    def parse_date(self, target_date: str) -> WeeklyWorklog:
+        """解析單一日期"""
+        return self.parse_date_range(target_date, target_date)
+
+
 class ClaudeSessionParser:
     """解析 Claude Code session 數據"""
 
@@ -287,11 +447,38 @@ class ClaudeSessionParser:
 class WorklogHelper:
     """主要的 Worklog Helper 類"""
 
-    def __init__(self):
-        self.parser = ClaudeSessionParser()
+    def __init__(self, use_git: bool = None, git_repos: list[str] = None):
+        """
+        初始化 WorklogHelper
+
+        Args:
+            use_git: 是否使用 Git 模式，None 則從配置讀取
+            git_repos: Git 倉庫路徑列表，None 則從配置讀取
+        """
         self.config = Config.load()
         self.mapping = ProjectMapping()
         self.uploader: Optional[WorklogUploader] = None
+
+        # 決定使用哪種解析器
+        use_git_mode = use_git if use_git is not None else self.config.use_git_mode
+        repo_paths = git_repos if git_repos else self.config.git_repos
+
+        if use_git_mode:
+            self.parser = GitSessionParser(repo_paths)
+            self.mode = "git"
+        else:
+            self.parser = ClaudeSessionParser()
+            self.mode = "claude"
+
+    def add_git_repo(self, path: str) -> bool:
+        """添加 Git 倉庫（僅 Git 模式有效）"""
+        if isinstance(self.parser, GitSessionParser):
+            return self.parser.add_repo(path)
+        return False
+
+    def get_available_dates(self) -> list[str]:
+        """獲取可用日期"""
+        return self.parser.get_available_dates()
 
     def list_dates(self, limit: int = 10) -> list[str]:
         """列出最近有工作記錄的日期"""

@@ -257,13 +257,15 @@ def analyze(
     from_date: Optional[str] = typer.Option(None, "--from", help="開始日期"),
     to_date: Optional[str] = typer.Option(None, "--to", help="結束日期"),
     upload: bool = typer.Option(False, "--upload", "-u", help="分析後直接進入上傳流程"),
+    git: bool = typer.Option(False, "--git", "-g", help="使用 Git 模式（從 git commit 分析）"),
+    repo: Optional[list[str]] = typer.Option(None, "--repo", "-r", help="指定 Git 倉庫路徑（可多次使用）"),
 ):
     """
-    分析 Claude Code session 並生成工作報告
+    分析工作記錄並生成報告
 
-    預設進入互動模式，可以選擇時間範圍
+    預設從 Claude Code session 分析，使用 --git 可從 git commit 分析
     """
-    helper = WorklogHelper()
+    helper = WorklogHelper(use_git=git, git_repos=repo)
 
     # 決定時間範圍
     if week:
@@ -291,7 +293,8 @@ def analyze(
         TextColumn("[progress.description]{task.description}"),
         console=console,
     ) as progress:
-        progress.add_task("正在分析 Claude Code sessions...", total=None)
+        mode_text = "Git commits" if helper.mode == "git" else "Claude Code sessions"
+        progress.add_task(f"正在分析 {mode_text}...", total=None)
         worklog = helper.analyze_range(start, end)
 
     if not worklog.sessions:
@@ -407,6 +410,13 @@ def display_config_status(helper: WorklogHelper):
     """顯示配置狀態"""
     config = helper.config
 
+    # 模式狀態
+    if helper.mode == "git":
+        repos_count = len(config.git_repos)
+        mode_status = f"[green]✓[/green] Git 模式 ({repos_count} 個倉庫)"
+    else:
+        mode_status = "[green]✓[/green] Claude Code 模式"
+
     # Jira 狀態
     if config.is_configured():
         auth_info = "PAT" if config.auth_type == "pat" else config.jira_email
@@ -423,6 +433,7 @@ def display_config_status(helper: WorklogHelper):
     # Outlook 狀態
     _, outlook_status = get_outlook_status(config)
 
+    console.print(f"  來源:    {mode_status}")
     console.print(f"  Jira:    {jira_status}")
     console.print(f"  LLM:     {llm_status}")
     console.print(f"  Outlook: {outlook_status}")
@@ -449,7 +460,8 @@ def interactive_main_loop(helper: WorklogHelper):
             TextColumn("[progress.description]{task.description}"),
             console=console,
         ) as progress:
-            progress.add_task("正在分析 Claude Code sessions...", total=None)
+            mode_text = "Git commits" if helper.mode == "git" else "Claude Code sessions"
+            progress.add_task(f"正在分析 {mode_text}...", total=None)
             worklog = helper.analyze_range(start, end)
 
         # 取得 Outlook 事件
@@ -1061,11 +1073,73 @@ def outlook_logout():
     console.print("[green]✓ 已登出並停用 Outlook 整合[/green]")
 
 
+@app.command("setup-git")
+def setup_git():
+    """配置 Git 模式（無需 Claude Code）"""
+    console.print(Panel.fit(
+        "[bold]Git 模式配置[/bold]\n"
+        "從 Git commit 記錄生成工時報告",
+        title="🔧",
+    ))
+
+    config = Config.load()
+
+    console.print("\n[dim]Git 模式可讓沒有 Claude Code 的用戶也能使用此工具[/dim]")
+    console.print("[dim]將從 Git commit 歷史記錄來估算工作時間[/dim]\n")
+
+    # 是否啟用
+    if Confirm.ask("啟用 Git 模式作為預設?", default=config.use_git_mode):
+        config.use_git_mode = True
+    else:
+        config.use_git_mode = False
+
+    # 設定倉庫路徑
+    console.print("\n[bold]設定 Git 倉庫路徑[/bold]")
+    console.print("[dim]輸入要追蹤的 Git 倉庫路徑，每行一個，空白行結束[/dim]")
+
+    if config.git_repos:
+        console.print(f"\n[dim]目前已設定 {len(config.git_repos)} 個倉庫:[/dim]")
+        for repo in config.git_repos:
+            console.print(f"  - {repo}")
+        if not Confirm.ask("\n要重新設定嗎?", default=False):
+            config.save()
+            console.print("\n[green]✓ 配置已保存[/green]")
+            return
+
+    repos = []
+    console.print("\n輸入倉庫路徑 (空白結束):")
+    while True:
+        path = Prompt.ask("  倉庫路徑", default="")
+        if not path:
+            break
+
+        from pathlib import Path
+        repo_path = Path(path).expanduser()
+        if repo_path.exists() and (repo_path / ".git").exists():
+            repos.append(str(repo_path))
+            console.print(f"    [green]✓ 已添加: {repo_path.name}[/green]")
+        else:
+            console.print(f"    [red]✗ 無效的 Git 倉庫: {path}[/red]")
+
+    config.git_repos = repos
+    config.save()
+
+    console.print(f"\n[green]✓ 已設定 {len(repos)} 個 Git 倉庫[/green]")
+
+    if config.use_git_mode:
+        console.print("[green]✓ Git 模式已啟用為預設[/green]")
+    else:
+        console.print("[dim]使用 --git 選項來啟用 Git 模式分析[/dim]")
+
+
 @app.command()
-def dates():
+def dates(
+    git: bool = typer.Option(False, "--git", "-g", help="使用 Git 模式"),
+    repo: Optional[list[str]] = typer.Option(None, "--repo", "-r", help="指定 Git 倉庫路徑"),
+):
     """列出最近有工作記錄的日期"""
-    helper = WorklogHelper()
-    available_dates = helper.list_dates(14)
+    helper = WorklogHelper(use_git=git, git_repos=repo)
+    available_dates = helper.get_available_dates()[:14]
 
     if not available_dates:
         console.print("[yellow]找不到任何 session 數據[/yellow]")

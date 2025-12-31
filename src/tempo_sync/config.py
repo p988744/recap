@@ -4,7 +4,7 @@
 
 import json
 from pathlib import Path
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from typing import Optional
 
 
@@ -30,6 +30,9 @@ class Config:
     # 工時正規化配置
     daily_work_hours: float = 8.0         # 每日標準工時（小時）
     normalize_hours: bool = True          # 是否將每日工時正規化為標準工時
+    # Git 模式配置
+    use_git_mode: bool = False            # 是否使用 Git 模式（無需 Claude Code）
+    git_repos: list[str] = field(default_factory=list)  # Git 倉庫路徑列表
     # Outlook 配置
     outlook_enabled: bool = False         # 是否啟用 Outlook 整合
     outlook_client_id: str = ""           # Azure AD 應用程式 ID

@@ -10,6 +10,8 @@ from tempo_sync.session_parser import (
     ProjectSummary,
     WeeklyWorklog,
     ClaudeSessionParser,
+    GitSessionParser,
+    WorklogHelper,
 )
 
 
@@ -306,3 +308,151 @@ class TestClaudeSessionParser:
 
         assert isinstance(dates, list)
         assert len(dates) == 0
+
+
+class TestGitSessionParser:
+    """Tests for GitSessionParser class."""
+
+    def test_init_empty(self):
+        """Test initialization with no repos."""
+        parser = GitSessionParser()
+        assert parser.repo_paths == []
+
+    def test_init_with_repos(self, tmp_path):
+        """Test initialization with repo paths."""
+        repo1 = tmp_path / "repo1"
+        repo1.mkdir()
+        (repo1 / ".git").mkdir()
+
+        parser = GitSessionParser([str(repo1)])
+        assert len(parser.repo_paths) == 1
+
+    def test_add_repo_valid(self, tmp_path):
+        """Test adding a valid git repository."""
+        repo = tmp_path / "my-repo"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+
+        parser = GitSessionParser()
+        result = parser.add_repo(str(repo))
+
+        assert result is True
+        assert len(parser.repo_paths) == 1
+
+    def test_add_repo_invalid(self, tmp_path):
+        """Test adding an invalid path (not a git repo)."""
+        not_repo = tmp_path / "not-a-repo"
+        not_repo.mkdir()
+
+        parser = GitSessionParser()
+        result = parser.add_repo(str(not_repo))
+
+        assert result is False
+        assert len(parser.repo_paths) == 0
+
+    def test_add_repo_nonexistent(self, tmp_path):
+        """Test adding a nonexistent path."""
+        parser = GitSessionParser()
+        result = parser.add_repo(str(tmp_path / "nonexistent"))
+
+        assert result is False
+        assert len(parser.repo_paths) == 0
+
+    def test_parse_date_range_empty(self, tmp_path):
+        """Test parsing when no repos are configured."""
+        parser = GitSessionParser()
+        worklog = parser.parse_date_range("2025-01-01", "2025-01-07")
+
+        assert worklog.sessions == []
+        assert worklog.start_date == "2025-01-01"
+        assert worklog.end_date == "2025-01-07"
+
+    def test_parse_date_single_day(self, tmp_path):
+        """Test parse_date convenience method."""
+        parser = GitSessionParser()
+        worklog = parser.parse_date("2025-01-01")
+
+        assert worklog.start_date == "2025-01-01"
+        assert worklog.end_date == "2025-01-01"
+
+
+class TestWorklogHelperModes:
+    """Tests for WorklogHelper git/claude mode switching."""
+
+    def test_default_claude_mode(self):
+        """Test default mode is Claude."""
+        with patch("tempo_sync.session_parser.Config.load") as mock_load:
+            mock_config = MagicMock()
+            mock_config.use_git_mode = False
+            mock_config.git_repos = []
+            mock_load.return_value = mock_config
+
+            helper = WorklogHelper()
+            assert helper.mode == "claude"
+            assert isinstance(helper.parser, ClaudeSessionParser)
+
+    def test_git_mode_from_config(self):
+        """Test git mode from config."""
+        with patch("tempo_sync.session_parser.Config.load") as mock_load:
+            mock_config = MagicMock()
+            mock_config.use_git_mode = True
+            mock_config.git_repos = []
+            mock_load.return_value = mock_config
+
+            helper = WorklogHelper()
+            assert helper.mode == "git"
+            assert isinstance(helper.parser, GitSessionParser)
+
+    def test_git_mode_override(self):
+        """Test git mode can be overridden."""
+        with patch("tempo_sync.session_parser.Config.load") as mock_load:
+            mock_config = MagicMock()
+            mock_config.use_git_mode = False
+            mock_config.git_repos = []
+            mock_load.return_value = mock_config
+
+            helper = WorklogHelper(use_git=True)
+            assert helper.mode == "git"
+
+    def test_claude_mode_override(self):
+        """Test claude mode can be overridden."""
+        with patch("tempo_sync.session_parser.Config.load") as mock_load:
+            mock_config = MagicMock()
+            mock_config.use_git_mode = True
+            mock_config.git_repos = []
+            mock_load.return_value = mock_config
+
+            helper = WorklogHelper(use_git=False)
+            assert helper.mode == "claude"
+
+    def test_add_git_repo_in_git_mode(self, tmp_path):
+        """Test adding repo in git mode."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+
+        with patch("tempo_sync.session_parser.Config.load") as mock_load:
+            mock_config = MagicMock()
+            mock_config.use_git_mode = True
+            mock_config.git_repos = []
+            mock_load.return_value = mock_config
+
+            helper = WorklogHelper()
+            result = helper.add_git_repo(str(repo))
+            assert result is True
+
+    def test_add_git_repo_in_claude_mode(self, tmp_path):
+        """Test adding repo in claude mode does nothing."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+
+        with patch("tempo_sync.session_parser.Config.load") as mock_load:
+            mock_config = MagicMock()
+            mock_config.use_git_mode = False
+            mock_config.git_repos = []
+            mock_load.return_value = mock_config
+
+            helper = WorklogHelper()
+            result = helper.add_git_repo(str(repo))
+            assert result is False
