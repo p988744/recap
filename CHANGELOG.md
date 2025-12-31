@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2025-12-31
+
+### Added
+
+- **工時正規化** - 自動將每日工時正規化為標準 8 小時
+- **30 分鐘單位** - 工時以 30 分鐘為單位四捨五入，產生更整齊的工時紀錄
+- **比例分配** - 多任務時依實際花費時間比例分配標準工時
+
+### Changed
+
+- 上傳預覽現在顯示「原始時間」和「正規化時間」兩欄
+
 ## [1.0.0] - 2025-12-31
 
 ### Added
