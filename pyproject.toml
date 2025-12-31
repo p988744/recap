@@ -1,6 +1,6 @@
 [project]
 name = "tempo-sync"
-version = "1.0.1"
+version = "1.0.2"
 description = "Sync development activity to Jira Tempo worklogs"
 readme = "README.md"
 requires-python = ">=3.10"

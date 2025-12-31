@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2025-12-31
+
+### Added
+
+- **Git 模式** - 無需 Claude Code 也能使用！從 Git commit 歷史估算工作時間
+- **Git 倉庫管理指令**
+  - `tempo git-add` - 快速添加多個倉庫
+  - `tempo git-remove` - 移除倉庫（支援名稱或路徑）
+  - `tempo git-list` - 列出已設定的倉庫及狀態
+- **模式切換** - `tempo setup-git --enable/--disable` 快速切換預設模式
+- **臨時模式覆蓋** - `--git` / `--no-git` 選項臨時切換模式
+
+### Changed
+
+- 更新 README 為完整使用手冊
+- `analyze` 和 `dates` 命令現在會讀取 config 中的 `use_git_mode` 設定
+
+### Fixed
+
+- 移除 Outlook 整合中的硬編碼 Client ID（安全性修復）
+
 ## [1.0.1] - 2025-12-31
 
 ### Added

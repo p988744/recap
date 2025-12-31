@@ -64,7 +64,9 @@ class OutlookClient:
         except ImportError:
             raise ImportError("請安裝 outlook 依賴: pip install tempo-sync[outlook]")
 
-        self.client_id = client_id or "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
+        if not client_id:
+            raise ValueError("client_id is required. Please run 'tempo outlook-login' to configure.")
+        self.client_id = client_id
         # 使用租戶 ID 或 organizations (適用於工作/學校帳戶)
         if tenant_id:
             self.authority = f"https://login.microsoftonline.com/{tenant_id}"
