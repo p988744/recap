@@ -257,7 +257,7 @@ def analyze(
     from_date: Optional[str] = typer.Option(None, "--from", help="開始日期"),
     to_date: Optional[str] = typer.Option(None, "--to", help="結束日期"),
     upload: bool = typer.Option(False, "--upload", "-u", help="分析後直接進入上傳流程"),
-    git: bool = typer.Option(False, "--git", "-g", help="使用 Git 模式（從 git commit 分析）"),
+    git: Optional[bool] = typer.Option(None, "--git/--no-git", "-g", help="使用 Git 模式（從 git commit 分析）"),
     repo: Optional[list[str]] = typer.Option(None, "--repo", "-r", help="指定 Git 倉庫路徑（可多次使用）"),
 ):
     """
@@ -1074,15 +1074,29 @@ def outlook_logout():
 
 
 @app.command("setup-git")
-def setup_git():
+def setup_git(
+    enable: Optional[bool] = typer.Option(None, "--enable/--disable", help="啟用或停用 Git 模式"),
+):
     """配置 Git 模式（無需 Claude Code）"""
+    config = Config.load()
+
+    # 如果有 --enable 或 --disable 選項，直接設定
+    if enable is not None:
+        config.use_git_mode = enable
+        config.save()
+        if enable:
+            console.print("[green]✓ Git 模式已啟用為預設[/green]")
+            if not config.git_repos:
+                console.print("[yellow]⚠ 尚未設定任何倉庫，請使用 tempo git-add 添加[/yellow]")
+        else:
+            console.print("[green]✓ Git 模式已停用，將使用 Claude Code 模式[/green]")
+        return
+
     console.print(Panel.fit(
         "[bold]Git 模式配置[/bold]\n"
         "從 Git commit 記錄生成工時報告",
         title="🔧",
     ))
-
-    config = Config.load()
 
     console.print("\n[dim]Git 模式可讓沒有 Claude Code 的用戶也能使用此工具[/dim]")
     console.print("[dim]將從 Git commit 歷史記錄來估算工作時間[/dim]\n")
@@ -1132,9 +1146,130 @@ def setup_git():
         console.print("[dim]使用 --git 選項來啟用 Git 模式分析[/dim]")
 
 
+@app.command("git-add")
+def git_add(
+    paths: list[str] = typer.Argument(..., help="Git 倉庫路徑（可多個）"),
+):
+    """快速添加 Git 倉庫到追蹤列表"""
+    from pathlib import Path
+
+    config = Config.load()
+    added = 0
+
+    for path in paths:
+        repo_path = Path(path).expanduser().resolve()
+        if not repo_path.exists():
+            console.print(f"[red]✗ 路徑不存在: {path}[/red]")
+            continue
+        if not (repo_path / ".git").exists():
+            console.print(f"[red]✗ 不是 Git 倉庫: {path}[/red]")
+            continue
+
+        repo_str = str(repo_path)
+        if repo_str in config.git_repos:
+            console.print(f"[yellow]⚠ 已存在: {repo_path.name}[/yellow]")
+            continue
+
+        config.git_repos.append(repo_str)
+        console.print(f"[green]✓ 已添加: {repo_path.name}[/green]")
+        added += 1
+
+    if added > 0:
+        config.save()
+        console.print(f"\n[green]共添加 {added} 個倉庫，目前共 {len(config.git_repos)} 個[/green]")
+
+        if not config.use_git_mode:
+            console.print("[dim]提示: 使用 tempo setup-git --enable 啟用 Git 模式為預設[/dim]")
+
+
+@app.command("git-remove")
+def git_remove(
+    paths: list[str] = typer.Argument(None, help="要移除的倉庫路徑或名稱"),
+    all_repos: bool = typer.Option(False, "--all", "-a", help="移除所有倉庫"),
+):
+    """從追蹤列表移除 Git 倉庫"""
+    from pathlib import Path
+
+    config = Config.load()
+
+    if all_repos:
+        count = len(config.git_repos)
+        config.git_repos = []
+        config.save()
+        console.print(f"[green]✓ 已移除所有 {count} 個倉庫[/green]")
+        return
+
+    if not paths:
+        console.print("[yellow]請指定要移除的倉庫路徑，或使用 --all 移除全部[/yellow]")
+        return
+
+    removed = 0
+    for path in paths:
+        # 嘗試完整路徑匹配
+        repo_path = Path(path).expanduser().resolve()
+        repo_str = str(repo_path)
+
+        if repo_str in config.git_repos:
+            config.git_repos.remove(repo_str)
+            console.print(f"[green]✓ 已移除: {repo_path.name}[/green]")
+            removed += 1
+            continue
+
+        # 嘗試名稱匹配
+        found = None
+        for existing in config.git_repos:
+            if Path(existing).name == path or existing.endswith(f"/{path}"):
+                found = existing
+                break
+
+        if found:
+            config.git_repos.remove(found)
+            console.print(f"[green]✓ 已移除: {Path(found).name}[/green]")
+            removed += 1
+        else:
+            console.print(f"[yellow]⚠ 找不到: {path}[/yellow]")
+
+    if removed > 0:
+        config.save()
+        console.print(f"\n[green]共移除 {removed} 個倉庫，剩餘 {len(config.git_repos)} 個[/green]")
+
+
+@app.command("git-list")
+def git_list():
+    """列出已設定的 Git 倉庫"""
+    from pathlib import Path
+
+    config = Config.load()
+
+    # 顯示模式狀態
+    if config.use_git_mode:
+        console.print("[green]Git 模式: 啟用 (預設)[/green]\n")
+    else:
+        console.print("[dim]Git 模式: 停用 (使用 --git 選項啟用)[/dim]\n")
+
+    if not config.git_repos:
+        console.print("[yellow]尚未設定任何 Git 倉庫[/yellow]")
+        console.print("[dim]使用 tempo git-add <路徑> 添加倉庫[/dim]")
+        return
+
+    table = Table(title=f"📁 已設定的 Git 倉庫 ({len(config.git_repos)} 個)")
+    table.add_column("#", style="dim", width=3)
+    table.add_column("名稱", style="cyan")
+    table.add_column("路徑", style="dim")
+    table.add_column("狀態", width=6)
+
+    for i, repo in enumerate(config.git_repos, 1):
+        repo_path = Path(repo)
+        exists = repo_path.exists() and (repo_path / ".git").exists()
+        status = "[green]✓[/green]" if exists else "[red]✗[/red]"
+        table.add_row(str(i), repo_path.name, str(repo_path.parent), status)
+
+    console.print(table)
+
+
 @app.command()
 def dates(
-    git: bool = typer.Option(False, "--git", "-g", help="使用 Git 模式"),
+    git: Optional[bool] = typer.Option(None, "--git/--no-git", "-g", help="使用 Git 模式"),
     repo: Optional[list[str]] = typer.Option(None, "--repo", "-r", help="指定 Git 倉庫路徑"),
 ):
     """列出最近有工作記錄的日期"""
