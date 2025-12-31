@@ -65,21 +65,22 @@ def get_outlook_events(helper, start_date: str, end_date: str) -> dict[str, list
         return {}
 
 
-def normalize_daily_hours(entries: list[dict], daily_hours: float = 8.0) -> list[dict]:
+def normalize_daily_hours(entries: list[dict], daily_hours: float = 8.0, round_to_minutes: int = 30) -> list[dict]:
     """
-    將每日工時正規化為標準工時。
+    將每日工時正規化為標準工時，並以指定分鐘數為單位四捨五入。
 
     例如：一天有 3 個任務分別花了 2h, 3h, 1h（共 6h），
-    正規化到 8h 後變成：2.67h, 4h, 1.33h
+    正規化到 8h 並以 30 分鐘為單位：2.5h, 4h, 1.5h
 
     Args:
         entries: 要上傳的 entries 列表
         daily_hours: 每日標準工時（預設 8 小時）
+        round_to_minutes: 四捨五入的單位（預設 30 分鐘）
 
     Returns:
         正規化後的 entries 列表（新增 normalized_minutes 欄位）
     """
-    daily_minutes = daily_hours * 60
+    daily_minutes = int(daily_hours * 60)
 
     # 按日期分組
     by_date: dict[str, list[dict]] = {}
@@ -105,10 +106,29 @@ def normalize_daily_hours(entries: list[dict], daily_hours: float = 8.0) -> list
         if total_minutes == 0:
             continue
 
-        # 按比例分配標準工時
+        # 按比例分配標準工時，並四捨五入到指定單位
+        rounded_values = []
         for e in day_entries:
             ratio = e['original_minutes'] / total_minutes
-            e['normalized_minutes'] = int(ratio * daily_minutes)
+            exact_minutes = ratio * daily_minutes
+            # 四捨五入到指定單位
+            rounded = round(exact_minutes / round_to_minutes) * round_to_minutes
+            # 確保至少有一個單位
+            rounded = max(rounded, round_to_minutes)
+            e['normalized_minutes'] = rounded
+            rounded_values.append((e, exact_minutes, rounded))
+
+        # 調整總和以確保等於每日標準工時
+        current_total = sum(e['normalized_minutes'] for e in day_entries)
+        diff = daily_minutes - current_total
+
+        if diff != 0:
+            # 找出最大的項目來吸收差異
+            largest_entry = max(day_entries, key=lambda x: x['normalized_minutes'])
+            largest_entry['normalized_minutes'] += diff
+            # 確保不會變成負數或零
+            if largest_entry['normalized_minutes'] <= 0:
+                largest_entry['normalized_minutes'] = round_to_minutes
 
     return entries
 
