@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-01-09
+
+### Changed
+
+- **架構重構：移除 HTTP API，改用 Tauri IPC**
+  - 前端直接透過 `invoke()` 呼叫 Rust Commands
+  - 移除 Axum HTTP 伺服器（減少約 4,700 行程式碼）
+  - 移除 Vite proxy 設定
+  - 更快的前後端通訊，無需網路層
+- **完整的 Tauri Commands 支援**
+  - Auth: 登入、註冊、自動登入
+  - Config: 設定管理、LLM 設定、Jira 設定
+  - Work Items: CRUD、統計、時間軸、分組檢視
+  - Claude Code: Session 列表、匯入、摘要、同步
+  - Reports: 個人報表、摘要報表、Excel 匯出
+  - Sync: 同步狀態、自動同步
+  - GitLab: 專案管理、同步、搜尋
+  - Tempo: 連線測試、Issue 驗證、Worklog 同步
+  - Users: Profile 管理
+
+### Added
+
+- `addGitLabProject` 自動從 GitLab API 取得專案資訊
+- `CLAUDE.md` 開發指南文件
+
 ## [2.0.0] - 2026-01-09
 
 ### Added

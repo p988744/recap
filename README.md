@@ -119,10 +119,10 @@ recap/
 │   ├── src/               # React 前端 (TypeScript)
 │   │   ├── components/    # UI 元件
 │   │   ├── pages/        # 頁面
-│   │   └── lib/          # API 客戶端
+│   │   └── lib/          # Tauri API 客戶端
 │   └── src-tauri/        # Rust 後端
 │       ├── src/
-│       │   ├── api/      # REST API 路由
+│       │   ├── commands/  # Tauri IPC Commands
 │       │   ├── services/ # 業務邏輯
 │       │   ├── models/   # 資料模型
 │       │   └── db/       # SQLite 資料庫
@@ -133,9 +133,36 @@ recap/
 ### 技術棧
 
 - **Frontend**: React + TypeScript + Tailwind CSS + shadcn/ui
-- **Backend**: Rust + Axum + SQLite
+- **Backend**: Rust + Tauri IPC + SQLite
 - **Desktop**: Tauri v2
 - **Build**: Vite + Cargo
+
+### 架構說明
+
+應用程式使用 Tauri v2 的 IPC (Inter-Process Communication) 機制，前端直接透過 `invoke()` 呼叫 Rust 後端的 Commands，無需 HTTP 伺服器。
+
+```
+Frontend (React)
+     │
+     └── invoke() ──► Tauri Commands (#[tauri::command])
+                           │
+                           ▼
+                      SQLite Database
+```
+
+### Tauri Commands
+
+| 模組 | Commands |
+|------|----------|
+| **Auth** | `get_app_status`, `register_user`, `login`, `auto_login`, `get_current_user` |
+| **Config** | `get_config`, `update_config`, `update_llm_config`, `update_jira_config` |
+| **Work Items** | `list_work_items`, `create_work_item`, `get_work_item`, `update_work_item`, `delete_work_item`, `get_stats_summary`, `get_grouped_work_items`, `get_timeline_data`, `batch_sync_tempo`, `aggregate_work_items` |
+| **Claude** | `list_claude_sessions`, `import_claude_sessions`, `summarize_claude_session`, `sync_claude_projects` |
+| **Reports** | `get_personal_report`, `get_summary_report`, `get_category_report`, `get_source_report`, `export_excel_report` |
+| **Sync** | `get_sync_status`, `auto_sync`, `list_available_projects` |
+| **GitLab** | `get_gitlab_status`, `configure_gitlab`, `remove_gitlab_config`, `list_gitlab_projects`, `add_gitlab_project`, `remove_gitlab_project`, `sync_gitlab`, `search_gitlab_projects` |
+| **Tempo** | `test_tempo_connection`, `validate_jira_issue`, `sync_worklogs_to_tempo`, `upload_single_worklog`, `get_tempo_worklogs` |
+| **Users** | `get_profile`, `update_profile` |
 
 ---
 
@@ -168,22 +195,38 @@ cd web
 
 產出檔案位於 `web/src-tauri/target/release/bundle/`
 
----
+### 專案結構
 
-## API 端點
-
-Desktop App 在本地啟動 HTTP 伺服器（預設 port 8000）：
-
-| 端點 | 說明 |
-|------|------|
-| `POST /api/auth/login` | 登入 |
-| `GET /api/work-items` | 取得工作項目 |
-| `GET /api/work-items/timeline` | 時間軸檢視 |
-| `GET /api/work-items/grouped` | 分組檢視 |
-| `POST /api/claude/sync` | 同步 Claude Code |
-| `POST /api/gitlab/sync` | 同步 GitLab |
-| `POST /api/tempo/sync` | 同步到 Tempo |
-| `GET /api/reports/export/excel` | 匯出 Excel |
+```
+web/
+├── src/                      # 前端原始碼
+│   ├── components/          # React UI 元件
+│   ├── pages/              # 頁面元件
+│   └── lib/
+│       ├── api.ts          # API 介面（自動偵測 Tauri 環境）
+│       └── tauri-api.ts    # Tauri Commands 封裝
+├── src-tauri/               # Rust 後端
+│   ├── src/
+│   │   ├── lib.rs          # 應用程式進入點
+│   │   ├── commands/       # Tauri Commands
+│   │   │   ├── mod.rs      # AppState 定義
+│   │   │   ├── auth.rs     # 認證
+│   │   │   ├── config.rs   # 設定
+│   │   │   ├── work_items.rs
+│   │   │   ├── claude.rs
+│   │   │   ├── reports.rs
+│   │   │   ├── sync.rs
+│   │   │   ├── gitlab.rs
+│   │   │   ├── tempo.rs
+│   │   │   └── users.rs
+│   │   ├── services/       # 業務邏輯
+│   │   ├── models/         # 資料模型
+│   │   ├── db/            # 資料庫
+│   │   └── auth/          # JWT 認證
+│   └── Cargo.toml
+├── package.json
+└── vite.config.ts
+```
 
 ---
 
