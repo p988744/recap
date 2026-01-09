@@ -1,4 +1,3 @@
-import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '@/lib/auth'
 
 interface ProtectedRouteProps {
@@ -6,8 +5,7 @@ interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
-  const { isAuthenticated, isLoading, needsOnboarding } = useAuth()
-  const location = useLocation()
+  const { isLoading } = useAuth()
 
   if (isLoading) {
     return (
@@ -23,15 +21,6 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
     )
   }
 
-  // If no users yet, redirect to onboarding
-  if (needsOnboarding) {
-    return <Navigate to="/onboarding" replace />
-  }
-
-  if (!isAuthenticated) {
-    // Redirect to login page but save the current location
-    return <Navigate to="/login" state={{ from: location }} replace />
-  }
-
+  // 本地模式：不需要登入即可使用
   return <>{children}</>
 }

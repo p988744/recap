@@ -88,10 +88,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const status = await statusResponse.json()
           setAppStatus(status)
 
-          // If no users, we need onboarding
+          // 本地模式：如果沒有用戶，自動建立預設用戶
           if (!status.has_users) {
-            setIsLoading(false)
-            return
+            await createDefaultLocalUser()
+            // 重新取得狀態
+            const newStatusResponse = await fetch('/api/auth/status')
+            if (newStatusResponse.ok) {
+              const newStatus = await newStatusResponse.json()
+              setAppStatus(newStatus)
+            }
           }
 
           // Check for existing token
@@ -107,12 +112,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               // Token is invalid, try auto-login for local mode
               removeStoredToken()
               setToken(null)
-              if (status.local_mode && status.has_users) {
+              if (status.local_mode) {
                 await performAutoLogin()
               }
             }
-          } else if (status.local_mode && status.has_users) {
-            // No token but local mode with users - auto login
+          } else if (status.local_mode) {
+            // No token but local mode - auto login
             await performAutoLogin()
           }
         }
@@ -122,6 +127,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setToken(null)
       } finally {
         setIsLoading(false)
+      }
+    }
+
+    // 自動建立本地預設用戶
+    async function createDefaultLocalUser() {
+      try {
+        const response = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: 'local',
+            password: 'local',
+            name: '本地使用者',
+            email: 'local@localhost',
+          }),
+        })
+        if (response.ok) {
+          console.log('Created default local user')
+        }
+      } catch (error) {
+        console.error('Failed to create default user:', error)
       }
     }
 
