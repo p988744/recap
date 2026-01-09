@@ -27,17 +27,7 @@
 
 #### macOS 安裝說明
 
-由於 App 尚未經過 Apple 簽章，首次開啟會顯示「已損毀」警告。請執行以下指令移除隔離屬性：
-
-```bash
-# 如果已安裝到 Applications
-xattr -cr /Applications/Recap.app
-
-# 或是針對下載的 .dmg 檔案
-xattr -cr ~/Downloads/Recap_*.dmg
-```
-
-然後重新開啟即可正常使用。
+App 已經過 Apple 簽章和公證，下載後可直接開啟使用。
 
 #### Windows 安裝說明
 
@@ -115,19 +105,18 @@ cd web && ~/.cargo/bin/cargo tauri build
 
 ```
 recap/
-├── web/                    # Desktop App
-│   ├── src/               # React 前端 (TypeScript)
-│   │   ├── components/    # UI 元件
-│   │   ├── pages/        # 頁面
-│   │   └── lib/          # Tauri API 客戶端
-│   └── src-tauri/        # Rust 後端
-│       ├── src/
-│       │   ├── commands/  # Tauri IPC Commands
-│       │   ├── services/ # 業務邏輯
-│       │   ├── models/   # 資料模型
-│       │   └── db/       # SQLite 資料庫
-│       └── Cargo.toml
-└── src/recap/             # Python CLI (legacy)
+└── web/                    # Desktop App
+    ├── src/               # React 前端 (TypeScript)
+    │   ├── components/    # UI 元件
+    │   ├── pages/        # 頁面
+    │   └── lib/          # Tauri API 客戶端
+    └── src-tauri/        # Rust 後端
+        ├── src/
+        │   ├── commands/  # Tauri IPC Commands
+        │   ├── services/ # 業務邏輯
+        │   ├── models/   # 資料模型
+        │   └── db/       # SQLite 資料庫
+        └── Cargo.toml
 ```
 
 ### 技術棧

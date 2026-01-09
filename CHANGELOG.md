@@ -29,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `addGitLabProject` 自動從 GitLab API 取得專案資訊
 - `CLAUDE.md` 開發指南文件
+- macOS 程式碼簽章和公證（Apple Developer ID）
+
+### Removed
+
+- Python CLI（已移除，專注於 Desktop App）
 
 ## [2.0.0] - 2026-01-09
 
