@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
+import * as tauriApi from './tauri-api'
 
 // Types
 export interface User {
@@ -53,24 +54,6 @@ function removeStoredToken(): void {
   localStorage.removeItem(TOKEN_KEY)
 }
 
-// Auth API calls
-async function fetchWithAuth(endpoint: string, options?: RequestInit): Promise<Response> {
-  const token = getStoredToken()
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(options?.headers as Record<string, string>),
-  }
-
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`
-  }
-
-  return fetch(`/api${endpoint}`, {
-    ...options,
-    headers,
-  })
-}
-
 // Provider component
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
@@ -82,44 +65,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     async function initialize() {
       try {
-        // First, get app status
-        const statusResponse = await fetch('/api/auth/status')
-        if (statusResponse.ok) {
-          const status = await statusResponse.json()
-          setAppStatus(status)
+        // First, get app status via Tauri command
+        const status = await tauriApi.getAppStatus()
+        setAppStatus(status)
 
-          // 本地模式：如果沒有用戶，自動建立預設用戶
-          if (!status.has_users) {
-            await createDefaultLocalUser()
-            // 重新取得狀態
-            const newStatusResponse = await fetch('/api/auth/status')
-            if (newStatusResponse.ok) {
-              const newStatus = await newStatusResponse.json()
-              setAppStatus(newStatus)
+        // 本地模式：如果沒有用戶，自動建立預設用戶
+        if (!status.has_users) {
+          await createDefaultLocalUser()
+          // 重新取得狀態
+          const newStatus = await tauriApi.getAppStatus()
+          setAppStatus(newStatus)
+        }
+
+        // Check for existing token
+        const storedToken = getStoredToken()
+        if (storedToken) {
+          // Validate existing token
+          try {
+            const userData = await tauriApi.getCurrentUser(storedToken)
+            setUser(userData)
+            setToken(storedToken)
+          } catch {
+            // Token is invalid, try auto-login for local mode
+            removeStoredToken()
+            setToken(null)
+            if (status.local_mode) {
+              await performAutoLogin()
             }
           }
-
-          // Check for existing token
-          const storedToken = getStoredToken()
-          if (storedToken) {
-            // Validate existing token
-            const response = await fetchWithAuth('/auth/me')
-            if (response.ok) {
-              const userData = await response.json()
-              setUser(userData)
-              setToken(storedToken)
-            } else {
-              // Token is invalid, try auto-login for local mode
-              removeStoredToken()
-              setToken(null)
-              if (status.local_mode) {
-                await performAutoLogin()
-              }
-            }
-          } else if (status.local_mode) {
-            // No token but local mode - auto login
-            await performAutoLogin()
-          }
+        } else if (status.local_mode) {
+          // No token but local mode - auto login
+          await performAutoLogin()
         }
       } catch (error) {
         console.error('Failed to initialize:', error)
@@ -133,19 +109,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // 自動建立本地預設用戶
     async function createDefaultLocalUser() {
       try {
-        const response = await fetch('/api/auth/register', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            username: 'local',
-            password: 'local',
-            name: '本地使用者',
-            email: 'local@localhost',
-          }),
+        await tauriApi.registerUser({
+          username: 'local',
+          password: 'local',
+          name: '本地使用者',
+          email: 'local@localhost',
         })
-        if (response.ok) {
-          console.log('Created default local user')
-        }
+        console.log('Created default local user')
       } catch (error) {
         console.error('Failed to create default user:', error)
       }
@@ -153,22 +123,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     async function performAutoLogin() {
       try {
-        const response = await fetch('/api/auth/auto-login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        })
-        if (response.ok) {
-          const data = await response.json()
-          setStoredToken(data.access_token)
-          setToken(data.access_token)
+        const data = await tauriApi.autoLogin()
+        setStoredToken(data.access_token)
+        setToken(data.access_token)
 
-          // Fetch user info
-          const userResponse = await fetchWithAuth('/auth/me')
-          if (userResponse.ok) {
-            const userData = await userResponse.json()
-            setUser(userData)
-          }
-        }
+        // Fetch user info
+        const userData = await tauriApi.getCurrentUser(data.access_token)
+        setUser(userData)
       } catch (error) {
         console.error('Auto-login failed:', error)
       }
@@ -178,46 +139,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const login = async (username: string, password: string) => {
-    const response = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-    })
+    try {
+      const data = await tauriApi.login({ username, password })
+      setStoredToken(data.access_token)
+      setToken(data.access_token)
 
-    if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.detail || 'Login failed')
-    }
-
-    const data = await response.json()
-    setStoredToken(data.access_token)
-    setToken(data.access_token)
-
-    // Fetch user info
-    const userResponse = await fetchWithAuth('/auth/me')
-    if (userResponse.ok) {
-      const userData = await userResponse.json()
+      // Fetch user info
+      const userData = await tauriApi.getCurrentUser(data.access_token)
       setUser(userData)
+    } catch (error) {
+      throw new Error(error instanceof Error ? error.message : 'Login failed')
     }
   }
 
   const register = async (username: string, password: string, name: string, email?: string, title?: string) => {
-    const response = await fetch('/api/auth/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password, name, email, title }),
-    })
+    try {
+      await tauriApi.registerUser({ username, password, name, email, title })
 
-    if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.detail || 'Registration failed')
+      // Update appStatus to reflect that we now have users
+      setAppStatus(prev => prev ? { ...prev, has_users: true, user_count: prev.user_count + 1 } : prev)
+
+      // Auto-login after registration
+      await login(username, password)
+    } catch (error) {
+      throw new Error(error instanceof Error ? error.message : 'Registration failed')
     }
-
-    // Update appStatus to reflect that we now have users
-    setAppStatus(prev => prev ? { ...prev, has_users: true, user_count: prev.user_count + 1 } : prev)
-
-    // Auto-login after registration
-    await login(username, password)
   }
 
   const logout = () => {
@@ -228,24 +174,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const autoLogin = async () => {
     try {
-      const response = await fetch('/api/auth/auto-login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      })
-      if (response.ok) {
-        const data = await response.json()
-        setStoredToken(data.access_token)
-        setToken(data.access_token)
+      const data = await tauriApi.autoLogin()
+      setStoredToken(data.access_token)
+      setToken(data.access_token)
 
-        // Fetch user info
-        const userResponse = await fetchWithAuth('/auth/me')
-        if (userResponse.ok) {
-          const userData = await userResponse.json()
-          setUser(userData)
-        }
-      } else {
-        throw new Error('Auto-login failed')
-      }
+      // Fetch user info
+      const userData = await tauriApi.getCurrentUser(data.access_token)
+      setUser(userData)
     } catch (error) {
       console.error('Auto-login failed:', error)
       throw error
@@ -277,7 +212,7 @@ export function useAuth() {
   return context
 }
 
-// Helper function to get auth headers
+// Helper function to get auth headers (still needed for legacy HTTP API calls)
 export function getAuthHeaders(): Record<string, string> {
   const token = getStoredToken()
   if (!token) return {}

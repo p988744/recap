@@ -1,9 +1,10 @@
 //! Recap - Work tracking and reporting tool
 //!
-//! A Tauri application with embedded Axum server for work item management.
+//! A Tauri application for work item management.
 
 mod api;
 mod auth;
+mod commands;
 mod db;
 mod models;
 mod services;
@@ -25,6 +26,20 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // Register Tauri commands
+        .invoke_handler(tauri::generate_handler![
+            // Auth
+            commands::auth::get_app_status,
+            commands::auth::register_user,
+            commands::auth::login,
+            commands::auth::auto_login,
+            commands::auth::get_current_user,
+            // Config
+            commands::config::get_config,
+            commands::config::update_config,
+            commands::config::update_llm_config,
+            commands::config::update_jira_config,
+        ])
         .setup(|app| {
             // Setup logging
             app.handle().plugin(
@@ -32,6 +47,24 @@ pub fn run() {
                     .level(log::LevelFilter::Info)
                     .build(),
             )?;
+
+            // Initialize database and app state
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                match db::Database::new().await {
+                    Ok(database) => {
+                        log::info!("Database initialized successfully");
+                        let state = commands::AppState::new(database.clone());
+                        app_handle.manage(state);
+
+                        // Also start the legacy Axum API server for gradual migration
+                        start_api_server_with_db(database).await;
+                    }
+                    Err(e) => {
+                        log::error!("Failed to initialize database: {}", e);
+                    }
+                }
+            });
 
             // Create tray menu
             let show_item = MenuItem::with_id(app, "show", "Show Recap", true, None::<&str>)?;
@@ -71,11 +104,6 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Start the Axum API server
-            tauri::async_runtime::spawn(async move {
-                start_api_server().await;
-            });
-
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -102,25 +130,13 @@ pub fn run() {
         });
 }
 
-/// Start the Axum API server
-async fn start_api_server() {
+/// Start the Axum API server (legacy, for gradual migration)
+async fn start_api_server_with_db(db: db::Database) {
     if SERVER_STARTED.load(Ordering::SeqCst) {
         return;
     }
 
-    log::info!("Starting Recap API server...");
-
-    // Initialize database
-    let db = match db::Database::new().await {
-        Ok(db) => {
-            log::info!("Database initialized successfully");
-            db
-        }
-        Err(e) => {
-            log::error!("Failed to initialize database: {}", e);
-            return;
-        }
-    };
+    log::info!("Starting legacy Axum API server...");
 
     // Create router
     let app = api::create_router(db);

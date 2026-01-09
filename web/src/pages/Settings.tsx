@@ -611,21 +611,18 @@ export function SettingsPage() {
                       .filter(project => {
                         // Filter out projects already in git_repos
                         const existingPaths = sources?.git_repos?.map(r => r.path) || []
-                        // Claude project path format: Users-name-path becomes /Users/name/path
-                        const projectPath = '/' + project.path.replace(/-/g, '/')
-                        return !existingPaths.some(p => p === projectPath || p === project.path)
+                        // Backend returns correct path from session cwd
+                        return !existingPaths.some(p => p === project.path)
                       })
                       .slice(0, 5)
-                      .map((project) => {
-                        const projectPath = '/' + project.path.replace(/-/g, '/')
-                        return (
+                      .map((project) => (
                           <div
                             key={project.path}
                             className="flex items-center justify-between p-3 border border-dashed border-purple-300/50 bg-purple-50/30 rounded-lg"
                           >
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-medium text-foreground truncate">{project.name}</p>
-                              <p className="text-xs text-muted-foreground truncate">{projectPath}</p>
+                              <p className="text-xs text-muted-foreground truncate">{project.path}</p>
                             </div>
                             <Button
                               variant="outline"
@@ -633,7 +630,7 @@ export function SettingsPage() {
                               onClick={async () => {
                                 setMessage(null)
                                 try {
-                                  await api.addGitRepo(projectPath)
+                                  await api.addGitRepo(project.path)
                                   const updated = await api.getSources()
                                   setSources(updated)
                                   setMessage({ type: 'success', text: `已新增 ${project.name}` })
@@ -648,11 +645,10 @@ export function SettingsPage() {
                             </Button>
                           </div>
                         )
-                      })}
+                      )}
                     {claudeProjects.filter(project => {
                       const existingPaths = sources?.git_repos?.map(r => r.path) || []
-                      const projectPath = '/' + project.path.replace(/-/g, '/')
-                      return !existingPaths.some(p => p === projectPath || p === project.path)
+                      return !existingPaths.some(p => p === project.path)
                     }).length === 0 && (
                       <p className="text-xs text-muted-foreground text-center py-2">
                         所有 Claude Code 專案都已新增
