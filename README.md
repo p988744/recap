@@ -19,12 +19,11 @@
 
 從 [GitHub Releases](https://github.com/p988744/recap/releases) 下載對應平台的安裝檔：
 
-| 平台 | 架構 | 檔案 |
-|------|------|------|
-| macOS | Apple Silicon | `Recap_x.x.x_aarch64.dmg` |
-| macOS | Intel | `Recap_x.x.x_x64.dmg` |
-| Windows | x64 | `Recap_x.x.x_x64-setup.exe` 或 `.msi` |
-| Linux | x64 | `recap_x.x.x_amd64.deb` 或 `.AppImage` |
+| 平台 | 檔案 |
+|------|------|
+| macOS (Apple Silicon) | `Recap_x.x.x_aarch64.dmg` |
+| Windows | `Recap_x.x.x_x64-setup.exe` 或 `.msi` |
+| Linux | `recap_x.x.x_amd64.deb` 或 `.AppImage` |
 
 ### 從原始碼建置
 

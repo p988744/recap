@@ -35,10 +35,6 @@ jobs:
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             name: linux-x64
-          # macOS Intel
-          - platform: macos-15
-            target: x86_64-apple-darwin
-            name: macos-x64
           # macOS Apple Silicon
           - platform: macos-14
             target: aarch64-apple-darwin
@@ -184,12 +180,11 @@ jobs:
 
           ### Downloads
 
-          | Platform | Architecture | File |
-          |----------|-------------|------|
-          | Linux | x64 | `.deb` / `.AppImage` |
-          | macOS | Intel (x64) | `.dmg` |
-          | macOS | Apple Silicon (arm64) | `.dmg` |
-          | Windows | x64 | `.msi` / `.exe` |
+          | Platform | File |
+          |----------|------|
+          | Linux (x64) | `.deb` / `.AppImage` |
+          | macOS (Apple Silicon) | `.dmg` |
+          | Windows (x64) | `.msi` / `.exe` |
 
           ### Installation
 
