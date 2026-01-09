@@ -1,0 +1,244 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Editorial Warmth Theme - Custom colors */
+    --cream: 45 30% 96%;
+    --charcoal: 45 10% 12%;
+    --warm: 35 25% 55%;
+    --terracotta: 15 35% 50%;
+    --sage: 90 15% 45%;
+    --stone: 30 8% 50%;
+
+    /* shadcn/ui CSS Variables - mapped to our theme */
+    --background: 45 30% 96%;
+    --foreground: 45 10% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 45 10% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 45 10% 12%;
+    --primary: 45 10% 12%;
+    --primary-foreground: 45 30% 96%;
+    --secondary: 45 25% 92%;
+    --secondary-foreground: 45 10% 12%;
+    --muted: 45 20% 92%;
+    --muted-foreground: 45 8% 40%;
+    --accent: 35 25% 55%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 15 35% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 45 10% 88%;
+    --input: 45 10% 88%;
+    --ring: 35 25% 55%;
+    --chart-1: 35 25% 55%;
+    --chart-2: 15 35% 50%;
+    --chart-3: 90 15% 45%;
+    --chart-4: 30 8% 50%;
+    --chart-5: 45 20% 60%;
+    --radius: 0rem;
+  }
+
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: 'Outfit', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-weight: 400;
+  }
+
+  /* Editorial typography */
+  h1, h2, h3, h4 {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    color: hsl(var(--foreground));
+    font-weight: 500;
+  }
+
+  h1 {
+    font-size: 2.25rem;
+    line-height: 2.5rem;
+    letter-spacing: -0.025em;
+  }
+
+  h2 {
+    font-size: 1.5rem;
+    line-height: 2rem;
+    letter-spacing: -0.025em;
+  }
+
+  h3 {
+    font-size: 1.25rem;
+    line-height: 1.75rem;
+  }
+
+  /* Subtle scrollbar */
+  ::-webkit-scrollbar {
+    width: 0.375rem;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: hsla(45, 10%, 12%, 0.1);
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsla(45, 10%, 12%, 0.2);
+  }
+}
+
+@layer components {
+  /* Label style - uppercase tracking */
+  .label-text {
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    line-height: 1.4;
+    text-transform: uppercase;
+    color: hsl(var(--muted-foreground));
+    font-weight: 500;
+  }
+
+  /* Thin divider */
+  .divider {
+    height: 1px;
+    background-color: hsl(var(--border));
+  }
+
+  /* Tag/Badge variants */
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.625rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    background-color: hsl(var(--muted));
+    color: hsl(var(--muted-foreground));
+  }
+
+  .tag-warm {
+    background-color: hsla(35, 25%, 55%, 0.1);
+    color: hsl(35, 25%, 55%);
+  }
+
+  .tag-success {
+    background-color: hsla(90, 15%, 45%, 0.1);
+    color: hsl(90, 15%, 45%);
+  }
+
+  .tag-error {
+    background-color: hsla(15, 35%, 50%, 0.1);
+    color: hsl(15, 35%, 50%);
+  }
+
+  /* Stat card with left border accent */
+  .stat-card {
+    padding: 1.5rem;
+    border-left: 2px solid hsla(35, 25%, 55%, 0.6);
+  }
+
+  /* Progress bar - thin, subtle */
+  .progress-track {
+    height: 0.25rem;
+    background-color: hsl(var(--muted));
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background-color: hsla(35, 25%, 55%, 0.7);
+    transition: all 500ms ease-out;
+  }
+
+  /* Activity item */
+  .activity-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 1rem 0;
+    border-bottom: 1px solid hsl(var(--border));
+  }
+
+  .activity-item:last-child {
+    border-bottom: none;
+  }
+
+  /* Navigation link - editorial */
+  .nav-link {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    color: hsl(var(--muted-foreground));
+    font-weight: 400;
+    transition: all 200ms;
+  }
+
+  .nav-link:hover {
+    color: hsl(var(--foreground));
+  }
+
+  .nav-link.active {
+    color: hsl(var(--foreground));
+    border-left: 2px solid hsl(var(--foreground));
+    margin-left: -1px;
+  }
+
+  /* Table - editorial */
+  .table-editorial {
+    width: 100%;
+    font-size: 0.875rem;
+  }
+
+  .table-editorial th {
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    line-height: 1.4;
+    text-transform: uppercase;
+    text-align: left;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid hsl(var(--border));
+    color: hsl(var(--muted-foreground));
+  }
+
+  .table-editorial td {
+    padding: 1rem;
+    border-bottom: 1px solid hsl(var(--border) / 0.5);
+  }
+
+  .table-editorial tr:hover td {
+    background-color: hsl(var(--muted) / 0.5);
+  }
+}
+
+@layer utilities {
+  /* Stagger animation delays for fade-up */
+  .delay-1 { animation-delay: 0.1s; }
+  .delay-2 { animation-delay: 0.15s; }
+  .delay-3 { animation-delay: 0.2s; }
+  .delay-4 { animation-delay: 0.25s; }
+  .delay-5 { animation-delay: 0.3s; }
+  .delay-6 { animation-delay: 0.35s; }
+
+  /* Start hidden for fade animations */
+  .animate-on-load {
+    opacity: 0;
+  }
+
+  /* Smooth hover opacity transitions */
+  .hover-fade {
+    transition: opacity 200ms;
+  }
+
+  .hover-fade:hover {
+    opacity: 0.8;
+  }
+}

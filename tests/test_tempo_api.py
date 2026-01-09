@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 from datetime import datetime
 
-from tempo_sync.tempo_api import WorklogEntry, JiraClient, TempoClient, WorklogUploader
+from recap.tempo_api import WorklogEntry, JiraClient, TempoClient, WorklogUploader
 
 
 class TestWorklogEntry:

@@ -78,7 +78,7 @@ def sample_session_data():
 @pytest.fixture
 def sample_worklog_entry():
     """Sample worklog entry."""
-    from tempo_sync.tempo_api import WorklogEntry
+    from recap.tempo_api import WorklogEntry
     return WorklogEntry(
         issue_key="PROJ-123",
         date="2025-12-31",

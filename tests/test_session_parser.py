@@ -4,7 +4,7 @@ import pytest
 from datetime import datetime
 from unittest.mock import patch, MagicMock
 
-from tempo_sync.session_parser import (
+from recap.session_parser import (
     WorkSession,
     DailyProjectEntry,
     ProjectSummary,
@@ -381,7 +381,7 @@ class TestWorklogHelperModes:
 
     def test_default_claude_mode(self):
         """Test default mode is Claude."""
-        with patch("tempo_sync.session_parser.Config.load") as mock_load:
+        with patch("recap.session_parser.Config.load") as mock_load:
             mock_config = MagicMock()
             mock_config.use_git_mode = False
             mock_config.git_repos = []
@@ -393,7 +393,7 @@ class TestWorklogHelperModes:
 
     def test_git_mode_from_config(self):
         """Test git mode from config."""
-        with patch("tempo_sync.session_parser.Config.load") as mock_load:
+        with patch("recap.session_parser.Config.load") as mock_load:
             mock_config = MagicMock()
             mock_config.use_git_mode = True
             mock_config.git_repos = []
@@ -405,7 +405,7 @@ class TestWorklogHelperModes:
 
     def test_git_mode_override(self):
         """Test git mode can be overridden."""
-        with patch("tempo_sync.session_parser.Config.load") as mock_load:
+        with patch("recap.session_parser.Config.load") as mock_load:
             mock_config = MagicMock()
             mock_config.use_git_mode = False
             mock_config.git_repos = []
@@ -416,7 +416,7 @@ class TestWorklogHelperModes:
 
     def test_claude_mode_override(self):
         """Test claude mode can be overridden."""
-        with patch("tempo_sync.session_parser.Config.load") as mock_load:
+        with patch("recap.session_parser.Config.load") as mock_load:
             mock_config = MagicMock()
             mock_config.use_git_mode = True
             mock_config.git_repos = []
@@ -431,7 +431,7 @@ class TestWorklogHelperModes:
         repo.mkdir()
         (repo / ".git").mkdir()
 
-        with patch("tempo_sync.session_parser.Config.load") as mock_load:
+        with patch("recap.session_parser.Config.load") as mock_load:
             mock_config = MagicMock()
             mock_config.use_git_mode = True
             mock_config.git_repos = []
@@ -447,7 +447,7 @@ class TestWorklogHelperModes:
         repo.mkdir()
         (repo / ".git").mkdir()
 
-        with patch("tempo_sync.session_parser.Config.load") as mock_load:
+        with patch("recap.session_parser.Config.load") as mock_load:
             mock_config = MagicMock()
             mock_config.use_git_mode = False
             mock_config.git_repos = []

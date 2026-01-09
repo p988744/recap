@@ -5,7 +5,8 @@ from unittest.mock import patch, MagicMock
 from typer.testing import CliRunner
 from datetime import datetime, timedelta
 
-from tempo_sync.cli import app, get_week_range, get_last_week_range, normalize_daily_hours
+import typer
+from recap.cli import app, get_week_range, get_last_week_range, normalize_daily_hours, validate_date
 
 
 runner = CliRunner()
@@ -54,6 +55,29 @@ class TestHelperFunctions:
         today = datetime.now()
         assert end_date < today
 
+    def test_validate_date_valid(self):
+        """Test validate_date with valid date."""
+        result = validate_date("2025-01-15", "date")
+        assert result == "2025-01-15"
+
+    def test_validate_date_invalid_format(self):
+        """Test validate_date with invalid format."""
+        with pytest.raises(typer.BadParameter) as exc_info:
+            validate_date("01-15-2025", "date")
+        assert "不是有效的日期格式" in str(exc_info.value)
+        assert "YYYY-MM-DD" in str(exc_info.value)
+
+    def test_validate_date_invalid_date(self):
+        """Test validate_date with invalid date."""
+        with pytest.raises(typer.BadParameter) as exc_info:
+            validate_date("2025-02-30", "date")  # February doesn't have 30 days
+        assert "不是有效的日期格式" in str(exc_info.value)
+
+    def test_validate_date_empty_string(self):
+        """Test validate_date with empty string."""
+        with pytest.raises(typer.BadParameter):
+            validate_date("", "date")
+
 
 class TestCliCommands:
     """Tests for CLI commands."""
@@ -66,7 +90,7 @@ class TestCliCommands:
 
     def test_dates_command(self):
         """Test dates command."""
-        with patch("tempo_sync.cli.WorklogHelper") as mock_helper:
+        with patch("recap.cli.WorklogHelper") as mock_helper:
             mock_instance = MagicMock()
             mock_helper.return_value = mock_instance
             mock_instance.get_available_dates.return_value = [
@@ -113,7 +137,7 @@ class TestAnalyzeCommand:
 
     def test_analyze_week_flag(self):
         """Test analyze with --week flag."""
-        with patch("tempo_sync.cli.WorklogHelper") as mock_helper:
+        with patch("recap.cli.WorklogHelper") as mock_helper:
             mock_instance = MagicMock()
             mock_helper.return_value = mock_instance
 
@@ -129,7 +153,7 @@ class TestAnalyzeCommand:
 
     def test_analyze_last_week_flag(self):
         """Test analyze with --last-week flag."""
-        with patch("tempo_sync.cli.WorklogHelper") as mock_helper:
+        with patch("recap.cli.WorklogHelper") as mock_helper:
             mock_instance = MagicMock()
             mock_helper.return_value = mock_instance
 
@@ -143,7 +167,7 @@ class TestAnalyzeCommand:
 
     def test_analyze_days_flag(self):
         """Test analyze with --days flag."""
-        with patch("tempo_sync.cli.WorklogHelper") as mock_helper:
+        with patch("recap.cli.WorklogHelper") as mock_helper:
             mock_instance = MagicMock()
             mock_helper.return_value = mock_instance
 
@@ -157,7 +181,7 @@ class TestAnalyzeCommand:
 
     def test_analyze_custom_range(self):
         """Test analyze with custom date range."""
-        with patch("tempo_sync.cli.WorklogHelper") as mock_helper:
+        with patch("recap.cli.WorklogHelper") as mock_helper:
             mock_instance = MagicMock()
             mock_helper.return_value = mock_instance
 
@@ -284,7 +308,7 @@ class TestConfigDisplay:
 
     def test_config_status_display(self):
         """Test that config status is properly formatted."""
-        with patch("tempo_sync.cli.WorklogHelper") as mock_helper:
+        with patch("recap.cli.WorklogHelper") as mock_helper:
             mock_instance = MagicMock()
             mock_helper.return_value = mock_instance
 

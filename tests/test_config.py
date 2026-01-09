@@ -5,7 +5,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch
 
-from tempo_sync.config import Config, ProjectMapping, CONFIG_DIR
+from recap.config import Config, ProjectMapping, CONFIG_DIR
 
 
 class TestConfig:
@@ -98,8 +98,8 @@ class TestConfig:
         # Patch CONFIG_DIR and CONFIG_FILE
         config_file = temp_config_dir / "config.json"
 
-        with patch("tempo_sync.config.CONFIG_DIR", temp_config_dir), \
-             patch("tempo_sync.config.CONFIG_FILE", config_file):
+        with patch("recap.config.CONFIG_DIR", temp_config_dir), \
+             patch("recap.config.CONFIG_FILE", config_file):
 
             # Create and save config
             original = Config(
@@ -128,8 +128,8 @@ class TestProjectMapping:
         """Test setting and getting project mappings."""
         mapping_file = temp_config_dir / "project_mapping.json"
 
-        with patch("tempo_sync.config.CONFIG_DIR", temp_config_dir), \
-             patch("tempo_sync.config.MAPPING_FILE", mapping_file):
+        with patch("recap.config.CONFIG_DIR", temp_config_dir), \
+             patch("recap.config.MAPPING_FILE", mapping_file):
 
             mapping = ProjectMapping()
             mapping.mappings = {}  # Reset
@@ -145,8 +145,8 @@ class TestProjectMapping:
         """Test get_suggestions with exact match."""
         mapping_file = temp_config_dir / "project_mapping.json"
 
-        with patch("tempo_sync.config.CONFIG_DIR", temp_config_dir), \
-             patch("tempo_sync.config.MAPPING_FILE", mapping_file):
+        with patch("recap.config.CONFIG_DIR", temp_config_dir), \
+             patch("recap.config.MAPPING_FILE", mapping_file):
 
             mapping = ProjectMapping()
             mapping.mappings = {
@@ -161,8 +161,8 @@ class TestProjectMapping:
         """Test get_suggestions with partial match."""
         mapping_file = temp_config_dir / "project_mapping.json"
 
-        with patch("tempo_sync.config.CONFIG_DIR", temp_config_dir), \
-             patch("tempo_sync.config.MAPPING_FILE", mapping_file):
+        with patch("recap.config.CONFIG_DIR", temp_config_dir), \
+             patch("recap.config.MAPPING_FILE", mapping_file):
 
             mapping = ProjectMapping()
             mapping.mappings = {
@@ -180,8 +180,8 @@ class TestProjectMapping:
         """Test get_suggestions returns max 5 results."""
         mapping_file = temp_config_dir / "project_mapping.json"
 
-        with patch("tempo_sync.config.CONFIG_DIR", temp_config_dir), \
-             patch("tempo_sync.config.MAPPING_FILE", mapping_file):
+        with patch("recap.config.CONFIG_DIR", temp_config_dir), \
+             patch("recap.config.MAPPING_FILE", mapping_file):
 
             mapping = ProjectMapping()
             mapping.mappings = {

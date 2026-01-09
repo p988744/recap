@@ -46,3 +46,21 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Node.js / Web
+node_modules/
+web/node_modules/
+web/dist/
+
+# Tauri
+web/src-tauri/target/
+web/src-tauri/gen/
+
+# Generated files
+*.xlsx
+report.xlsx
+uv.lock
+
+# Database
+*.db
+*.db-journal

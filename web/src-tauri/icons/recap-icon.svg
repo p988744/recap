@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!--
+    Recap Icon - macOS Design Guidelines Compliant
+    Canvas: 1024x1024
+    Content Area: 824x824 (centered with 100px padding)
+    Corner Radius: 185px
+  -->
+
+  <!-- Transparent background (required for macOS) -->
+
+  <!-- Icon background - centered rounded rectangle with proper padding -->
+  <rect
+    x="100"
+    y="100"
+    width="824"
+    height="824"
+    rx="185"
+    fill="#1F1D1A"
+  />
+
+  <!-- "Recap" wordmark - centered within content area -->
+  <g fill="#F9F7F2" transform="translate(180, 440) scale(0.95)">
+
+    <!-- R - capital serif -->
+    <path d="
+      M 0 0 L 0 160 L 20 160 L 20 92
+      L 55 92 L 85 160 L 110 160 L 75 88
+      C 95 82 108 65 108 42
+      C 108 15 85 0 50 0
+      Z
+      M 20 18 L 50 18
+      C 72 18 88 30 88 45
+      C 88 62 72 75 50 75
+      L 20 75 Z
+    "/>
+
+    <!-- e - lowercase -->
+    <path d="
+      M 130 60
+      C 130 32 150 15 180 15
+      C 210 15 230 32 230 60
+      L 230 100 L 152 100
+      C 154 125 168 138 185 138
+      C 200 138 212 128 216 110 L 238 110
+      C 232 140 210 160 180 160
+      C 148 160 130 135 130 105
+      Z
+      M 152 82 L 208 82 L 208 62
+      C 208 42 196 32 180 32
+      C 164 32 152 42 152 62 Z
+    "/>
+
+    <!-- c - lowercase -->
+    <path d="
+      M 260 85
+      C 260 48 285 15 325 15
+      C 352 15 372 32 378 60 L 356 60
+      C 350 42 340 32 325 32
+      C 300 32 282 52 282 85
+      C 282 118 300 138 325 138
+      C 342 138 352 125 358 105 L 380 105
+      C 372 140 350 160 325 160
+      C 285 160 260 125 260 85
+      Z
+    "/>
+
+    <!-- a - lowercase -->
+    <path d="
+      M 405 85
+      C 405 48 425 15 462 15
+      C 485 15 500 28 508 48
+      L 508 22 L 530 22 L 530 155 L 508 155 L 508 130
+      C 500 148 482 160 458 160
+      C 425 160 405 130 405 85
+      Z
+      M 427 85
+      C 427 118 442 138 465 138
+      C 488 138 508 115 508 85
+      C 508 55 488 35 465 35
+      C 442 35 427 55 427 85
+      Z
+    "/>
+
+    <!-- p - lowercase with descender -->
+    <path d="
+      M 555 22 L 577 22 L 577 48
+      C 585 28 602 15 628 15
+      C 662 15 682 48 682 85
+      C 682 125 662 160 625 160
+      C 605 160 588 148 577 128
+      L 577 200 L 555 200 Z
+      M 577 85
+      C 577 118 595 138 618 138
+      C 642 138 658 115 658 85
+      C 658 55 642 35 618 35
+      C 595 35 577 55 577 85
+      Z
+    "/>
+  </g>
+
+  <!-- Warm accent underline -->
+  <rect x="180" y="620" width="664" height="8" rx="4" fill="#B09872" opacity="0.7"/>
+</svg>
