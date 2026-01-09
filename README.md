@@ -2,137 +2,154 @@
 
 > **自動回顧你的工作，讓你專注於創造價值**
 
-智慧、自動化取得實際工作的紀錄（Git、Claude Code、Antigravity 等），自動彙整工作紀錄供日常報告、績效評核，減輕人工文書作業負擔，專注於工作本身。
+智慧、自動化取得實際工作的紀錄（Git、Claude Code、GitLab 等），自動彙整工作紀錄供日常報告、績效評核，減輕人工文書作業負擔，專注於工作本身。
 
 ## 功能特點
 
-- **多來源自動收集** - 從 Git commits、Claude Code sessions 自動追蹤工作
+- **多來源自動收集** - 從 Git commits、Claude Code sessions、GitLab 自動追蹤工作
 - **LLM 智能彙整** - 自動將多個工作項目彙整成簡潔的描述
 - **工時正規化** - 自動將每日工時調整為標準工時
 - **Jira Tempo 整合** - 一鍵上傳工時到 Jira Tempo
-- **團隊報表** - 主管可從 Tempo 團隊取得成員工時，匯出 Excel 報表
-- **績效考核** - AI 輔助生成績效考核草稿
+- **多種檢視模式** - 時間軸、專案分組、列表檢視
+- **Excel 報表匯出** - 匯出工作報表
 
-## 快速開始
+## 安裝
 
-### 1. 安裝
+### Desktop App（推薦）
 
-```bash
-# 使用 uv（推薦）
-uv tool install recap
+從 [Releases](https://gitting.eland.com.tw/rd2/recap/-/releases) 下載對應平台的安裝檔：
 
-# 或使用 pip
-pip install recap
-
-# 如需 LLM 支援
-pip install recap[openai]      # OpenAI
-pip install recap[anthropic]   # Anthropic Claude
-pip install recap[all-llm]     # 所有 LLM 提供者
-
-# 如需績效考核功能
-pip install recap[pe]
-
-# 如需匯出 Excel
-pip install recap[excel]
-```
-
-### 2. 配置
-
-```bash
-recap config jira   # 設定 Jira 連接
-recap config llm    # 設定 LLM
-```
-
-### 3. 開始使用
-
-```bash
-recap              # 互動模式
-recap week         # 分析本週工作
-recap sync         # 同步到 Tempo
-```
-
----
-
-## 命令總覽
-
-| 命令 | 說明 |
+| 平台 | 檔案 |
 |------|------|
-| `recap` | 互動模式（推薦新手使用）|
-| `recap week` | 分析本週工作 |
-| `recap sync` | 同步到 Jira Tempo |
-| `recap team` | 團隊報表 |
-| `recap pe` | 績效考核 Web UI |
-| `recap config` | 配置管理 |
+| macOS | `Recap_x.x.x_aarch64.dmg` |
+| Windows | `Recap_x.x.x_x64-setup.exe` |
+| Linux | `recap_x.x.x_amd64.deb` |
 
-### 資料來源管理
+### 從原始碼建置
 
 ```bash
-# Git 模式
-recap sources add git ~/projects/my-app
-recap sources list
-recap sources remove my-app
+# Clone
+git clone https://gitting.eland.com.tw/rd2/recap.git
+cd recap
 
-# 使用 Git 模式分析
-recap week --git
+# 安裝前端依賴
+cd web && npm install && cd ..
+
+# 建置 Desktop App
+cd web && ~/.cargo/bin/cargo tauri build
 ```
 
-### 團隊報表（主管功能）
+## 使用方式
 
-```bash
-# 從 Tempo 團隊新增
-recap team add --from-tempo
+### 1. 首次設定
 
-# 產生報表
-recap team report RD2 --week
-recap team report RD2 --month -o report.xlsx
-```
+啟動 App 後，進入 **Settings** 頁面配置：
 
-### 績效考核
+- **Claude Code** - 選擇要追蹤的 Claude Code 專案
+- **GitLab** - 設定 GitLab URL 和 Access Token
+- **Tempo** - 設定 Jira URL、PAT 和 Tempo Token
 
-```bash
-# 啟動 Web UI
-recap pe
+### 2. 同步工作紀錄
 
-# 指定埠號
-recap pe --port 8080
-```
+在 **Dashboard** 頁面：
+- 點擊「Sync All」自動同步所有來源
+- 或個別同步 Claude Code / GitLab
+
+### 3. 管理工作項目
+
+在 **Work Items** 頁面：
+- **Timeline** - 時間軸檢視，顯示每日工作時段
+- **Grouped** - 按專案和 Jira Issue 分組
+- **List** - 傳統列表檢視
+
+### 4. 匯出報表
+
+在 **Reports** 頁面：
+- 選擇日期範圍
+- 點擊「Export Excel」下載報表
+
+### 5. 同步到 Tempo
+
+在 Work Items 頁面：
+- 選擇要同步的項目
+- 確認 Jira Issue Key 已設定
+- 點擊「Sync to Tempo」
 
 ---
 
-## 配置檔案
-
-所有配置儲存在 `~/.recap/`：
+## 技術架構
 
 ```
-~/.recap/
-├── config.json              # 主要配置
-├── project_mapping.json     # 專案與 Issue 的對應
-├── teams.json               # 團隊配置
-└── pe/                      # 績效考核資料
-    └── pe_helper.db
+recap/
+├── web/                    # Desktop App
+│   ├── src/               # React 前端 (TypeScript)
+│   │   ├── components/    # UI 元件
+│   │   ├── pages/        # 頁面
+│   │   └── lib/          # API 客戶端
+│   └── src-tauri/        # Rust 後端
+│       ├── src/
+│       │   ├── api/      # REST API 路由
+│       │   ├── services/ # 業務邏輯
+│       │   ├── models/   # 資料模型
+│       │   └── db/       # SQLite 資料庫
+│       └── Cargo.toml
+└── src/recap/             # Python CLI (legacy)
 ```
+
+### 技術棧
+
+- **Frontend**: React + TypeScript + Tailwind CSS + shadcn/ui
+- **Backend**: Rust + Axum + SQLite
+- **Desktop**: Tauri v2
+- **Build**: Vite + Cargo
 
 ---
 
 ## 開發
 
+### 環境需求
+
+- Node.js 18+
+- Rust 1.70+
+- Cargo + Tauri CLI
+
+### 開發模式
+
 ```bash
-# Clone
-git clone https://github.com/anthropics/recap.git
-cd recap
+cd web
 
-# 建立環境
-uv venv && source .venv/bin/activate
+# 安裝依賴
+npm install
 
-# 安裝開發依賴
-uv pip install -e ".[dev,all-llm,pe,excel]"
-
-# 執行測試
-pytest
-
-# 程式碼檢查
-ruff check .
+# 啟動開發伺服器
+~/.cargo/bin/cargo tauri dev
 ```
+
+### 建置
+
+```bash
+cd web
+~/.cargo/bin/cargo tauri build
+```
+
+產出檔案位於 `web/src-tauri/target/release/bundle/`
+
+---
+
+## API 端點
+
+Desktop App 在本地啟動 HTTP 伺服器（預設 port 8000）：
+
+| 端點 | 說明 |
+|------|------|
+| `POST /api/auth/login` | 登入 |
+| `GET /api/work-items` | 取得工作項目 |
+| `GET /api/work-items/timeline` | 時間軸檢視 |
+| `GET /api/work-items/grouped` | 分組檢視 |
+| `POST /api/claude/sync` | 同步 Claude Code |
+| `POST /api/gitlab/sync` | 同步 GitLab |
+| `POST /api/tempo/sync` | 同步到 Tempo |
+| `GET /api/reports/export/excel` | 匯出 Excel |
 
 ---
 
