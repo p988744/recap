@@ -2,7 +2,6 @@ stages:
   - lint
   - test
   - build
-  - release
 
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
@@ -22,7 +21,10 @@ cache:
     - source .venv/bin/activate
     - uv pip install -e ".[dev]"
 
-# Lint stage
+# ============================================
+# Python CLI Pipeline
+# ============================================
+
 lint:
   <<: *python-setup
   stage: lint
@@ -31,7 +33,6 @@ lint:
     - ruff format --check .
   allow_failure: true
 
-# Test stage
 test:
   <<: *python-setup
   stage: test
@@ -45,7 +46,6 @@ test:
         path: coverage.xml
     when: always
 
-# Build stage
 build:
   <<: *python-setup
   stage: build
@@ -60,38 +60,14 @@ build:
     - main
     - tags
 
-# Release stage - creates GitLab release for tags
-release:
-  stage: release
-  image: registry.gitlab.com/gitlab-org/release-cli:latest
-  script:
-    - echo "Creating release for $CI_COMMIT_TAG"
-  release:
-    tag_name: $CI_COMMIT_TAG
-    name: "Release $CI_COMMIT_TAG"
-    description: |
-      ## Tempo Sync $CI_COMMIT_TAG
-
-      ### 安裝
-
-      ```bash
-      pip install tempo-sync
-      ```
-
-      ### 變更內容
-
-      請參閱 [CHANGELOG.md](CHANGELOG.md) 或 commit history。
-  only:
-    - tags
-
-# Optional: Publish to PyPI (需要設定 CI/CD Variables)
-# publish:
-#   <<: *python-setup
-#   stage: release
-#   script:
-#     - uv pip install twine
-#     - python -m build
-#     - twine upload dist/*
-#   only:
-#     - tags
-#   when: manual
+# ============================================
+# Desktop App (Tauri)
+# ============================================
+# Desktop app builds are handled by GitHub Actions
+# See: https://github.com/p988744/recap/actions
+#
+# To build locally:
+#   cd web
+#   npm ci
+#   npm run build
+#   cargo tauri build
