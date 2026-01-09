@@ -39,6 +39,17 @@ pub fn run() {
             commands::config::update_config,
             commands::config::update_llm_config,
             commands::config::update_jira_config,
+            // Work Items
+            commands::work_items::list_work_items,
+            commands::work_items::create_work_item,
+            commands::work_items::get_work_item,
+            commands::work_items::update_work_item,
+            commands::work_items::delete_work_item,
+            commands::work_items::get_stats_summary,
+            commands::work_items::get_grouped_work_items,
+            commands::work_items::get_timeline_data,
+            commands::work_items::batch_sync_tempo,
+            commands::work_items::aggregate_work_items,
         ])
         .setup(|app| {
             // Setup logging

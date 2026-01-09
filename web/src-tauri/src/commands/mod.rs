@@ -5,6 +5,7 @@
 
 pub mod auth;
 pub mod config;
+pub mod work_items;
 
 use crate::db::Database;
 use std::sync::Arc;

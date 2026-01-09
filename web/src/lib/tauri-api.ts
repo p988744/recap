@@ -162,6 +162,276 @@ export async function updateJiraConfig(token: string, request: UpdateJiraConfigR
   return invoke<MessageResponse>('update_jira_config', { token, request })
 }
 
+// Work Items Types
+
+export interface WorkItem {
+  id: string
+  user_id: string
+  source: string
+  source_id?: string
+  source_url?: string
+  title: string
+  description?: string
+  hours: number
+  date: string
+  jira_issue_key?: string
+  jira_issue_suggested?: string
+  jira_issue_title?: string
+  category?: string
+  tags?: string
+  yearly_goal_id?: string
+  synced_to_tempo: boolean
+  tempo_worklog_id?: string
+  synced_at?: string
+  created_at: string
+  updated_at: string
+  parent_id?: string
+}
+
+export interface WorkItemWithChildren extends WorkItem {
+  child_count: number
+}
+
+export interface PaginatedResponse<T> {
+  items: T[]
+  total: number
+  page: number
+  per_page: number
+  pages: number
+}
+
+export interface WorkItemFilters {
+  page?: number
+  per_page?: number
+  source?: string
+  category?: string
+  jira_mapped?: boolean
+  synced_to_tempo?: boolean
+  start_date?: string
+  end_date?: string
+  parent_id?: string
+  show_all?: boolean
+}
+
+export interface CreateWorkItemRequest {
+  title: string
+  description?: string
+  hours?: number
+  date: string
+  source?: string
+  source_id?: string
+  jira_issue_key?: string
+  jira_issue_title?: string
+  category?: string
+  tags?: string[]
+}
+
+export interface UpdateWorkItemRequest {
+  title?: string
+  description?: string
+  hours?: number
+  date?: string
+  jira_issue_key?: string
+  jira_issue_title?: string
+  category?: string
+  tags?: string[]
+  synced_to_tempo?: boolean
+  tempo_worklog_id?: string
+}
+
+// Grouped View Types
+
+export interface WorkLogItem {
+  id: string
+  title: string
+  description?: string
+  hours: number
+  date: string
+  source: string
+  synced_to_tempo: boolean
+}
+
+export interface JiraIssueGroup {
+  jira_key?: string
+  jira_title?: string
+  total_hours: number
+  logs: WorkLogItem[]
+}
+
+export interface ProjectGroup {
+  project_name: string
+  total_hours: number
+  issues: JiraIssueGroup[]
+}
+
+export interface DateGroup {
+  date: string
+  total_hours: number
+  projects: ProjectGroup[]
+}
+
+export interface GroupedWorkItemsResponse {
+  by_project: ProjectGroup[]
+  by_date: DateGroup[]
+  total_hours: number
+  total_items: number
+}
+
+// Stats Types
+
+export interface DailyHours {
+  date: string
+  hours: number
+  count: number
+}
+
+export interface JiraMappingStats {
+  mapped: number
+  unmapped: number
+  percentage: number
+}
+
+export interface TempoSyncStats {
+  synced: number
+  not_synced: number
+  percentage: number
+}
+
+export interface WorkItemStatsResponse {
+  total_items: number
+  total_hours: number
+  hours_by_source: Record<string, number>
+  hours_by_project: Record<string, number>
+  hours_by_category: Record<string, number>
+  daily_hours: DailyHours[]
+  jira_mapping: JiraMappingStats
+  tempo_sync: TempoSyncStats
+}
+
+// Timeline Types
+
+export interface TimelineCommit {
+  hash: string
+  message: string
+  time: string
+  author: string
+}
+
+export interface TimelineSession {
+  id: string
+  project: string
+  title: string
+  start_time: string
+  end_time: string
+  hours: number
+  commits: TimelineCommit[]
+}
+
+export interface TimelineResponse {
+  date: string
+  sessions: TimelineSession[]
+  total_hours: number
+  total_commits: number
+}
+
+// Batch Sync Types
+
+export interface BatchSyncRequest {
+  work_item_ids: string[]
+}
+
+export interface BatchSyncResponse {
+  synced: number
+  failed: number
+  errors: string[]
+}
+
+// Aggregate Types
+
+export interface AggregateRequest {
+  start_date?: string
+  end_date?: string
+  source?: string
+}
+
+export interface AggregateResponse {
+  original_count: number
+  aggregated_count: number
+  deleted_count: number
+}
+
+// Work Items Commands
+
+/**
+ * List work items with filters
+ */
+export async function listWorkItems(token: string, filters: WorkItemFilters = {}): Promise<PaginatedResponse<WorkItemWithChildren>> {
+  return invoke<PaginatedResponse<WorkItemWithChildren>>('list_work_items', { token, filters })
+}
+
+/**
+ * Create a new work item
+ */
+export async function createWorkItem(token: string, request: CreateWorkItemRequest): Promise<WorkItem> {
+  return invoke<WorkItem>('create_work_item', { token, request })
+}
+
+/**
+ * Get a single work item
+ */
+export async function getWorkItem(token: string, id: string): Promise<WorkItem> {
+  return invoke<WorkItem>('get_work_item', { token, id })
+}
+
+/**
+ * Update a work item
+ */
+export async function updateWorkItem(token: string, id: string, request: UpdateWorkItemRequest): Promise<WorkItem> {
+  return invoke<WorkItem>('update_work_item', { token, id, request })
+}
+
+/**
+ * Delete a work item
+ */
+export async function deleteWorkItem(token: string, id: string): Promise<void> {
+  return invoke<void>('delete_work_item', { token, id })
+}
+
+/**
+ * Get work item statistics summary
+ */
+export async function getStatsSummary(token: string, query: { start_date?: string; end_date?: string } = {}): Promise<WorkItemStatsResponse> {
+  return invoke<WorkItemStatsResponse>('get_stats_summary', { token, query })
+}
+
+/**
+ * Get work items grouped by project and date
+ */
+export async function getGroupedWorkItems(token: string, query: { start_date?: string; end_date?: string } = {}): Promise<GroupedWorkItemsResponse> {
+  return invoke<GroupedWorkItemsResponse>('get_grouped_work_items', { token, query })
+}
+
+/**
+ * Get timeline data for Gantt chart visualization
+ */
+export async function getTimelineData(token: string, date: string): Promise<TimelineResponse> {
+  return invoke<TimelineResponse>('get_timeline_data', { token, date })
+}
+
+/**
+ * Batch sync work items to Tempo
+ */
+export async function batchSyncTempo(token: string, request: BatchSyncRequest): Promise<BatchSyncResponse> {
+  return invoke<BatchSyncResponse>('batch_sync_tempo', { token, request })
+}
+
+/**
+ * Aggregate work items by project + date
+ */
+export async function aggregateWorkItems(token: string, request: AggregateRequest = {}): Promise<AggregateResponse> {
+  return invoke<AggregateResponse>('aggregate_work_items', { token, request })
+}
+
 // Re-export for convenience
 export const tauriApi = {
   // Auth
@@ -175,4 +445,15 @@ export const tauriApi = {
   updateConfig,
   updateLlmConfig,
   updateJiraConfig,
+  // Work Items
+  listWorkItems,
+  createWorkItem,
+  getWorkItem,
+  updateWorkItem,
+  deleteWorkItem,
+  getStatsSummary,
+  getGroupedWorkItems,
+  getTimelineData,
+  batchSyncTempo,
+  aggregateWorkItems,
 }
