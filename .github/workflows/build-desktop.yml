@@ -74,6 +74,35 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
+      # macOS: Import Apple certificate for signing
+      - name: Import Apple Certificate (macOS)
+        if: startsWith(matrix.platform, 'macos')
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          # Create a temporary keychain
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+
+          # Create keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Import certificate
+          echo "$APPLE_CERTIFICATE" | base64 --decode > $RUNNER_TEMP/certificate.p12
+          security import $RUNNER_TEMP/certificate.p12 -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+
+          # Set keychain as default
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+          # Allow codesign to access the certificate
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Clean up
+          rm -f $RUNNER_TEMP/certificate.p12
+
       - name: Install frontend dependencies
         working-directory: web
         run: npm ci
@@ -82,7 +111,22 @@ jobs:
         working-directory: web
         run: npm run build
 
-      - name: Build Tauri app
+      # Build with signing and notarization for macOS
+      - name: Build Tauri app (macOS)
+        if: startsWith(matrix.platform, 'macos')
+        working-directory: web
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          cargo install tauri-cli --version "^2" --locked
+          cargo tauri build --target ${{ matrix.target }}
+
+      # Build for other platforms
+      - name: Build Tauri app (Linux/Windows)
+        if: "!startsWith(matrix.platform, 'macos')"
         working-directory: web
         run: |
           cargo install tauri-cli --version "^2" --locked
@@ -183,7 +227,7 @@ jobs:
           | Platform | File |
           |----------|------|
           | Linux (x64) | `.deb` / `.AppImage` |
-          | macOS (Apple Silicon) | `.dmg` |
+          | macOS (Apple Silicon) | `.dmg` (Signed & Notarized) |
           | Windows (x64) | `.msi` / `.exe` |
 
           ### Installation
@@ -202,6 +246,7 @@ jobs:
           **macOS**
           - Download the `.dmg` file
           - Open and drag to Applications
+          - App is signed and notarized, no additional steps needed
 
           **Windows**
           - Download and run the `.msi` or `.exe` installer
