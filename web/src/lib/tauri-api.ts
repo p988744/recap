@@ -879,6 +879,32 @@ export async function getTempoWorklogs(token: string, request: GetWorklogsReques
   return invoke<unknown[]>('get_tempo_worklogs', { token, request })
 }
 
+// Users Types
+
+export interface UpdateProfileRequest {
+  name?: string
+  email?: string
+  title?: string
+  employee_id?: string
+  department_id?: string
+}
+
+// Users Commands
+
+/**
+ * Get current user profile
+ */
+export async function getProfile(token: string): Promise<UserResponse> {
+  return invoke<UserResponse>('get_profile', { token })
+}
+
+/**
+ * Update user profile
+ */
+export async function updateProfile(token: string, request: UpdateProfileRequest): Promise<UserResponse> {
+  return invoke<UserResponse>('update_profile', { token, request })
+}
+
 // Re-export for convenience
 export const tauriApi = {
   // Auth
@@ -933,4 +959,7 @@ export const tauriApi = {
   syncWorklogsToTempo,
   uploadSingleWorklog,
   getTempoWorklogs,
+  // Users
+  getProfile,
+  updateProfile,
 }

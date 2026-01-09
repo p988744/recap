@@ -10,6 +10,7 @@ pub mod gitlab;
 pub mod reports;
 pub mod sync;
 pub mod tempo;
+pub mod users;
 pub mod work_items;
 
 use crate::db::Database;

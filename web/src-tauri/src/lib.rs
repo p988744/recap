@@ -80,6 +80,9 @@ pub fn run() {
             commands::tempo::sync_worklogs_to_tempo,
             commands::tempo::upload_single_worklog,
             commands::tempo::get_tempo_worklogs,
+            // Users
+            commands::users::get_profile,
+            commands::users::update_profile,
         ])
         .setup(|app| {
             // Setup logging

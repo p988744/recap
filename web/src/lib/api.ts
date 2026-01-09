@@ -441,12 +441,17 @@ export const api = {
   // Health
   health: () => fetchApi<{ status: string; version: string }>('/health'),
 
-  // User Profile
-  updateProfile: (data: { name?: string; email?: string; title?: string }) =>
-    fetchApi<{ id: string; name: string; email: string; title?: string }>('/users/profile', {
+  // User Profile - Use Tauri API when available
+  updateProfile: async (data: { name?: string; email?: string; title?: string }) => {
+    if (isTauri) {
+      const result = await tauriApi.updateProfile(getRequiredToken(), data)
+      return { id: result.id, name: result.name, email: result.email, title: result.title }
+    }
+    return fetchApi<{ id: string; name: string; email: string; title?: string }>('/users/profile', {
       method: 'PATCH',
       body: JSON.stringify(data),
-    }),
+    })
+  },
 
   // Config - Use Tauri API when available
   getConfig: async () => {
