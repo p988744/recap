@@ -524,6 +524,100 @@ export async function syncClaudeProjects(token: string, request: SyncProjectsReq
   return invoke<SyncResult>('sync_claude_projects', { token, request })
 }
 
+// Reports Types
+
+export interface ReportQuery {
+  start_date: string
+  end_date: string
+}
+
+export interface DailyItems {
+  date: string
+  hours: number
+  count: number
+}
+
+export interface PersonalReport {
+  start_date: string
+  end_date: string
+  total_hours: number
+  total_items: number
+  items_by_date: DailyItems[]
+  work_items: WorkItem[]
+}
+
+export interface SourceSummary {
+  source: string
+  hours: number
+  count: number
+}
+
+export interface SummaryReport {
+  start_date: string
+  end_date: string
+  total_hours: number
+  total_items: number
+  synced_to_tempo: number
+  mapped_to_jira: number
+  by_source: SourceSummary[]
+}
+
+export interface CategorySummary {
+  category: string
+  hours: number
+  count: number
+  percentage: number
+}
+
+export interface CategoryReport {
+  start_date: string
+  end_date: string
+  categories: CategorySummary[]
+}
+
+export interface ExportResult {
+  success: boolean
+  file_path?: string
+  error?: string
+}
+
+// Reports Commands
+
+/**
+ * Get personal report for date range
+ */
+export async function getPersonalReport(token: string, query: ReportQuery): Promise<PersonalReport> {
+  return invoke<PersonalReport>('get_personal_report', { token, query })
+}
+
+/**
+ * Get summary report
+ */
+export async function getSummaryReport(token: string, query: ReportQuery): Promise<SummaryReport> {
+  return invoke<SummaryReport>('get_summary_report', { token, query })
+}
+
+/**
+ * Get report grouped by category
+ */
+export async function getCategoryReport(token: string, query: ReportQuery): Promise<CategoryReport> {
+  return invoke<CategoryReport>('get_category_report', { token, query })
+}
+
+/**
+ * Get report grouped by source
+ */
+export async function getSourceReport(token: string, query: ReportQuery): Promise<CategoryReport> {
+  return invoke<CategoryReport>('get_source_report', { token, query })
+}
+
+/**
+ * Export work items to Excel file
+ */
+export async function exportExcelReport(token: string, query: ReportQuery): Promise<ExportResult> {
+  return invoke<ExportResult>('export_excel_report', { token, query })
+}
+
 // Re-export for convenience
 export const tauriApi = {
   // Auth
@@ -553,4 +647,10 @@ export const tauriApi = {
   importClaudeSessions,
   summarizeClaudeSession,
   syncClaudeProjects,
+  // Reports
+  getPersonalReport,
+  getSummaryReport,
+  getCategoryReport,
+  getSourceReport,
+  exportExcelReport,
 }

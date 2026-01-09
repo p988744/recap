@@ -6,6 +6,7 @@
 pub mod auth;
 pub mod claude;
 pub mod config;
+pub mod reports;
 pub mod work_items;
 
 use crate::db::Database;
