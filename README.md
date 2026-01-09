@@ -25,6 +25,40 @@
 | Windows | `Recap_x.x.x_x64-setup.exe` 或 `.msi` |
 | Linux | `recap_x.x.x_amd64.deb` 或 `.AppImage` |
 
+#### macOS 安裝說明
+
+由於 App 尚未經過 Apple 簽章，首次開啟會顯示「已損毀」警告。請執行以下指令移除隔離屬性：
+
+```bash
+# 如果已安裝到 Applications
+xattr -cr /Applications/Recap.app
+
+# 或是針對下載的 .dmg 檔案
+xattr -cr ~/Downloads/Recap_*.dmg
+```
+
+然後重新開啟即可正常使用。
+
+#### Windows 安裝說明
+
+首次執行可能會出現 Windows SmartScreen 警告：
+
+1. 點擊「**更多資訊**」
+2. 點擊「**仍要執行**」
+
+#### Linux 安裝說明
+
+**Debian/Ubuntu (.deb)**
+```bash
+sudo dpkg -i recap_*_amd64.deb
+```
+
+**AppImage**
+```bash
+chmod +x Recap_*.AppImage
+./Recap_*.AppImage
+```
+
 ### 從原始碼建置
 
 ```bash
