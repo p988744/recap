@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-01-09
+
+### Added
+
+- **Recap 桌面應用程式** - 全新 Tauri 桌面版本（Rust + React）
+  - 跨平台支援：Linux、macOS（Intel & Apple Silicon）、Windows
+  - 系統匣常駐
+  - 自動更新功能
+- **GitHub Actions CI/CD** - 自動化跨平台建置與發布
+  - Nightly builds（每日自動建置）
+  - Release builds（推送 tag 時觸發）
+  - 自動清理舊的 nightly releases
+
+### Changed
+
+- 專案架構調整，桌面應用程式位於 `web/` 目錄
+- GitLab CI 簡化為僅處理 Python CLI 部分
+
 ## [1.0.2] - 2025-12-31
 
 ### Added
