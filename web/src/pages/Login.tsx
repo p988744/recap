@@ -134,7 +134,7 @@ export function LoginPage() {
               </TabsList>
 
               <TabsContent value="login">
-                <form onSubmit={handleLogin} className="space-y-5">
+                <form onSubmit={handleLogin} className="space-y-5" noValidate>
                   <div className="space-y-2">
                     <Label htmlFor="login-username">帳號</Label>
                     <Input
@@ -165,7 +165,7 @@ export function LoginPage() {
               </TabsContent>
 
               <TabsContent value="register">
-                <form onSubmit={handleRegister} className="space-y-5">
+                <form onSubmit={handleRegister} className="space-y-5" noValidate>
                   <div className="space-y-2">
                     <Label htmlFor="reg-username">帳號</Label>
                     <Input
