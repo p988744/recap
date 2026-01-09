@@ -61,6 +61,25 @@ pub fn run() {
             commands::reports::get_category_report,
             commands::reports::get_source_report,
             commands::reports::export_excel_report,
+            // Sync
+            commands::sync::get_sync_status,
+            commands::sync::auto_sync,
+            commands::sync::list_available_projects,
+            // GitLab
+            commands::gitlab::get_gitlab_status,
+            commands::gitlab::configure_gitlab,
+            commands::gitlab::remove_gitlab_config,
+            commands::gitlab::list_gitlab_projects,
+            commands::gitlab::add_gitlab_project,
+            commands::gitlab::remove_gitlab_project,
+            commands::gitlab::sync_gitlab,
+            commands::gitlab::search_gitlab_projects,
+            // Tempo
+            commands::tempo::test_tempo_connection,
+            commands::tempo::validate_jira_issue,
+            commands::tempo::sync_worklogs_to_tempo,
+            commands::tempo::upload_single_worklog,
+            commands::tempo::get_tempo_worklogs,
         ])
         .setup(|app| {
             // Setup logging

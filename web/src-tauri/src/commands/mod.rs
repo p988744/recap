@@ -6,7 +6,10 @@
 pub mod auth;
 pub mod claude;
 pub mod config;
+pub mod gitlab;
 pub mod reports;
+pub mod sync;
+pub mod tempo;
 pub mod work_items;
 
 use crate::db::Database;

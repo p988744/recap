@@ -513,21 +513,46 @@ export const api = {
   setClaudeMode: () =>
     fetchApi<{ success: boolean; message: string }>('/sources/mode/claude', { method: 'POST' }),
 
-  // GitLab
-  configureGitLab: (gitlabUrl: string, gitlabPat: string) =>
-    fetchApi<{ message: string }>('/gitlab/config', {
+  // GitLab - Use Tauri API when available
+  configureGitLab: async (gitlabUrl: string, gitlabPat: string) => {
+    if (isTauri) {
+      return tauriApi.configureGitLab(getRequiredToken(), { gitlab_url: gitlabUrl, gitlab_pat: gitlabPat })
+    }
+    return fetchApi<{ message: string }>('/gitlab/config', {
       method: 'POST',
       body: JSON.stringify({ gitlab_url: gitlabUrl, gitlab_pat: gitlabPat }),
-    }),
-  getGitLabStatus: () =>
-    fetchApi<{ configured: boolean; gitlab_url: string | null }>('/gitlab/config/status'),
-  removeGitLabConfig: () =>
-    fetchApi<{ message: string }>('/gitlab/config', { method: 'DELETE' }),
-  getGitLabRemoteProjects: (search?: string, page = 1, perPage = 20) => {
+    })
+  },
+  getGitLabStatus: async () => {
+    if (isTauri) {
+      const result = await tauriApi.getGitLabStatus(getRequiredToken())
+      return { configured: result.configured, gitlab_url: result.gitlab_url || null }
+    }
+    return fetchApi<{ configured: boolean; gitlab_url: string | null }>('/gitlab/config/status')
+  },
+  removeGitLabConfig: async () => {
+    if (isTauri) {
+      return tauriApi.removeGitLabConfig(getRequiredToken())
+    }
+    return fetchApi<{ message: string }>('/gitlab/config', { method: 'DELETE' })
+  },
+  getGitLabRemoteProjects: async (search?: string, _page = 1, _perPage = 20) => {
+    if (isTauri) {
+      const projects = await tauriApi.searchGitLabProjects(getRequiredToken(), { search })
+      return projects.map(p => ({
+        id: p.id,
+        name: p.name,
+        path_with_namespace: p.path_with_namespace,
+        description: null as string | null,
+        web_url: p.web_url,
+        default_branch: p.default_branch || 'main',
+        last_activity_at: '',
+      }))
+    }
     const params = new URLSearchParams()
     if (search) params.append('search', search)
-    params.append('page', String(page))
-    params.append('per_page', String(perPage))
+    params.append('page', String(_page))
+    params.append('per_page', String(_perPage))
     return fetchApi<Array<{
       id: number
       name: string
@@ -538,8 +563,22 @@ export const api = {
       last_activity_at: string
     }>>(`/gitlab/remote-projects?${params}`)
   },
-  getGitLabTrackedProjects: () =>
-    fetchApi<Array<{
+  getGitLabTrackedProjects: async () => {
+    if (isTauri) {
+      const projects = await tauriApi.listGitLabProjects(getRequiredToken())
+      return projects.map(p => ({
+        id: p.id,
+        gitlab_project_id: p.gitlab_project_id,
+        name: p.name,
+        path_with_namespace: p.path_with_namespace,
+        gitlab_url: p.gitlab_url,
+        default_branch: p.default_branch,
+        enabled: p.enabled,
+        last_synced: p.last_synced || null,
+        created_at: p.created_at,
+      }))
+    }
+    return fetchApi<Array<{
       id: string
       gitlab_project_id: number
       name: string
@@ -549,7 +588,8 @@ export const api = {
       enabled: boolean
       last_synced: string | null
       created_at: string
-    }>>('/gitlab/projects'),
+    }>>('/gitlab/projects')
+  },
   addGitLabProject: (gitlabProjectId: number) =>
     fetchApi<{
       id: string
@@ -565,9 +605,22 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ gitlab_project_id: gitlabProjectId }),
     }),
-  removeGitLabProject: (projectId: string) =>
-    fetchApi<{ message: string }>(`/gitlab/projects/${projectId}`, { method: 'DELETE' }),
-  syncGitLabProject: (projectId: string, since?: string, until?: string) => {
+  removeGitLabProject: async (projectId: string) => {
+    if (isTauri) {
+      return tauriApi.removeGitLabProject(getRequiredToken(), projectId)
+    }
+    return fetchApi<{ message: string }>(`/gitlab/projects/${projectId}`, { method: 'DELETE' })
+  },
+  syncGitLabProject: async (projectId: string, since?: string, until?: string) => {
+    if (isTauri) {
+      const result = await tauriApi.syncGitLab(getRequiredToken(), { project_id: projectId, start_date: since, end_date: until })
+      return {
+        project_id: projectId,
+        commits_synced: result.synced_commits,
+        merge_requests_synced: result.synced_merge_requests,
+        work_items_created: result.work_items_created,
+      }
+    }
     const params = new URLSearchParams()
     if (since) params.append('since', since)
     if (until) params.append('until', until)
@@ -579,7 +632,16 @@ export const api = {
       work_items_created: number
     }>(`/gitlab/projects/${projectId}/sync${query ? `?${query}` : ''}`, { method: 'POST' })
   },
-  syncAllGitLabProjects: (since?: string, until?: string) => {
+  syncAllGitLabProjects: async (since?: string, until?: string) => {
+    if (isTauri) {
+      const result = await tauriApi.syncGitLab(getRequiredToken(), { start_date: since, end_date: until })
+      return [{
+        project_id: 'all',
+        commits_synced: result.synced_commits,
+        merge_requests_synced: result.synced_merge_requests,
+        work_items_created: result.work_items_created,
+      }]
+    }
     const params = new URLSearchParams()
     if (since) params.append('since', since)
     if (until) params.append('until', until)
@@ -827,32 +889,68 @@ export const api = {
     })
   },
 
-  // Sync
-  getSyncStatus: () => fetchApi<SyncStatus[]>('/sync/status'),
-  autoSync: (projectPaths?: string[]) =>
-    fetchApi<AutoSyncResponse>('/sync/auto', {
+  // Sync - Use Tauri API when available
+  getSyncStatus: async () => {
+    if (isTauri) {
+      return tauriApi.getSyncStatus(getRequiredToken())
+    }
+    return fetchApi<SyncStatus[]>('/sync/status')
+  },
+  autoSync: async (projectPaths?: string[]) => {
+    if (isTauri) {
+      return tauriApi.autoSync(getRequiredToken(), { project_paths: projectPaths })
+    }
+    return fetchApi<AutoSyncResponse>('/sync/auto', {
       method: 'POST',
       body: JSON.stringify({ project_paths: projectPaths }),
-    }),
-  getAvailableProjects: () => fetchApi<AvailableProject[]>('/sync/projects'),
+    })
+  },
+  getAvailableProjects: async () => {
+    if (isTauri) {
+      return tauriApi.listAvailableProjects(getRequiredToken())
+    }
+    return fetchApi<AvailableProject[]>('/sync/projects')
+  },
 
-  // Tempo
-  testTempoConnection: () =>
-    fetchApi<{ success: boolean; message: string }>('/tempo/test'),
-  validateJiraIssue: (issueKey: string) =>
-    fetchApi<{ valid: boolean; issue_key: string; summary?: string; message: string }>(
+  // Tempo - Use Tauri API when available
+  testTempoConnection: async () => {
+    if (isTauri) {
+      return tauriApi.testTempoConnection(getRequiredToken())
+    }
+    return fetchApi<{ success: boolean; message: string }>('/tempo/test')
+  },
+  validateJiraIssue: async (issueKey: string) => {
+    if (isTauri) {
+      return tauriApi.validateJiraIssue(getRequiredToken(), issueKey)
+    }
+    return fetchApi<{ valid: boolean; issue_key: string; summary?: string; message: string }>(
       `/tempo/validate/${issueKey}`
-    ),
-  syncWorklogsToTempo: (entries: TempoWorklogEntry[], dryRun = false) =>
-    fetchApi<TempoSyncResponse>('/tempo/sync', {
+    )
+  },
+  syncWorklogsToTempo: async (entries: TempoWorklogEntry[], dryRun = false) => {
+    if (isTauri) {
+      const tauriEntries = entries.map(e => ({
+        issue_key: e.issue_key,
+        date: e.date,
+        minutes: e.minutes,
+        description: e.description,
+      }))
+      return tauriApi.syncWorklogsToTempo(getRequiredToken(), { entries: tauriEntries, dry_run: dryRun })
+    }
+    return fetchApi<TempoSyncResponse>('/tempo/sync', {
       method: 'POST',
       body: JSON.stringify({ entries, dry_run: dryRun }),
-    }),
-  uploadSingleWorklog: (entry: TempoWorklogEntry) =>
-    fetchApi<TempoWorklogResult>('/tempo/upload', {
+    })
+  },
+  uploadSingleWorklog: async (entry: TempoWorklogEntry) => {
+    if (isTauri) {
+      return tauriApi.uploadSingleWorklog(getRequiredToken(), entry)
+    }
+    return fetchApi<TempoWorklogResult>('/tempo/upload', {
       method: 'POST',
       body: JSON.stringify(entry),
-    }),
+    })
+  },
 
   // Reports - Excel Export - Use Tauri API when available
   exportExcel: async (startDate: string, endDate: string) => {

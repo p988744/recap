@@ -618,6 +618,267 @@ export async function exportExcelReport(token: string, query: ReportQuery): Prom
   return invoke<ExportResult>('export_excel_report', { token, query })
 }
 
+// Sync Types
+
+export interface SyncStatus {
+  id: string
+  source: string
+  source_path?: string
+  last_sync_at?: string
+  last_item_count: number
+  status: string
+  error_message?: string
+}
+
+export interface AutoSyncRequest {
+  project_paths?: string[]
+}
+
+export interface SyncResult {
+  success: boolean
+  source: string
+  items_synced: number
+  message?: string
+}
+
+export interface AutoSyncResponse {
+  success: boolean
+  results: SyncResult[]
+  total_items: number
+}
+
+export interface AvailableProject {
+  path: string
+  name: string
+  source: string
+}
+
+// Sync Commands
+
+/**
+ * Get sync status for all sources
+ */
+export async function getSyncStatus(token: string): Promise<SyncStatus[]> {
+  return invoke<SyncStatus[]>('get_sync_status', { token })
+}
+
+/**
+ * Trigger auto-sync for Claude projects
+ */
+export async function autoSync(token: string, request: AutoSyncRequest = {}): Promise<AutoSyncResponse> {
+  return invoke<AutoSyncResponse>('auto_sync', { token, request })
+}
+
+/**
+ * List available projects that can be synced
+ */
+export async function listAvailableProjects(token: string): Promise<AvailableProject[]> {
+  return invoke<AvailableProject[]>('list_available_projects', { token })
+}
+
+// GitLab Types
+
+export interface GitLabConfigStatus {
+  configured: boolean
+  gitlab_url?: string
+}
+
+export interface ConfigureGitLabRequest {
+  gitlab_url: string
+  gitlab_pat: string
+}
+
+export interface GitLabProject {
+  id: string
+  user_id: string
+  gitlab_project_id: number
+  name: string
+  path_with_namespace: string
+  gitlab_url: string
+  default_branch: string
+  enabled: boolean
+  last_synced?: string
+  created_at: string
+}
+
+export interface AddGitLabProjectRequest {
+  gitlab_project_id: number
+  name: string
+  path_with_namespace: string
+  gitlab_url: string
+  default_branch?: string
+}
+
+export interface SyncGitLabRequest {
+  project_id?: string
+  start_date?: string
+  end_date?: string
+}
+
+export interface SyncGitLabResponse {
+  synced_commits: number
+  synced_merge_requests: number
+  work_items_created: number
+}
+
+export interface SearchGitLabProjectsRequest {
+  search?: string
+}
+
+export interface GitLabProjectInfo {
+  id: number
+  name: string
+  path_with_namespace: string
+  web_url: string
+  default_branch?: string
+}
+
+// GitLab Commands
+
+/**
+ * Get GitLab configuration status
+ */
+export async function getGitLabStatus(token: string): Promise<GitLabConfigStatus> {
+  return invoke<GitLabConfigStatus>('get_gitlab_status', { token })
+}
+
+/**
+ * Configure GitLab
+ */
+export async function configureGitLab(token: string, request: ConfigureGitLabRequest): Promise<{ message: string }> {
+  return invoke<{ message: string }>('configure_gitlab', { token, request })
+}
+
+/**
+ * Remove GitLab configuration
+ */
+export async function removeGitLabConfig(token: string): Promise<{ message: string }> {
+  return invoke<{ message: string }>('remove_gitlab_config', { token })
+}
+
+/**
+ * List user's tracked GitLab projects
+ */
+export async function listGitLabProjects(token: string): Promise<GitLabProject[]> {
+  return invoke<GitLabProject[]>('list_gitlab_projects', { token })
+}
+
+/**
+ * Add a GitLab project to track
+ */
+export async function addGitLabProject(token: string, request: AddGitLabProjectRequest): Promise<GitLabProject> {
+  return invoke<GitLabProject>('add_gitlab_project', { token, request })
+}
+
+/**
+ * Remove a GitLab project from tracking
+ */
+export async function removeGitLabProject(token: string, id: string): Promise<{ message: string }> {
+  return invoke<{ message: string }>('remove_gitlab_project', { token, id })
+}
+
+/**
+ * Sync GitLab data to work items
+ */
+export async function syncGitLab(token: string, request: SyncGitLabRequest = {}): Promise<SyncGitLabResponse> {
+  return invoke<SyncGitLabResponse>('sync_gitlab', { token, request })
+}
+
+/**
+ * Search GitLab projects
+ */
+export async function searchGitLabProjects(token: string, request: SearchGitLabProjectsRequest = {}): Promise<GitLabProjectInfo[]> {
+  return invoke<GitLabProjectInfo[]>('search_gitlab_projects', { token, request })
+}
+
+// Tempo Types
+
+export interface TempoSuccessResponse {
+  success: boolean
+  message: string
+}
+
+export interface WorklogEntryRequest {
+  issue_key: string
+  date: string
+  minutes: number
+  description: string
+}
+
+export interface WorklogEntryResponse {
+  id?: string
+  issue_key: string
+  date: string
+  minutes: number
+  hours: number
+  description: string
+  status: string
+  error_message?: string
+}
+
+export interface SyncWorklogsRequest {
+  entries: WorklogEntryRequest[]
+  dry_run?: boolean
+}
+
+export interface SyncWorklogsResponse {
+  success: boolean
+  total_entries: number
+  successful: number
+  failed: number
+  results: WorklogEntryResponse[]
+  dry_run: boolean
+}
+
+export interface GetWorklogsRequest {
+  date_from: string
+  date_to: string
+}
+
+export interface ValidateIssueResponse {
+  valid: boolean
+  issue_key: string
+  summary?: string
+  message: string
+}
+
+// Tempo Commands
+
+/**
+ * Test Jira/Tempo connection
+ */
+export async function testTempoConnection(token: string): Promise<TempoSuccessResponse> {
+  return invoke<TempoSuccessResponse>('test_tempo_connection', { token })
+}
+
+/**
+ * Validate a Jira issue key
+ */
+export async function validateJiraIssue(token: string, issueKey: string): Promise<ValidateIssueResponse> {
+  return invoke<ValidateIssueResponse>('validate_jira_issue', { token, issue_key: issueKey })
+}
+
+/**
+ * Sync multiple worklogs to Tempo/Jira
+ */
+export async function syncWorklogsToTempo(token: string, request: SyncWorklogsRequest): Promise<SyncWorklogsResponse> {
+  return invoke<SyncWorklogsResponse>('sync_worklogs_to_tempo', { token, request })
+}
+
+/**
+ * Upload a single worklog entry
+ */
+export async function uploadSingleWorklog(token: string, request: WorklogEntryRequest): Promise<WorklogEntryResponse> {
+  return invoke<WorklogEntryResponse>('upload_single_worklog', { token, request })
+}
+
+/**
+ * Get worklogs from Tempo for a date range
+ */
+export async function getTempoWorklogs(token: string, request: GetWorklogsRequest): Promise<unknown[]> {
+  return invoke<unknown[]>('get_tempo_worklogs', { token, request })
+}
+
 // Re-export for convenience
 export const tauriApi = {
   // Auth
@@ -653,4 +914,23 @@ export const tauriApi = {
   getCategoryReport,
   getSourceReport,
   exportExcelReport,
+  // Sync
+  getSyncStatus,
+  autoSync,
+  listAvailableProjects,
+  // GitLab
+  getGitLabStatus,
+  configureGitLab,
+  removeGitLabConfig,
+  listGitLabProjects,
+  addGitLabProject,
+  removeGitLabProject,
+  syncGitLab,
+  searchGitLabProjects,
+  // Tempo
+  testTempoConnection,
+  validateJiraIssue,
+  syncWorklogsToTempo,
+  uploadSingleWorklog,
+  getTempoWorklogs,
 }
