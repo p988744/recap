@@ -84,13 +84,27 @@ export interface Team {
   last_synced?: string
 }
 
-// API Client
+// API Client - Hybrid mode: uses Tauri Commands when available, falls back to HTTP
+import * as tauriApi from './tauri-api'
+
 const API_BASE = '/api'
 const TOKEN_KEY = 'recap_auth_token'
 
 function getAuthToken(): string | null {
   return localStorage.getItem(TOKEN_KEY)
 }
+
+function getRequiredToken(): string {
+  const token = getAuthToken()
+  if (!token) {
+    window.location.href = '/login'
+    throw new Error('No auth token')
+  }
+  return token
+}
+
+// Check if running in Tauri
+const isTauri = typeof window !== 'undefined' && '__TAURI__' in window
 
 async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const token = getAuthToken()
@@ -434,30 +448,52 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  // Config
-  getConfig: () => fetchApi<ConfigResponse>('/config'),
-  updateConfig: (data: Partial<ConfigResponse>) =>
-    fetchApi<{ message: string }>('/config', {
+  // Config - Use Tauri API when available
+  getConfig: async () => {
+    if (isTauri) {
+      return tauriApi.getConfig(getRequiredToken())
+    }
+    return fetchApi<ConfigResponse>('/config')
+  },
+  updateConfig: async (data: Partial<ConfigResponse>) => {
+    if (isTauri) {
+      return tauriApi.updateConfig(getRequiredToken(), {
+        daily_work_hours: data.daily_work_hours,
+        normalize_hours: data.normalize_hours,
+      })
+    }
+    return fetchApi<{ message: string }>('/config', {
       method: 'PATCH',
       body: JSON.stringify(data),
-    }),
-  updateLlmConfig: (data: UpdateLlmConfigRequest) =>
-    fetchApi<{ message: string; provider: string; model: string }>('/config/llm', {
+    })
+  },
+  updateLlmConfig: async (data: UpdateLlmConfigRequest) => {
+    if (isTauri) {
+      await tauriApi.updateLlmConfig(getRequiredToken(), data)
+      return { message: 'LLM configuration updated', provider: data.provider, model: data.model }
+    }
+    return fetchApi<{ message: string; provider: string; model: string }>('/config/llm', {
       method: 'PATCH',
       body: JSON.stringify(data),
-    }),
-  updateJiraConfig: (data: {
+    })
+  },
+  updateJiraConfig: async (data: {
     jira_url?: string
     jira_pat?: string
     jira_email?: string
     jira_api_token?: string
     auth_type?: string
     tempo_api_token?: string
-  }) =>
-    fetchApi<{ success: boolean; message: string }>('/config/jira', {
+  }) => {
+    if (isTauri) {
+      await tauriApi.updateJiraConfig(getRequiredToken(), data)
+      return { success: true, message: 'Jira configuration updated' }
+    }
+    return fetchApi<{ success: boolean; message: string }>('/config/jira', {
       method: 'POST',
       body: JSON.stringify(data),
-    }),
+    })
+  },
   testJira: () => fetchApi<{ success: boolean; message: string }>('/config/test-jira'),
   getTeams: () => fetchApi<{ teams: Team[]; total: number }>('/config/teams'),
 
@@ -607,8 +643,12 @@ export const api = {
       body: JSON.stringify({ entries, dry_run: dryRun }),
     }),
 
-  // Work Items
-  getWorkItems: (filters?: WorkItemFilters) => {
+  // Work Items - Use Tauri API when available
+  getWorkItems: async (filters?: WorkItemFilters) => {
+    if (isTauri) {
+      const result = await tauriApi.listWorkItems(getRequiredToken(), filters || {})
+      return result as WorkItemListResponse
+    }
     const params = new URLSearchParams()
     if (filters) {
       if (filters.page) params.append('page', String(filters.page))
@@ -626,28 +666,49 @@ export const api = {
     const query = params.toString()
     return fetchApi<WorkItemListResponse>(`/work-items${query ? `?${query}` : ''}`)
   },
-  getGroupedWorkItems: (options?: { start_date?: string; end_date?: string }) => {
+  getGroupedWorkItems: async (options?: { start_date?: string; end_date?: string }) => {
+    if (isTauri) {
+      return tauriApi.getGroupedWorkItems(getRequiredToken(), options || {})
+    }
     const params = new URLSearchParams()
     if (options?.start_date) params.append('start_date', options.start_date)
     if (options?.end_date) params.append('end_date', options.end_date)
     const query = params.toString()
     return fetchApi<GroupedWorkItemsResponse>(`/work-items/grouped${query ? `?${query}` : ''}`)
   },
-  getWorkItem: (id: string) => fetchApi<WorkItem>(`/work-items/${id}`),
-  createWorkItem: (data: WorkItemCreate) =>
-    fetchApi<WorkItem>('/work-items', {
+  getWorkItem: async (id: string) => {
+    if (isTauri) {
+      return tauriApi.getWorkItem(getRequiredToken(), id) as Promise<WorkItem>
+    }
+    return fetchApi<WorkItem>(`/work-items/${id}`)
+  },
+  createWorkItem: async (data: WorkItemCreate) => {
+    if (isTauri) {
+      return tauriApi.createWorkItem(getRequiredToken(), data) as Promise<WorkItem>
+    }
+    return fetchApi<WorkItem>('/work-items', {
       method: 'POST',
       body: JSON.stringify(data),
-    }),
-  updateWorkItem: (id: string, data: WorkItemUpdate) =>
-    fetchApi<WorkItem>(`/work-items/${id}`, {
+    })
+  },
+  updateWorkItem: async (id: string, data: WorkItemUpdate) => {
+    if (isTauri) {
+      return tauriApi.updateWorkItem(getRequiredToken(), id, data) as Promise<WorkItem>
+    }
+    return fetchApi<WorkItem>(`/work-items/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
-    }),
-  deleteWorkItem: (id: string) =>
-    fetchApi<{ message: string; count: number }>(`/work-items/${id}`, {
+    })
+  },
+  deleteWorkItem: async (id: string) => {
+    if (isTauri) {
+      await tauriApi.deleteWorkItem(getRequiredToken(), id)
+      return { message: 'Work item deleted', count: 1 }
+    }
+    return fetchApi<{ message: string; count: number }>(`/work-items/${id}`, {
       method: 'DELETE',
-    }),
+    })
+  },
   mapWorkItemJira: (id: string, jiraIssueKey: string, jiraIssueTitle?: string) =>
     fetchApi<WorkItem>(`/work-items/${id}/map-jira`, {
       method: 'POST',
@@ -658,22 +719,58 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ work_item_ids: workItemIds, jira_issue_key: jiraIssueKey, jira_issue_title: jiraIssueTitle }),
     }),
-  getWorkItemStats: (startDate?: string, endDate?: string) => {
+  getWorkItemStats: async (startDate?: string, endDate?: string) => {
+    if (isTauri) {
+      return tauriApi.getStatsSummary(getRequiredToken(), { start_date: startDate, end_date: endDate }) as Promise<WorkItemStats>
+    }
     const params = new URLSearchParams()
     if (startDate) params.append('start_date', startDate)
     if (endDate) params.append('end_date', endDate)
     const query = params.toString()
     return fetchApi<WorkItemStats>(`/work-items/stats/summary${query ? `?${query}` : ''}`)
   },
-  aggregateWorkItems: (options?: { start_date?: string; end_date?: string; source?: string }) =>
-    fetchApi<{ original_count: number; aggregated_count: number; deleted_count: number }>('/work-items/aggregate', {
+  aggregateWorkItems: async (options?: { start_date?: string; end_date?: string; source?: string }) => {
+    if (isTauri) {
+      return tauriApi.aggregateWorkItems(getRequiredToken(), options || {})
+    }
+    return fetchApi<{ original_count: number; aggregated_count: number; deleted_count: number }>('/work-items/aggregate', {
       method: 'POST',
       body: JSON.stringify(options || {}),
-    }),
+    })
+  },
 
-  // Reports
-  getPersonalReport: (startDate: string, endDate: string) =>
-    fetchApi<PersonalReport>(`/reports/personal?start_date=${startDate}&end_date=${endDate}`),
+  // Reports - Use Tauri API when available
+  getPersonalReport: async (startDate: string, endDate: string) => {
+    if (isTauri) {
+      const result = await tauriApi.getPersonalReport(getRequiredToken(), { start_date: startDate, end_date: endDate })
+      // Transform to match PersonalReport interface
+      return {
+        user_name: '',  // Will be filled by the component or from another source
+        user_email: '',
+        start_date: result.start_date,
+        end_date: result.end_date,
+        total_hours: result.total_hours,
+        work_items: result.work_items.map(item => ({
+          id: item.id,
+          title: item.title,
+          hours: item.hours,
+          date: item.date,
+          jira_issue_key: item.jira_issue_key,
+          category: item.category,
+          source: item.source,
+        })),
+        daily_breakdown: result.items_by_date.map(d => ({
+          date: d.date,
+          total_hours: d.hours,
+          items: [],  // Not available in the Tauri response
+        })),
+        category_breakdown: {},  // Can be calculated from work_items if needed
+        jira_issues: {},
+        source_breakdown: {},
+      } as PersonalReport
+    }
+    return fetchApi<PersonalReport>(`/reports/personal?start_date=${startDate}&end_date=${endDate}`)
+  },
   getWeeklyReport: (weekStart?: string) => {
     const params = weekStart ? `?week_start=${weekStart}` : ''
     return fetchApi<WeeklyReport>(`/reports/weekly${params}`)
@@ -691,22 +788,44 @@ export const api = {
     return response.text()
   },
 
-  // Timeline for Gantt chart
-  getTimeline: (date: string) =>
-    fetchApi<TimelineResponse>(`/work-items/timeline?date=${date}`),
+  // Timeline for Gantt chart - Use Tauri API when available
+  getTimeline: async (date: string) => {
+    if (isTauri) {
+      return tauriApi.getTimelineData(getRequiredToken(), date)
+    }
+    return fetchApi<TimelineResponse>(`/work-items/timeline?date=${date}`)
+  },
 
-  // Claude Code
-  getClaudeSessions: () => fetchApi<ClaudeProject[]>('/claude/sessions'),
-  importClaudeSessions: (sessionIds: string[]) =>
-    fetchApi<{ imported: number; work_items_created: number }>('/claude/sessions/import', {
+  // Claude Code - Use Tauri API when available
+  getClaudeSessions: async () => {
+    if (isTauri) {
+      return tauriApi.listClaudeSessions(getRequiredToken())
+    }
+    return fetchApi<ClaudeProject[]>('/claude/sessions')
+  },
+  importClaudeSessions: async (sessionIds: string[]) => {
+    if (isTauri) {
+      return tauriApi.importClaudeSessions(getRequiredToken(), { session_ids: sessionIds })
+    }
+    return fetchApi<{ imported: number; work_items_created: number }>('/claude/sessions/import', {
       method: 'POST',
       body: JSON.stringify({ session_ids: sessionIds }),
-    }),
-  syncClaudeProjects: (projectPaths: string[]) =>
-    fetchApi<{ synced: number; skipped: number; work_items_created: number }>('/claude/sync', {
+    })
+  },
+  syncClaudeProjects: async (projectPaths: string[]) => {
+    if (isTauri) {
+      const result = await tauriApi.syncClaudeProjects(getRequiredToken(), { project_paths: projectPaths })
+      return {
+        synced: result.sessions_processed,
+        skipped: result.sessions_skipped,
+        work_items_created: result.work_items_created,
+      }
+    }
+    return fetchApi<{ synced: number; skipped: number; work_items_created: number }>('/claude/sync', {
       method: 'POST',
       body: JSON.stringify({ project_paths: projectPaths }),
-    }),
+    })
+  },
 
   // Sync
   getSyncStatus: () => fetchApi<SyncStatus[]>('/sync/status'),
@@ -735,8 +854,20 @@ export const api = {
       body: JSON.stringify(entry),
     }),
 
-  // Reports - Excel Export
+  // Reports - Excel Export - Use Tauri API when available
   exportExcel: async (startDate: string, endDate: string) => {
+    if (isTauri) {
+      const result = await tauriApi.exportExcelReport(getRequiredToken(), { start_date: startDate, end_date: endDate })
+      if (!result.success || !result.file_path) {
+        throw new Error(result.error || 'Failed to export Excel')
+      }
+      // For Tauri, we return the file path instead of a blob
+      // The frontend should handle opening the file location
+      return {
+        filePath: result.file_path,
+        filename: result.file_path.split('/').pop() || `work_report_${startDate}_${endDate}.xlsx`,
+      }
+    }
     const token = getAuthToken()
     const response = await fetch(
       `${API_BASE}/reports/export/excel?start_date=${startDate}&end_date=${endDate}`,
