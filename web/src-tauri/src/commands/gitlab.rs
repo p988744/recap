@@ -17,9 +17,10 @@ use super::AppState;
 #[derive(Debug, Deserialize)]
 pub struct AddProjectRequest {
     pub gitlab_project_id: i64,
-    pub name: String,
-    pub path_with_namespace: String,
-    pub gitlab_url: String,
+    // Optional fields - if not provided, will be fetched from GitLab API
+    pub name: Option<String>,
+    pub path_with_namespace: Option<String>,
+    pub gitlab_url: Option<String>,
     pub default_branch: Option<String>,
 }
 
@@ -166,9 +167,66 @@ pub async fn add_gitlab_project(
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
     let db = state.db.lock().await;
 
+    // Get user's GitLab config
+    let user: crate::models::User = sqlx::query_as("SELECT * FROM users WHERE id = ?")
+        .bind(&claims.sub)
+        .fetch_one(&db.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let user_gitlab_url = user
+        .gitlab_url
+        .ok_or("GitLab URL not configured".to_string())?;
+
+    let gitlab_pat = user
+        .gitlab_pat
+        .ok_or("GitLab PAT not configured".to_string())?;
+
+    // Fetch project details from GitLab API if not provided
+    let (name, path_with_namespace, gitlab_url, default_branch) =
+        if request.name.is_none() || request.path_with_namespace.is_none() {
+            let client = reqwest::Client::new();
+            let url = format!(
+                "{}/api/v4/projects/{}",
+                user_gitlab_url, request.gitlab_project_id
+            );
+
+            let response = client
+                .get(&url)
+                .header("PRIVATE-TOKEN", &gitlab_pat)
+                .send()
+                .await
+                .map_err(|e| format!("Failed to fetch project details: {}", e))?;
+
+            if !response.status().is_success() {
+                return Err(format!("GitLab API returned: {}", response.status()));
+            }
+
+            let project_info: GitLabProjectInfo = response
+                .json()
+                .await
+                .map_err(|e| format!("Failed to parse project details: {}", e))?;
+
+            (
+                project_info.name,
+                project_info.path_with_namespace,
+                request.gitlab_url.unwrap_or(user_gitlab_url),
+                request
+                    .default_branch
+                    .or(project_info.default_branch)
+                    .unwrap_or_else(|| "main".to_string()),
+            )
+        } else {
+            (
+                request.name.unwrap(),
+                request.path_with_namespace.unwrap(),
+                request.gitlab_url.unwrap_or(user_gitlab_url),
+                request.default_branch.unwrap_or_else(|| "main".to_string()),
+            )
+        };
+
     let id = Uuid::new_v4().to_string();
     let now = Utc::now();
-    let default_branch = request.default_branch.unwrap_or_else(|| "main".to_string());
 
     sqlx::query(
         r#"
@@ -184,9 +242,9 @@ pub async fn add_gitlab_project(
     .bind(&id)
     .bind(&claims.sub)
     .bind(request.gitlab_project_id)
-    .bind(&request.name)
-    .bind(&request.path_with_namespace)
-    .bind(&request.gitlab_url)
+    .bind(&name)
+    .bind(&path_with_namespace)
+    .bind(&gitlab_url)
     .bind(&default_branch)
     .bind(now)
     .execute(&db.pool)

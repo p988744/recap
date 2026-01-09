@@ -703,9 +703,10 @@ export interface GitLabProject {
 
 export interface AddGitLabProjectRequest {
   gitlab_project_id: number
-  name: string
-  path_with_namespace: string
-  gitlab_url: string
+  // Optional fields - if not provided, will be fetched from GitLab API
+  name?: string
+  path_with_namespace?: string
+  gitlab_url?: string
   default_branch?: string
 }
 

@@ -595,8 +595,22 @@ export const api = {
       created_at: string
     }>>('/gitlab/projects')
   },
-  addGitLabProject: (gitlabProjectId: number) =>
-    fetchApi<{
+  addGitLabProject: async (gitlabProjectId: number) => {
+    if (isTauri) {
+      const result = await tauriApi.addGitLabProject(getRequiredToken(), { gitlab_project_id: gitlabProjectId })
+      return {
+        id: result.id,
+        gitlab_project_id: result.gitlab_project_id,
+        name: result.name,
+        path_with_namespace: result.path_with_namespace,
+        gitlab_url: result.gitlab_url,
+        default_branch: result.default_branch,
+        enabled: result.enabled,
+        last_synced: result.last_synced ?? null,
+        created_at: result.created_at,
+      }
+    }
+    return fetchApi<{
       id: string
       gitlab_project_id: number
       name: string
@@ -609,7 +623,8 @@ export const api = {
     }>('/gitlab/projects', {
       method: 'POST',
       body: JSON.stringify({ gitlab_project_id: gitlabProjectId }),
-    }),
+    })
+  },
   removeGitLabProject: async (projectId: string) => {
     if (isTauri) {
       return tauriApi.removeGitLabProject(getRequiredToken(), projectId)
