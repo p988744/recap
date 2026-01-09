@@ -1,15 +1,5 @@
 //! Authentication module - JWT token management
 
-use axum::{
-    async_trait,
-    extract::FromRequestParts,
-    http::{request::Parts, StatusCode},
-    RequestPartsExt,
-};
-use axum_extra::{
-    headers::{authorization::Bearer, Authorization},
-    TypedHeader,
-};
 use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 
@@ -57,29 +47,4 @@ pub fn hash_password(password: &str) -> Result<String, bcrypt::BcryptError> {
 /// Verify a password against a hash
 pub fn verify_password(password: &str, hash: &str) -> Result<bool, bcrypt::BcryptError> {
     bcrypt::verify(password, hash)
-}
-
-/// Authenticated user extractor
-pub struct AuthUser(pub Claims);
-
-#[async_trait]
-impl<S> FromRequestParts<S> for AuthUser
-where
-    S: Send + Sync,
-{
-    type Rejection = (StatusCode, &'static str);
-
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        // Get the Authorization header
-        let TypedHeader(Authorization(bearer)) = parts
-            .extract::<TypedHeader<Authorization<Bearer>>>()
-            .await
-            .map_err(|_| (StatusCode::UNAUTHORIZED, "Missing authorization header"))?;
-
-        // Verify the token
-        let claims = verify_token(bearer.token())
-            .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid token"))?;
-
-        Ok(AuthUser(claims))
-    }
 }

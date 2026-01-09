@@ -2,22 +2,17 @@
 //!
 //! A Tauri application for work item management.
 
-mod api;
 mod auth;
 mod commands;
 mod db;
 mod models;
 mod services;
 
-use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager, RunEvent, WindowEvent,
 };
-
-static SERVER_STARTED: AtomicBool = AtomicBool::new(false);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -98,11 +93,8 @@ pub fn run() {
                 match db::Database::new().await {
                     Ok(database) => {
                         log::info!("Database initialized successfully");
-                        let state = commands::AppState::new(database.clone());
+                        let state = commands::AppState::new(database);
                         app_handle.manage(state);
-
-                        // Also start the legacy Axum API server for gradual migration
-                        start_api_server_with_db(database).await;
                     }
                     Err(e) => {
                         log::error!("Failed to initialize database: {}", e);
@@ -172,37 +164,4 @@ pub fn run() {
                 api.prevent_exit();
             }
         });
-}
-
-/// Start the Axum API server (legacy, for gradual migration)
-async fn start_api_server_with_db(db: db::Database) {
-    if SERVER_STARTED.load(Ordering::SeqCst) {
-        return;
-    }
-
-    log::info!("Starting legacy Axum API server...");
-
-    // Create router
-    let app = api::create_router(db);
-
-    // Bind to localhost
-    let addr = SocketAddr::from(([127, 0, 0, 1], 8000));
-    log::info!("API server listening on http://{}", addr);
-
-    SERVER_STARTED.store(true, Ordering::SeqCst);
-
-    // Start server
-    let listener = match tokio::net::TcpListener::bind(addr).await {
-        Ok(listener) => listener,
-        Err(e) => {
-            log::error!("Failed to bind to {}: {}", addr, e);
-            SERVER_STARTED.store(false, Ordering::SeqCst);
-            return;
-        }
-    };
-
-    if let Err(e) = axum::serve(listener, app).await {
-        log::error!("Server error: {}", e);
-        SERVER_STARTED.store(false, Ordering::SeqCst);
-    }
 }
