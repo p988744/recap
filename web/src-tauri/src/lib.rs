@@ -50,6 +50,11 @@ pub fn run() {
             commands::work_items::get_timeline_data,
             commands::work_items::batch_sync_tempo,
             commands::work_items::aggregate_work_items,
+            // Claude
+            commands::claude::list_claude_sessions,
+            commands::claude::import_claude_sessions,
+            commands::claude::summarize_claude_session,
+            commands::claude::sync_claude_projects,
         ])
         .setup(|app| {
             // Setup logging

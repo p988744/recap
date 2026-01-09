@@ -432,6 +432,98 @@ export async function aggregateWorkItems(token: string, request: AggregateReques
   return invoke<AggregateResponse>('aggregate_work_items', { token, request })
 }
 
+// Claude Types
+
+export interface ToolUsage {
+  tool_name: string
+  count: number
+  details: string[]
+}
+
+export interface ClaudeSession {
+  session_id: string
+  agent_id: string
+  slug: string
+  cwd: string
+  git_branch?: string
+  first_message?: string
+  message_count: number
+  first_timestamp?: string
+  last_timestamp?: string
+  file_path: string
+  file_size: number
+  tool_usage: ToolUsage[]
+  files_modified: string[]
+  commands_run: string[]
+  user_messages: string[]
+}
+
+export interface ClaudeProject {
+  path: string
+  name: string
+  sessions: ClaudeSession[]
+}
+
+export interface ImportSessionsRequest {
+  session_ids: string[]
+}
+
+export interface ImportResult {
+  imported: number
+  work_items_created: number
+}
+
+export interface SummarizeRequest {
+  session_file_path: string
+}
+
+export interface SummarizeResult {
+  summary: string
+  success: boolean
+  error?: string
+}
+
+export interface SyncProjectsRequest {
+  project_paths: string[]
+}
+
+export interface SyncResult {
+  sessions_processed: number
+  sessions_skipped: number
+  work_items_created: number
+  work_items_updated: number
+}
+
+// Claude Commands
+
+/**
+ * List all Claude Code sessions from local machine
+ */
+export async function listClaudeSessions(token: string): Promise<ClaudeProject[]> {
+  return invoke<ClaudeProject[]>('list_claude_sessions', { token })
+}
+
+/**
+ * Import selected sessions as work items
+ */
+export async function importClaudeSessions(token: string, request: ImportSessionsRequest): Promise<ImportResult> {
+  return invoke<ImportResult>('import_claude_sessions', { token, request })
+}
+
+/**
+ * Summarize a session using LLM
+ */
+export async function summarizeClaudeSession(token: string, request: SummarizeRequest): Promise<SummarizeResult> {
+  return invoke<SummarizeResult>('summarize_claude_session', { token, request })
+}
+
+/**
+ * Sync selected projects - aggregate sessions by project+date
+ */
+export async function syncClaudeProjects(token: string, request: SyncProjectsRequest): Promise<SyncResult> {
+  return invoke<SyncResult>('sync_claude_projects', { token, request })
+}
+
 // Re-export for convenience
 export const tauriApi = {
   // Auth
@@ -456,4 +548,9 @@ export const tauriApi = {
   getTimelineData,
   batchSyncTempo,
   aggregateWorkItems,
+  // Claude
+  listClaudeSessions,
+  importClaudeSessions,
+  summarizeClaudeSession,
+  syncClaudeProjects,
 }

@@ -4,6 +4,7 @@
 //! Commands are called directly from the frontend via `invoke()`.
 
 pub mod auth;
+pub mod claude;
 pub mod config;
 pub mod work_items;
 
