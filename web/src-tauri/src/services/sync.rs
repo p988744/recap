@@ -237,7 +237,7 @@ struct DailyWorkItem {
 }
 
 /// Sync result for Claude projects
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub struct ClaudeSyncResult {
     pub sessions_processed: usize,
     pub sessions_skipped: usize,
@@ -446,10 +446,8 @@ pub async fn sync_claude_projects(
 
                     let hours =
                         session_hours_from_options(&session.first_timestamp, &session.last_timestamp);
-                    if hours < 0.08 {
-                        sessions_skipped += 1;
-                        continue;
-                    }
+                    // Note: calculate_session_hours already enforces minimum 0.1h (6 min)
+                    // Sessions with valid timestamps will always have hours >= 0.1
 
                     let date = session
                         .first_timestamp
@@ -491,6 +489,32 @@ pub async fn sync_claude_projects(
 
         let git_commits = get_git_commits_for_date(&project_path, &date);
 
+        // Cross-source deduplication: filter out commits already synced from GitLab
+        let git_commits = if !git_commits.is_empty() {
+            let commit_hashes: Vec<&str> = git_commits.iter().map(|c| c.hash.as_str()).collect();
+            let placeholders = commit_hashes.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let query = format!(
+                "SELECT commit_hash FROM work_items WHERE source = 'gitlab' AND commit_hash IN ({}) AND user_id = ?",
+                placeholders
+            );
+
+            let mut q = sqlx::query_scalar::<_, String>(&query);
+            for hash in &commit_hashes {
+                q = q.bind(*hash);
+            }
+            q = q.bind(user_id);
+
+            let existing_hashes: Vec<String> = q.fetch_all(pool).await.unwrap_or_default();
+
+            // Filter out commits that already exist as GitLab work items
+            git_commits
+                .into_iter()
+                .filter(|c| !existing_hashes.contains(&c.hash))
+                .collect()
+        } else {
+            git_commits
+        };
+
         let daily = DailyWorkItem {
             project_path: project_path.clone(),
             project_name: project_name.clone(),
@@ -530,38 +554,64 @@ pub async fn sync_claude_projects(
         };
         let description = build_daily_description(&daily);
 
-        // Check if work item exists
-        let existing: Option<(String,)> =
-            sqlx::query_as("SELECT id FROM work_items WHERE content_hash = ? AND user_id = ?")
+        // Extract first commit hash for bi-directional dedup tracking
+        let primary_commit_hash: Option<String> = daily.git_commits.first().map(|c| c.hash.clone());
+
+        // Check if work item exists, also fetch hours_source to preserve user edits
+        let existing: Option<(String, Option<String>)> =
+            sqlx::query_as("SELECT id, hours_source FROM work_items WHERE content_hash = ? AND user_id = ?")
                 .bind(&content_hash)
                 .bind(user_id)
                 .fetch_optional(pool)
                 .await
                 .map_err(|e| e.to_string())?;
 
-        if let Some((existing_id,)) = existing {
-            sqlx::query(
-                r#"UPDATE work_items
-                SET title = ?, description = ?, hours = ?, hours_source = 'session', hours_estimated = ?, updated_at = ?
-                WHERE id = ?"#,
-            )
-            .bind(&title)
-            .bind(&description)
-            .bind(total_hours)
-            .bind(total_hours)
-            .bind(now)
-            .bind(&existing_id)
-            .execute(pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        if let Some((existing_id, existing_hours_source)) = existing {
+            // Preserve user-modified hours - only update hours if not manually set
+            let user_modified = existing_hours_source.as_deref() == Some("user_modified");
+
+            if user_modified {
+                // User has manually edited hours - only update description/title, keep hours
+                sqlx::query(
+                    r#"UPDATE work_items
+                    SET title = ?, description = ?, hours_estimated = ?, commit_hash = COALESCE(commit_hash, ?), updated_at = ?
+                    WHERE id = ?"#,
+                )
+                .bind(&title)
+                .bind(&description)
+                .bind(total_hours)
+                .bind(&primary_commit_hash)
+                .bind(now)
+                .bind(&existing_id)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+            } else {
+                // Safe to update all fields including hours
+                sqlx::query(
+                    r#"UPDATE work_items
+                    SET title = ?, description = ?, hours = ?, hours_source = 'session', hours_estimated = ?, commit_hash = COALESCE(commit_hash, ?), updated_at = ?
+                    WHERE id = ?"#,
+                )
+                .bind(&title)
+                .bind(&description)
+                .bind(total_hours)
+                .bind(total_hours)
+                .bind(&primary_commit_hash)
+                .bind(now)
+                .bind(&existing_id)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+            }
 
             updated += 1;
         } else {
             let id = Uuid::new_v4().to_string();
             sqlx::query(
                 r#"INSERT INTO work_items
-                (id, user_id, source, title, description, hours, date, content_hash, hours_source, hours_estimated, created_at, updated_at)
-                VALUES (?, ?, 'claude_code', ?, ?, ?, ?, ?, 'session', ?, ?, ?)"#,
+                (id, user_id, source, title, description, hours, date, content_hash, hours_source, hours_estimated, commit_hash, created_at, updated_at)
+                VALUES (?, ?, 'claude_code', ?, ?, ?, ?, ?, 'session', ?, ?, ?, ?)"#,
             )
             .bind(&id)
             .bind(user_id)
@@ -571,6 +621,7 @@ pub async fn sync_claude_projects(
             .bind(&date)
             .bind(&content_hash)
             .bind(total_hours)
+            .bind(&primary_commit_hash)
             .bind(now)
             .bind(now)
             .execute(pool)

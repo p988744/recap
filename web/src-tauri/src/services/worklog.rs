@@ -287,7 +287,7 @@ fn get_commit_file_changes(repo_dir: &PathBuf, hash: &str) -> (Vec<FileChange>, 
 }
 
 /// Calculate session hours from start and end timestamps
-/// Returns hours capped between 0.1 and 8.0
+/// Returns hours capped between 0.25 and 8.0, rounded to nearest 0.25h
 pub fn calculate_session_hours(start: &str, end: &str) -> f64 {
     if let (Ok(start_dt), Ok(end_dt)) = (
         DateTime::parse_from_rfc3339(start),
@@ -295,7 +295,9 @@ pub fn calculate_session_hours(start: &str, end: &str) -> f64 {
     ) {
         let duration = end_dt.signed_duration_since(start_dt);
         let hours = duration.num_minutes() as f64 / 60.0;
-        hours.min(8.0).max(0.1)
+        let capped = hours.min(8.0).max(0.25);
+        // Round to nearest 0.25h for consistency with commit hours
+        (capped * 4.0).round() / 4.0
     } else {
         0.5 // Default fallback
     }
@@ -530,12 +532,12 @@ mod tests {
 
     #[test]
     fn test_calculate_session_hours_min_cap() {
-        // Short session should return minimum 0.1h
+        // Short session should return minimum 0.25h (15 minutes)
         let hours = calculate_session_hours(
             "2026-01-11T09:00:00+08:00",
             "2026-01-11T09:03:00+08:00", // 3 minutes
         );
-        assert_eq!(hours, 0.1, "Should cap at minimum 0.1 hours");
+        assert_eq!(hours, 0.25, "Should cap at minimum 0.25 hours");
     }
 
     #[test]

@@ -868,9 +868,7 @@ pub async fn get_timeline_data(
                             use crate::services::{calculate_session_hours, get_commits_in_time_range};
 
                             let hours = calculate_session_hours(&metadata.first_ts, &metadata.last_ts);
-                            if hours < 0.08 {
-                                continue;
-                            }
+                            // Note: calculate_session_hours already enforces minimum 0.1h (6 min)
 
                             let actual_project_name = metadata.cwd.as_ref()
                                 .and_then(|c| c.split('/').last())
@@ -1935,11 +1933,11 @@ mod tests {
 
     #[test]
     fn test_calculate_hours_minimum() {
-        // Very short session should have minimum 0.1 hours
+        // Very short session should have minimum 0.25 hours (15 minutes)
         let start = "2025-01-10T09:00:00+08:00";
         let end = "2025-01-10T09:01:00+08:00"; // 1 minute
         let hours = calculate_hours(start, end);
-        assert!((hours - 0.1).abs() < 0.01); // Minimum is 0.1
+        assert!((hours - 0.25).abs() < 0.01); // Minimum is 0.25
     }
 
     #[test]
@@ -1948,8 +1946,8 @@ mod tests {
         let start = "2025-01-10T10:00:00+08:00";
         let end = "2025-01-10T09:00:00+08:00";
         let hours = calculate_hours(start, end);
-        // Should return minimum 0.1 due to .max(0.1)
-        assert!((hours - 0.1).abs() < 0.01);
+        // Should return minimum 0.25 due to .max(0.25)
+        assert!((hours - 0.25).abs() < 0.01);
     }
 
     // ==================== Parallel Processing Tests ====================
@@ -2083,7 +2081,7 @@ mod tests {
 
     #[test]
     fn test_session_filtering_by_minimum_hours() {
-        // Sessions < 0.08 hours should be filtered out
+        // Very short sessions get capped at minimum 0.25 hours (15 minutes)
         let content = r#"{"timestamp":"2025-01-10T09:00:00+08:00","cwd":"/home/user/project","message":{"role":"user","content":"Very short meaningful session"}}
 {"timestamp":"2025-01-10T09:02:00+08:00"}"#;
 
@@ -2093,9 +2091,9 @@ mod tests {
         let metadata = parse_session_timestamps_fast(&path).unwrap();
         let hours = calculate_hours(&metadata.first_ts, &metadata.last_ts);
 
-        // 2 minutes = 0.033 hours, but minimum is 0.1
-        // The actual filtering happens in get_timeline_data where hours < 0.08 is skipped
-        assert!(hours >= 0.1); // Due to .max(0.1) in calculate_hours
+        // 2 minutes = 0.033 hours raw, but minimum is 0.25h (15 minutes)
+        // calculate_session_hours enforces .min(8.0).max(0.25) and rounds to 0.25h
+        assert!(hours >= 0.25); // Due to .max(0.25) in calculate_hours
     }
 
     #[test]

@@ -220,15 +220,8 @@ mod hours_source_priority {
 
 /// Test session hours calculation
 mod session_hours {
-    use chrono::{DateTime, FixedOffset};
-
-    fn calculate_session_hours(start: &str, end: &str) -> f64 {
-        let start_dt = DateTime::parse_from_rfc3339(start).unwrap();
-        let end_dt = DateTime::parse_from_rfc3339(end).unwrap();
-        let duration = end_dt.signed_duration_since(start_dt);
-        let hours = duration.num_minutes() as f64 / 60.0;
-        hours.min(8.0).max(0.1) // Cap at 8h, minimum 0.1h
-    }
+    // Import the real function from the library to ensure tests match production
+    pub use recap_lib::services::calculate_session_hours;
 
     #[test]
     fn test_normal_session_duration() {
@@ -245,7 +238,7 @@ mod session_hours {
             "2026-01-11T09:00:00+08:00",
             "2026-01-11T09:03:00+08:00", // 3 minutes
         );
-        assert_eq!(hours, 0.1, "Very short session should be capped at minimum 0.1h");
+        assert_eq!(hours, 0.25, "Very short session should be capped at minimum 0.25h");
     }
 
     #[test]
