@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::auth::verify_token;
 use crate::models::{CreateWorkItem, PaginatedResponse, UpdateWorkItem, WorkItem};
+use crate::services::is_meaningful_message;
 
 use super::AppState;
 
@@ -128,13 +129,8 @@ pub struct StatsQuery {
 
 // Timeline types
 
-#[derive(Debug, Serialize)]
-pub struct TimelineCommit {
-    pub hash: String,
-    pub message: String,
-    pub time: String,
-    pub author: String,
-}
+// TimelineCommit is imported from crate::services::TimelineCommit
+pub use crate::services::TimelineCommit;
 
 #[derive(Debug, Serialize)]
 pub struct TimelineSession {
@@ -868,7 +864,10 @@ pub async fn get_timeline_data(
                                 continue;
                             }
 
-                            let hours = calculate_hours(&metadata.first_ts, &metadata.last_ts);
+                            // Use shared worklog service functions
+                            use crate::services::{calculate_session_hours, get_commits_in_time_range};
+
+                            let hours = calculate_session_hours(&metadata.first_ts, &metadata.last_ts);
                             if hours < 0.08 {
                                 continue;
                             }
@@ -880,7 +879,7 @@ pub async fn get_timeline_data(
 
                             let project_path_for_git = metadata.cwd.clone().unwrap_or_default();
 
-                            let commits = get_commits_in_range(&project_path_for_git, &metadata.first_ts, &metadata.last_ts);
+                            let commits = get_commits_in_time_range(&project_path_for_git, &metadata.first_ts, &metadata.last_ts);
 
                             let session_id = file_path.file_stem()
                                 .and_then(|s| s.to_str())
@@ -1231,13 +1230,9 @@ fn parse_session_timestamps_fast(path: &std::path::PathBuf) -> Option<SessionMet
                         if let Some(message) = msg.get("message") {
                             if message.get("role").and_then(|r| r.as_str()) == Some("user") {
                                 if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
-                                    let trimmed = content.trim();
-                                    if trimmed.len() >= 10
-                                        && !trimmed.to_lowercase().starts_with("warmup")
-                                        && !trimmed.starts_with("<command-")
-                                    {
+                                    if is_meaningful_message(content) {
                                         meaningful_count += 1;
-                                        first_msg = Some(trimmed.chars().take(150).collect());
+                                        first_msg = Some(content.trim().chars().take(150).collect());
                                     }
                                 }
                             }
@@ -1282,14 +1277,10 @@ fn parse_session_timestamps_fast(path: &std::path::PathBuf) -> Option<SessionMet
                     if let Some(message) = msg.get("message") {
                         if message.get("role").and_then(|r| r.as_str()) == Some("user") {
                             if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
-                                let trimmed = content.trim();
-                                if trimmed.len() >= 10
-                                    && !trimmed.to_lowercase().starts_with("warmup")
-                                    && !trimmed.starts_with("<command-")
-                                {
+                                if is_meaningful_message(content) {
                                     meaningful_count += 1;
                                     if first_msg.is_none() {
-                                        first_msg = Some(trimmed.chars().take(150).collect());
+                                        first_msg = Some(content.trim().chars().take(150).collect());
                                     }
                                 }
                             }
@@ -1348,13 +1339,9 @@ fn parse_session_timestamps_full(path: &std::path::PathBuf) -> Option<SessionMet
                 if let Some(message) = msg.get("message") {
                     if message.get("role").and_then(|r| r.as_str()) == Some("user") {
                         if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
-                            let trimmed = content.trim();
-                            if trimmed.len() >= 10
-                                && !trimmed.to_lowercase().starts_with("warmup")
-                                && !trimmed.starts_with("<command-")
-                            {
+                            if is_meaningful_message(content) {
                                 meaningful_count += 1;
-                                first_msg = Some(trimmed.chars().take(150).collect());
+                                first_msg = Some(content.trim().chars().take(150).collect());
                             }
                         }
                     }
@@ -1378,69 +1365,9 @@ fn parse_session_timestamps_full(path: &std::path::PathBuf) -> Option<SessionMet
     }
 }
 
-fn calculate_hours(start: &str, end: &str) -> f64 {
-    if let (Ok(start_dt), Ok(end_dt)) = (
-        chrono::DateTime::parse_from_rfc3339(start),
-        chrono::DateTime::parse_from_rfc3339(end),
-    ) {
-        let duration = end_dt.signed_duration_since(start_dt);
-        let hours = duration.num_minutes() as f64 / 60.0;
-        hours.min(8.0).max(0.1)
-    } else {
-        0.5
-    }
-}
-
-fn get_commits_in_range(project_path: &str, start: &str, end: &str) -> Vec<TimelineCommit> {
-    use std::path::PathBuf;
-    use std::process::Command;
-
-    if project_path.is_empty() {
-        return Vec::new();
-    }
-
-    let project_dir = PathBuf::from(project_path);
-    if !project_dir.exists() || !project_dir.join(".git").exists() {
-        return Vec::new();
-    }
-
-    let output = Command::new("git")
-        .arg("log")
-        .arg("--since")
-        .arg(start)
-        .arg("--until")
-        .arg(end)
-        .arg("--format=%H|%an|%aI|%s")
-        .arg("--all")
-        .current_dir(&project_dir)
-        .output();
-
-    let output = match output {
-        Ok(o) => o,
-        Err(_) => return Vec::new(),
-    };
-
-    if !output.status.success() {
-        return Vec::new();
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut commits = Vec::new();
-
-    for line in stdout.lines() {
-        let parts: Vec<&str> = line.splitn(4, '|').collect();
-        if parts.len() >= 4 {
-            commits.push(TimelineCommit {
-                hash: parts[0].chars().take(8).collect(),
-                author: parts[1].to_string(),
-                time: parts[2].to_string(),
-                message: parts[3].to_string(),
-            });
-        }
-    }
-
-    commits
-}
+// Duplicate functions removed - now using shared functions from crate::services:
+// - calculate_session_hours (was calculate_hours)
+// - get_commits_in_time_range (was get_commits_in_range)
 
 // Commit-centric worklog types
 
@@ -1655,12 +1582,8 @@ fn parse_session_for_worklog(
                 if let Some(message) = msg.get("message") {
                     if message.get("role").and_then(|r| r.as_str()) == Some("user") {
                         if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
-                            let trimmed = content.trim();
-                            if trimmed.len() >= 10
-                                && !trimmed.to_lowercase().starts_with("warmup")
-                                && !trimmed.starts_with("<command-")
-                            {
-                                first_message = Some(trimmed.chars().take(100).collect());
+                            if is_meaningful_message(content) {
+                                first_message = Some(content.trim().chars().take(100).collect());
                             }
                         }
                     }
@@ -1742,6 +1665,16 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
+    use crate::services::{calculate_session_hours, get_commits_in_time_range};
+
+    // Alias for backward compatibility with existing tests
+    fn calculate_hours(start: &str, end: &str) -> f64 {
+        calculate_session_hours(start, end)
+    }
+
+    fn get_commits_in_range(project_path: &str, start: &str, end: &str) -> Vec<TimelineCommit> {
+        get_commits_in_time_range(project_path, start, end)
+    }
 
     fn create_test_jsonl(content: &str) -> NamedTempFile {
         let mut file = NamedTempFile::new().unwrap();

@@ -4,7 +4,6 @@
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -13,6 +12,10 @@ use std::process::Command;
 use tauri::State;
 
 use crate::auth::verify_token;
+use crate::services::{
+    generate_daily_hash, is_meaningful_message, extract_tool_detail,
+    calculate_session_hours,
+};
 
 use super::AppState;
 
@@ -148,79 +151,14 @@ fn get_claude_home() -> Option<PathBuf> {
         .map(|h| PathBuf::from(h).join(".claude"))
 }
 
-fn generate_daily_hash(user_id: &str, project: &str, date: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(user_id.as_bytes());
-    hasher.update(project.as_bytes());
-    hasher.update(date.as_bytes());
-    format!("{:x}", hasher.finalize())
-}
+// generate_daily_hash, is_meaningful_message, extract_tool_detail, calculate_session_hours
+// are imported from crate::services
 
-fn is_meaningful_message(content: &str) -> bool {
-    let trimmed = content.trim().to_lowercase();
-    if trimmed == "warmup" || trimmed.starts_with("warmup") {
-        return false;
-    }
-    if trimmed.starts_with("<command-") || trimmed.starts_with("<system-") {
-        return false;
-    }
-    if trimmed.len() < 10 {
-        return false;
-    }
-    true
-}
-
-fn calculate_session_hours(first: &Option<String>, last: &Option<String>) -> f64 {
+/// Helper to calculate session hours with Option handling
+fn session_hours_from_options(first: &Option<String>, last: &Option<String>) -> f64 {
     match (first, last) {
-        (Some(start), Some(end)) => {
-            if let (Ok(start_dt), Ok(end_dt)) = (
-                chrono::DateTime::parse_from_rfc3339(start),
-                chrono::DateTime::parse_from_rfc3339(end),
-            ) {
-                let duration = end_dt.signed_duration_since(start_dt);
-                let hours = duration.num_minutes() as f64 / 60.0;
-                hours.min(8.0).max(0.1)
-            } else {
-                0.5
-            }
-        }
+        (Some(start), Some(end)) => calculate_session_hours(start, end),
         _ => 0.5,
-    }
-}
-
-fn extract_tool_detail(tool_name: &str, input: &serde_json::Value) -> Option<String> {
-    match tool_name {
-        "Edit" | "Write" | "Read" => {
-            input.get("file_path")
-                .and_then(|v| v.as_str())
-                .map(|p| {
-                    let parts: Vec<&str> = p.split('/').collect();
-                    if parts.len() > 3 {
-                        format!(".../{}", parts[parts.len()-3..].join("/"))
-                    } else {
-                        p.to_string()
-                    }
-                })
-        }
-        "Bash" => {
-            input.get("command")
-                .and_then(|v| v.as_str())
-                .map(|c| {
-                    let truncated: String = c.chars().take(60).collect();
-                    if c.len() > 60 { format!("{}...", truncated) } else { truncated }
-                })
-        }
-        "Glob" | "Grep" => {
-            input.get("pattern")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }
-        "Task" => {
-            input.get("description")
-                .and_then(|v| v.as_str())
-                .map(|s| s.chars().take(50).collect())
-        }
-        _ => None
     }
 }
 
@@ -702,7 +640,7 @@ pub async fn import_claude_sessions(
                     continue;
                 }
 
-                let hours = calculate_session_hours(&session.first_timestamp, &session.last_timestamp);
+                let hours = session_hours_from_options(&session.first_timestamp, &session.last_timestamp);
 
                 if hours < 0.08 {
                     log::debug!("Skipping session {} - duration too short ({:.2} hours)", session_id, hours);
@@ -868,7 +806,7 @@ pub async fn sync_claude_projects(
                         continue;
                     }
 
-                    let hours = calculate_session_hours(&session.first_timestamp, &session.last_timestamp);
+                    let hours = session_hours_from_options(&session.first_timestamp, &session.last_timestamp);
                     if hours < 0.08 {
                         sessions_skipped += 1;
                         continue;

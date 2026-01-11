@@ -286,6 +286,75 @@ fn get_commit_file_changes(repo_dir: &PathBuf, hash: &str) -> (Vec<FileChange>, 
     (files, total_add, total_del)
 }
 
+/// Calculate session hours from start and end timestamps
+/// Returns hours capped between 0.1 and 8.0
+pub fn calculate_session_hours(start: &str, end: &str) -> f64 {
+    if let (Ok(start_dt), Ok(end_dt)) = (
+        DateTime::parse_from_rfc3339(start),
+        DateTime::parse_from_rfc3339(end),
+    ) {
+        let duration = end_dt.signed_duration_since(start_dt);
+        let hours = duration.num_minutes() as f64 / 60.0;
+        hours.min(8.0).max(0.1)
+    } else {
+        0.5 // Default fallback
+    }
+}
+
+/// Commit info for timeline display (simplified version of CommitRecord)
+#[derive(Debug, Clone, Serialize)]
+pub struct TimelineCommit {
+    pub hash: String,
+    pub author: String,
+    pub time: String,
+    pub message: String,
+}
+
+/// Get commits within a specific time range (for session-based timeline)
+pub fn get_commits_in_time_range(repo_path: &str, start: &str, end: &str) -> Vec<TimelineCommit> {
+    if repo_path.is_empty() {
+        return Vec::new();
+    }
+
+    let repo_dir = PathBuf::from(repo_path);
+    if !repo_dir.exists() || !repo_dir.join(".git").exists() {
+        return Vec::new();
+    }
+
+    let output = Command::new("git")
+        .arg("log")
+        .arg("--since")
+        .arg(start)
+        .arg("--until")
+        .arg(end)
+        .arg("--format=%H|%an|%aI|%s")
+        .arg("--all")
+        .current_dir(&repo_dir)
+        .output();
+
+    let output = match output {
+        Ok(o) if o.status.success() => o,
+        _ => return Vec::new(),
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut commits = Vec::new();
+
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.splitn(4, '|').collect();
+        if parts.len() >= 4 {
+            commits.push(TimelineCommit {
+                hash: parts[0].chars().take(8).collect(),
+                author: parts[1].to_string(),
+                time: parts[2].to_string(),
+                message: parts[3].to_string(),
+            });
+        }
+    }
+
+    commits
+}
+
 /// Build a rule-based outcome summary for a session without commits
 pub fn build_rule_based_outcome(
     files_modified: &[String],
@@ -436,5 +505,55 @@ mod tests {
     fn test_build_rule_based_outcome_fallback() {
         let outcome = build_rule_based_outcome(&[], &HashMap::new(), Some("幫我實作登入功能"));
         assert!(outcome.contains("幫我實作登入功能"));
+    }
+
+    // Tests for shared functions (used by Timeline and commit-centric worklog)
+
+    #[test]
+    fn test_calculate_session_hours_valid() {
+        let hours = calculate_session_hours(
+            "2026-01-11T09:00:00+08:00",
+            "2026-01-11T11:30:00+08:00",
+        );
+        assert!((hours - 2.5).abs() < 0.01, "Expected 2.5h, got {}", hours);
+    }
+
+    #[test]
+    fn test_calculate_session_hours_max_cap() {
+        // Should cap at 8 hours
+        let hours = calculate_session_hours(
+            "2026-01-11T00:00:00+08:00",
+            "2026-01-11T12:00:00+08:00",
+        );
+        assert_eq!(hours, 8.0, "Should cap at 8 hours");
+    }
+
+    #[test]
+    fn test_calculate_session_hours_min_cap() {
+        // Short session should return minimum 0.1h
+        let hours = calculate_session_hours(
+            "2026-01-11T09:00:00+08:00",
+            "2026-01-11T09:03:00+08:00", // 3 minutes
+        );
+        assert_eq!(hours, 0.1, "Should cap at minimum 0.1 hours");
+    }
+
+    #[test]
+    fn test_calculate_session_hours_invalid() {
+        // Invalid timestamps should return default 0.5h
+        let hours = calculate_session_hours("invalid", "also-invalid");
+        assert_eq!(hours, 0.5, "Invalid timestamps should return 0.5h");
+    }
+
+    #[test]
+    fn test_get_commits_in_time_range_empty_path() {
+        let commits = get_commits_in_time_range("", "2026-01-11T00:00:00+08:00", "2026-01-11T23:59:59+08:00");
+        assert!(commits.is_empty(), "Empty path should return no commits");
+    }
+
+    #[test]
+    fn test_get_commits_in_time_range_nonexistent_path() {
+        let commits = get_commits_in_time_range("/nonexistent/path", "2026-01-11T00:00:00+08:00", "2026-01-11T23:59:59+08:00");
+        assert!(commits.is_empty(), "Nonexistent path should return no commits");
     }
 }

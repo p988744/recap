@@ -7,16 +7,16 @@
 //! - Sync status tracking
 
 use chrono::Utc;
-use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::fs;
-use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::Command;
 use uuid::Uuid;
 
 use crate::models::{SyncStatus, SyncStatusResponse};
+use super::session_parser::{generate_daily_hash, parse_session_full, ParsedSession, ToolUsage};
+use super::worklog::calculate_session_hours;
 
 /// Sync Service for managing background synchronization
 pub struct SyncService {
@@ -206,14 +206,8 @@ pub fn create_sync_service(pool: SqlitePool) -> SyncService {
 
 // ============ Claude Sync Logic ============
 
-/// Generate content hash for deduplication (user + project + date = unique work item)
-fn generate_daily_hash(user_id: &str, project: &str, date: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(user_id.as_bytes());
-    hasher.update(project.as_bytes());
-    hasher.update(date.as_bytes());
-    format!("{:x}", hasher.finalize())
-}
+// Shared functions from session_parser: generate_daily_hash, parse_session_full, ToolUsage
+// Shared from worklog: calculate_session_hours
 
 /// Git commit info
 #[derive(Debug, Clone)]
@@ -231,13 +225,6 @@ struct SessionSummary {
     first_message: Option<String>,
 }
 
-/// Tool usage tracking
-#[derive(Debug, Clone)]
-struct ToolUsage {
-    tool_name: String,
-    count: usize,
-}
-
 /// Daily work item data (aggregated from multiple sessions)
 #[derive(Debug)]
 struct DailyWorkItem {
@@ -249,18 +236,6 @@ struct DailyWorkItem {
     git_commits: Vec<GitCommit>,
 }
 
-/// Parsed Claude session data
-#[derive(Debug)]
-struct ParsedSession {
-    cwd: String,
-    first_timestamp: Option<String>,
-    last_timestamp: Option<String>,
-    message_count: usize,
-    tool_usage: Vec<ToolUsage>,
-    files_modified: Vec<String>,
-    first_message: Option<String>,
-}
-
 /// Sync result for Claude projects
 #[derive(Debug)]
 pub struct ClaudeSyncResult {
@@ -268,30 +243,6 @@ pub struct ClaudeSyncResult {
     pub sessions_skipped: usize,
     pub work_items_created: usize,
     pub work_items_updated: usize,
-}
-
-/// Session message for parsing JSONL
-#[derive(Debug, serde::Deserialize)]
-struct SessionMessage {
-    cwd: Option<String>,
-    timestamp: Option<String>,
-    #[serde(rename = "type")]
-    msg_type: Option<String>,
-    message: Option<MessageContent>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct MessageContent {
-    role: Option<String>,
-    content: Option<serde_json::Value>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct ToolUseContent {
-    #[serde(rename = "type")]
-    content_type: Option<String>,
-    name: Option<String>,
-    input: Option<serde_json::Value>,
 }
 
 /// Get git log for a project directory on a specific date
@@ -342,154 +293,15 @@ fn get_git_commits_for_date(project_path: &str, date: &str) -> Vec<GitCommit> {
     commits
 }
 
-/// Calculate session duration in hours from timestamps
-fn calculate_session_hours(first: &Option<String>, last: &Option<String>) -> f64 {
+// calculate_session_hours is imported from super::worklog
+// is_meaningful_message, extract_tool_detail, parse_session_full are imported from session_parser
+
+/// Helper to calculate session hours with Option handling
+fn session_hours_from_options(first: &Option<String>, last: &Option<String>) -> f64 {
     match (first, last) {
-        (Some(start), Some(end)) => {
-            if let (Ok(start_dt), Ok(end_dt)) = (
-                chrono::DateTime::parse_from_rfc3339(start),
-                chrono::DateTime::parse_from_rfc3339(end),
-            ) {
-                let duration = end_dt.signed_duration_since(start_dt);
-                let hours = duration.num_minutes() as f64 / 60.0;
-                hours.min(8.0).max(0.1)
-            } else {
-                0.5
-            }
-        }
+        (Some(start), Some(end)) => calculate_session_hours(start, end),
         _ => 0.5,
     }
-}
-
-/// Check if a message is meaningful
-fn is_meaningful_message(content: &str) -> bool {
-    let trimmed = content.trim().to_lowercase();
-    if trimmed == "warmup" || trimmed.starts_with("warmup") {
-        return false;
-    }
-    if trimmed.starts_with("<command-") || trimmed.starts_with("<system-") {
-        return false;
-    }
-    trimmed.len() >= 10
-}
-
-/// Extract tool detail from input
-fn extract_tool_detail(tool_name: &str, input: &serde_json::Value) -> Option<String> {
-    match tool_name {
-        "Edit" | "Write" | "Read" => input.get("file_path").and_then(|v| v.as_str()).map(|p| {
-            let parts: Vec<&str> = p.split('/').collect();
-            if parts.len() > 3 {
-                format!(".../{}", parts[parts.len() - 3..].join("/"))
-            } else {
-                p.to_string()
-            }
-        }),
-        "Bash" => input.get("command").and_then(|v| v.as_str()).map(|c| {
-            let truncated: String = c.chars().take(60).collect();
-            if c.len() > 60 {
-                format!("{}...", truncated)
-            } else {
-                truncated
-            }
-        }),
-        _ => None,
-    }
-}
-
-/// Parse a session .jsonl file
-fn parse_session_file(path: &PathBuf) -> Option<ParsedSession> {
-    let file = fs::File::open(path).ok()?;
-    let reader = BufReader::new(file);
-
-    let mut cwd: Option<String> = None;
-    let mut first_message: Option<String> = None;
-    let mut first_timestamp: Option<String> = None;
-    let mut last_timestamp: Option<String> = None;
-    let mut meaningful_message_count: usize = 0;
-
-    let mut tool_counts: HashMap<String, usize> = HashMap::new();
-    let mut files_modified: Vec<String> = Vec::new();
-
-    for line in reader.lines().flatten() {
-        if let Ok(msg) = serde_json::from_str::<SessionMessage>(&line) {
-            if cwd.is_none() {
-                cwd = msg.cwd;
-            }
-
-            if let Some(ts) = &msg.timestamp {
-                if first_timestamp.is_none() {
-                    first_timestamp = Some(ts.clone());
-                }
-                last_timestamp = Some(ts.clone());
-            }
-
-            if let Some(ref message) = msg.message {
-                if message.role.as_deref() == Some("user") {
-                    if let Some(content) = &message.content {
-                        if let serde_json::Value::String(s) = content {
-                            if is_meaningful_message(s) {
-                                meaningful_message_count += 1;
-                                if first_message.is_none() {
-                                    first_message = Some(s.chars().take(200).collect());
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if message.role.as_deref() == Some("assistant") {
-                    if let Some(content) = &message.content {
-                        if let serde_json::Value::Array(arr) = content {
-                            for item in arr {
-                                if let Ok(tool_use) =
-                                    serde_json::from_value::<ToolUseContent>(item.clone())
-                                {
-                                    if tool_use.content_type.as_deref() == Some("tool_use") {
-                                        if let Some(tool_name) = &tool_use.name {
-                                            *tool_counts.entry(tool_name.clone()).or_insert(0) += 1;
-
-                                            if let Some(input) = &tool_use.input {
-                                                if let Some(d) =
-                                                    extract_tool_detail(tool_name, input)
-                                                {
-                                                    if matches!(
-                                                        tool_name.as_str(),
-                                                        "Edit" | "Write" | "Read"
-                                                    ) && !files_modified.contains(&d)
-                                                        && files_modified.len() < 20
-                                                    {
-                                                        files_modified.push(d);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    let tool_usage: Vec<ToolUsage> = tool_counts
-        .into_iter()
-        .map(|(name, count)| ToolUsage {
-            tool_name: name,
-            count,
-        })
-        .collect();
-
-    Some(ParsedSession {
-        cwd: cwd.unwrap_or_default(),
-        first_timestamp,
-        last_timestamp,
-        message_count: meaningful_message_count,
-        tool_usage,
-        files_modified,
-        first_message,
-    })
 }
 
 /// Build daily work description
@@ -626,14 +438,14 @@ pub async fn sync_claude_projects(
                     continue;
                 }
 
-                if let Some(session) = parse_session_file(&file_path) {
+                if let Some(session) = parse_session_full(&file_path) {
                     if session.message_count == 0 {
                         sessions_skipped += 1;
                         continue;
                     }
 
                     let hours =
-                        calculate_session_hours(&session.first_timestamp, &session.last_timestamp);
+                        session_hours_from_options(&session.first_timestamp, &session.last_timestamp);
                     if hours < 0.08 {
                         sessions_skipped += 1;
                         continue;
