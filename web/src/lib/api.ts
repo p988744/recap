@@ -442,12 +442,12 @@ export const api = {
   health: () => fetchApi<{ status: string; version: string }>('/health'),
 
   // User Profile - Use Tauri API when available
-  updateProfile: async (data: { name?: string; email?: string; title?: string }) => {
+  updateProfile: async (data: { name?: string; email?: string; title?: string; employee_id?: string; department_id?: string }) => {
     if (isTauri) {
       const result = await tauriApi.updateProfile(getRequiredToken(), data)
-      return { id: result.id, name: result.name, email: result.email, title: result.title }
+      return { id: result.id, name: result.name, email: result.email, title: result.title, employee_id: result.employee_id, department_id: result.department_id }
     }
-    return fetchApi<{ id: string; name: string; email: string; title?: string }>('/users/profile', {
+    return fetchApi<{ id: string; name: string; email: string; title?: string; employee_id?: string; department_id?: string }>('/users/profile', {
       method: 'PATCH',
       body: JSON.stringify(data),
     })

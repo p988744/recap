@@ -49,6 +49,8 @@ export function SettingsPage() {
   const [profileName, setProfileName] = useState('')
   const [profileEmail, setProfileEmail] = useState('')
   const [profileTitle, setProfileTitle] = useState('')
+  const [profileEmployeeId, setProfileEmployeeId] = useState('')
+  const [profileDepartment, setProfileDepartment] = useState('')
 
   // Work hours form state
   const [dailyHours, setDailyHours] = useState(8)
@@ -64,6 +66,24 @@ export function SettingsPage() {
   // GitLab form state
   const [gitlabUrl, setGitlabUrl] = useState('')
   const [gitlabToken, setGitlabToken] = useState('')
+  const [showGitlabToken, setShowGitlabToken] = useState(false)
+  const [savingGitlab, setSavingGitlab] = useState(false)
+  const [testingGitlab, setTestingGitlab] = useState(false)
+  const [gitlabProjects, setGitlabProjects] = useState<Array<{
+    id: string
+    gitlab_project_id: number
+    name: string
+    path_with_namespace: string
+    last_synced: string | null
+  }>>([])
+  const [gitlabSearchResults, setGitlabSearchResults] = useState<Array<{
+    id: number
+    name: string
+    path_with_namespace: string
+  }>>([])
+  const [gitlabSearch, setGitlabSearch] = useState('')
+  const [searchingGitlab, setSearchingGitlab] = useState(false)
+  const [syncingGitlab, setSyncingGitlab] = useState(false)
 
   // Local Git repo form state
   const [newRepoPath, setNewRepoPath] = useState('')
@@ -105,6 +125,8 @@ export function SettingsPage() {
         setLlmProvider(configData.llm_provider || 'openai')
         setLlmModel(configData.llm_model || 'gpt-4o-mini')
         setLlmBaseUrl(configData.llm_base_url || '')
+        // GitLab settings
+        setGitlabUrl(configData.gitlab_url || '')
       } catch (err) {
         console.error('Failed to fetch data:', err)
       } finally {
@@ -119,6 +141,8 @@ export function SettingsPage() {
       setProfileName(user.name || '')
       setProfileEmail(user.email || '')
       setProfileTitle(user.title || '')
+      setProfileEmployeeId(user.employee_id || '')
+      setProfileDepartment(user.department_id || '')
     }
   }, [user])
 
@@ -127,12 +151,17 @@ export function SettingsPage() {
     localStorage.setItem('recap-selected-claude-projects', JSON.stringify(Array.from(selectedProjects)))
   }, [selectedProjects])
 
-  // Auto-load Claude sessions when viewing integrations
+  // Auto-load Claude sessions and GitLab projects when viewing integrations
   useEffect(() => {
-    if (activeSection === 'integrations' && claudeProjects.length === 0 && !loadingClaude) {
-      loadClaudeSessions()
+    if (activeSection === 'integrations') {
+      if (claudeProjects.length === 0 && !loadingClaude) {
+        loadClaudeSessions()
+      }
+      if (config?.gitlab_configured && gitlabProjects.length === 0) {
+        loadGitlabProjects()
+      }
     }
-  }, [activeSection])
+  }, [activeSection, config?.gitlab_configured])
 
   const handleSaveProfile = async () => {
     setSavingProfile(true)
@@ -142,6 +171,8 @@ export function SettingsPage() {
         name: profileName,
         email: profileEmail || undefined,
         title: profileTitle,
+        employee_id: profileEmployeeId || undefined,
+        department_id: profileDepartment || undefined,
       })
       setMessage({ type: 'success', text: '個人資料已更新' })
     } catch (err) {
@@ -243,6 +274,111 @@ export function SettingsPage() {
       setMessage({ type: 'error', text: err instanceof Error ? err.message : '連線失敗' })
     } finally {
       setTestingJira(false)
+    }
+  }
+
+  const handleSaveGitlab = async () => {
+    if (!gitlabUrl.trim()) return
+    setSavingGitlab(true)
+    setMessage(null)
+    try {
+      await api.configureGitLab(gitlabUrl.trim(), gitlabToken)
+      const updated = await api.getConfig()
+      setConfig(updated)
+      setGitlabToken('')
+      setMessage({ type: 'success', text: 'GitLab 設定已儲存' })
+      // Reload projects after configuration
+      loadGitlabProjects()
+    } catch (err) {
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : '儲存失敗' })
+    } finally {
+      setSavingGitlab(false)
+    }
+  }
+
+  const handleTestGitlab = async () => {
+    setTestingGitlab(true)
+    setMessage(null)
+    try {
+      // Try to search projects as a connection test
+      await api.getGitLabRemoteProjects('', 1, 1)
+      setMessage({ type: 'success', text: 'GitLab 連線成功' })
+    } catch (err) {
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : '連線失敗' })
+    } finally {
+      setTestingGitlab(false)
+    }
+  }
+
+  const loadGitlabProjects = async () => {
+    try {
+      const projects = await api.getGitLabTrackedProjects()
+      setGitlabProjects(projects)
+    } catch (err) {
+      console.error('Failed to load GitLab projects:', err)
+    }
+  }
+
+  const handleSearchGitlab = async () => {
+    if (!gitlabSearch.trim()) return
+    setSearchingGitlab(true)
+    try {
+      const results = await api.getGitLabRemoteProjects(gitlabSearch)
+      setGitlabSearchResults(results)
+    } catch (err) {
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : '搜尋失敗' })
+    } finally {
+      setSearchingGitlab(false)
+    }
+  }
+
+  const handleAddGitlabProject = async (projectId: number) => {
+    try {
+      await api.addGitLabProject(projectId)
+      setMessage({ type: 'success', text: '已新增 GitLab 專案' })
+      loadGitlabProjects()
+      // Remove from search results
+      setGitlabSearchResults(prev => prev.filter(p => p.id !== projectId))
+    } catch (err) {
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : '新增失敗' })
+    }
+  }
+
+  const handleRemoveGitlabProject = async (id: string) => {
+    try {
+      await api.removeGitLabProject(id)
+      setMessage({ type: 'success', text: '已移除 GitLab 專案' })
+      loadGitlabProjects()
+    } catch (err) {
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : '移除失敗' })
+    }
+  }
+
+  const handleSyncGitlab = async () => {
+    setSyncingGitlab(true)
+    setMessage(null)
+    try {
+      const results = await api.syncAllGitLabProjects()
+      const total = results.reduce((sum, r) => sum + r.work_items_created, 0)
+      setMessage({ type: 'success', text: `已同步 ${total} 個工作項目` })
+      loadGitlabProjects()
+    } catch (err) {
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : '同步失敗' })
+    } finally {
+      setSyncingGitlab(false)
+    }
+  }
+
+  const handleRemoveGitlabConfig = async () => {
+    try {
+      await api.removeGitLabConfig()
+      const updated = await api.getConfig()
+      setConfig(updated)
+      setGitlabProjects([])
+      setGitlabSearchResults([])
+      setMessage({ type: 'success', text: 'GitLab 設定已移除' })
+    } catch (err) {
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : '移除失敗' })
     }
   }
 
@@ -464,6 +600,30 @@ export function SettingsPage() {
                     value={profileTitle}
                     onChange={(e) => setProfileTitle(e.target.value)}
                     placeholder="例如：軟體工程師"
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="profile-employee-id" className="mb-2 block">
+                    員工編號 <span className="text-muted-foreground text-xs">(選填)</span>
+                  </Label>
+                  <Input
+                    id="profile-employee-id"
+                    value={profileEmployeeId}
+                    onChange={(e) => setProfileEmployeeId(e.target.value)}
+                    placeholder="例如：EMP001"
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="profile-department" className="mb-2 block">
+                    部門 <span className="text-muted-foreground text-xs">(選填)</span>
+                  </Label>
+                  <Input
+                    id="profile-department"
+                    value={profileDepartment}
+                    onChange={(e) => setProfileDepartment(e.target.value)}
+                    placeholder="例如：研發部"
                   />
                 </div>
 
@@ -972,10 +1132,17 @@ export function SettingsPage() {
                   <h3 className="font-medium text-foreground">GitLab</h3>
                   <p className="text-xs text-muted-foreground">Commits 與 MR 追蹤</p>
                 </div>
-                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <XCircle className="w-3.5 h-3.5" strokeWidth={1.5} />
-                  未設定
-                </span>
+                {config?.gitlab_configured ? (
+                  <span className="flex items-center gap-1.5 text-xs text-sage">
+                    <CheckCircle2 className="w-3.5 h-3.5" strokeWidth={1.5} />
+                    已連接
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <XCircle className="w-3.5 h-3.5" strokeWidth={1.5} />
+                    未設定
+                  </span>
+                )}
               </div>
 
               <div className="space-y-4">
@@ -992,25 +1159,152 @@ export function SettingsPage() {
 
                 <div>
                   <Label htmlFor="gitlab-token" className="mb-2 block text-xs">Personal Access Token</Label>
-                  <Input
-                    id="gitlab-token"
-                    type="password"
-                    value={gitlabToken}
-                    onChange={(e) => setGitlabToken(e.target.value)}
-                    placeholder="輸入 GitLab PAT"
-                  />
+                  <div className="relative">
+                    <Input
+                      id="gitlab-token"
+                      type={showGitlabToken ? 'text' : 'password'}
+                      value={gitlabToken}
+                      onChange={(e) => setGitlabToken(e.target.value)}
+                      placeholder={config?.gitlab_configured ? '••••••••（已設定）' : '輸入 GitLab PAT'}
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowGitlabToken(!showGitlabToken)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      {showGitlabToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                   <p className="text-xs text-muted-foreground mt-1">
                     需要 read_api 權限
                   </p>
                 </div>
 
-                <div className="pt-4 border-t border-border">
-                  <Button variant="outline" disabled>
-                    <Save className="w-4 h-4" />
+                <div className="flex items-center gap-3 pt-4 border-t border-border">
+                  <Button variant="outline" onClick={handleSaveGitlab} disabled={savingGitlab || !gitlabUrl.trim()}>
+                    {savingGitlab ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                     儲存
                   </Button>
-                  <p className="text-xs text-muted-foreground mt-2">GitLab 整合即將推出</p>
+                  <Button variant="ghost" onClick={handleTestGitlab} disabled={testingGitlab || !config?.gitlab_configured}>
+                    {testingGitlab ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
+                    測試連線
+                  </Button>
+                  {config?.gitlab_configured && (
+                    <Button variant="ghost" onClick={handleRemoveGitlabConfig} className="text-destructive hover:text-destructive">
+                      <Trash2 className="w-4 h-4" />
+                      移除設定
+                    </Button>
+                  )}
                 </div>
+
+                {/* GitLab Projects */}
+                {config?.gitlab_configured && (
+                  <>
+                    <div className="pt-4 border-t border-border">
+                      <div className="flex items-center justify-between mb-4">
+                        <Label className="text-xs">已追蹤的專案</Label>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleSyncGitlab}
+                          disabled={syncingGitlab || gitlabProjects.length === 0}
+                        >
+                          {syncingGitlab ? (
+                            <Loader2 className="w-4 h-4 animate-spin" strokeWidth={1.5} />
+                          ) : (
+                            <RefreshCw className="w-4 h-4" strokeWidth={1.5} />
+                          )}
+                          同步全部
+                        </Button>
+                      </div>
+
+                      {gitlabProjects.length > 0 ? (
+                        <div className="space-y-2">
+                          {gitlabProjects.map((project) => (
+                            <div
+                              key={project.id}
+                              className="flex items-center justify-between p-3 bg-muted/30 rounded-lg"
+                            >
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-foreground truncate">{project.name}</p>
+                                <p className="text-xs text-muted-foreground truncate">{project.path_with_namespace}</p>
+                                {project.last_synced && (
+                                  <p className="text-[10px] text-muted-foreground mt-1">
+                                    上次同步: {formatTimestamp(project.last_synced)}
+                                  </p>
+                                )}
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleRemoveGitlabProject(project.id)}
+                                className="text-muted-foreground hover:text-destructive"
+                              >
+                                <Trash2 className="w-4 h-4" strokeWidth={1.5} />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground text-center py-4">
+                          尚未追蹤任何專案
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Search GitLab Projects */}
+                    <div className="pt-4 border-t border-border">
+                      <Label className="mb-2 block text-xs">新增專案</Label>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          value={gitlabSearch}
+                          onChange={(e) => setGitlabSearch(e.target.value)}
+                          placeholder="搜尋 GitLab 專案..."
+                          className="flex-1"
+                          onKeyDown={(e) => e.key === 'Enter' && handleSearchGitlab()}
+                        />
+                        <Button
+                          variant="outline"
+                          onClick={handleSearchGitlab}
+                          disabled={searchingGitlab || !gitlabSearch.trim()}
+                        >
+                          {searchingGitlab ? (
+                            <Loader2 className="w-4 h-4 animate-spin" strokeWidth={1.5} />
+                          ) : (
+                            <RefreshCw className="w-4 h-4" strokeWidth={1.5} />
+                          )}
+                          搜尋
+                        </Button>
+                      </div>
+
+                      {gitlabSearchResults.length > 0 && (
+                        <div className="mt-3 space-y-2 max-h-48 overflow-y-auto">
+                          {gitlabSearchResults.map((project) => (
+                            <div
+                              key={project.id}
+                              className="flex items-center justify-between p-3 border border-dashed border-orange-300/50 bg-orange-50/30 rounded-lg"
+                            >
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-foreground truncate">{project.name}</p>
+                                <p className="text-xs text-muted-foreground truncate">{project.path_with_namespace}</p>
+                              </div>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleAddGitlabProject(project.id)}
+                                className="text-orange-600 border-orange-300 hover:bg-orange-100"
+                              >
+                                <Plus className="w-4 h-4" strokeWidth={1.5} />
+                                新增
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             </Card>
           </section>
@@ -1209,7 +1503,7 @@ export function SettingsPage() {
                   </div>
                   <div>
                     <h3 className="font-display text-xl text-foreground">Recap</h3>
-                    <p className="text-sm text-muted-foreground">v2.0.0</p>
+                    <p className="text-sm text-muted-foreground">v2.1.0</p>
                   </div>
                 </div>
 
@@ -1235,7 +1529,7 @@ export function SettingsPage() {
                   </div>
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-muted-foreground">框架</span>
-                    <span className="text-foreground">Tauri + Axum</span>
+                    <span className="text-foreground">Tauri v2</span>
                   </div>
                 </div>
               </div>
