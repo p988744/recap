@@ -68,7 +68,7 @@ impl From<User> for UserResponse {
 pub struct WorkItem {
     pub id: String,
     pub user_id: String,
-    pub source: String,           // "gitlab", "claude_code", "manual", "aggregated"
+    pub source: String,           // "gitlab", "claude_code", "manual", "commit"
     pub source_id: Option<String>,
     pub source_url: Option<String>,
     pub title: String,
@@ -87,6 +87,43 @@ pub struct WorkItem {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub parent_id: Option<String>, // For grouping: child items link to parent
+    // Commit-centric fields
+    pub hours_source: Option<String>,    // 'user_modified' | 'session' | 'commit_interval' | 'heuristic' | 'manual'
+    pub hours_estimated: Option<f64>,    // System-calculated hours (preserved even if user overrides)
+    pub commit_hash: Option<String>,     // Git commit hash for commit-based items
+    pub session_id: Option<String>,      // Claude session ID for linking
+}
+
+/// Hours source enum for clarity
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HoursSource {
+    UserModified,    // User manually changed the hours
+    Session,         // Calculated from linked Claude session
+    CommitInterval,  // Estimated from time between commits
+    Heuristic,       // Estimated from lines/files changed
+    Manual,          // Default for manually created items
+}
+
+impl HoursSource {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            HoursSource::UserModified => "user_modified",
+            HoursSource::Session => "session",
+            HoursSource::CommitInterval => "commit_interval",
+            HoursSource::Heuristic => "heuristic",
+            HoursSource::Manual => "manual",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "user_modified" => HoursSource::UserModified,
+            "session" => HoursSource::Session,
+            "commit_interval" => HoursSource::CommitInterval,
+            "heuristic" => HoursSource::Heuristic,
+            _ => HoursSource::Manual,
+        }
+    }
 }
 
 /// GitLab project model

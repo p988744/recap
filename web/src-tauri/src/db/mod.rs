@@ -236,6 +236,33 @@ impl Database {
             .execute(&self.pool)
             .await?;
 
+        // Add hours tracking columns for commit-centric worklog
+        sqlx::query("ALTER TABLE work_items ADD COLUMN hours_source TEXT DEFAULT 'manual'")
+            .execute(&self.pool)
+            .await
+            .ok(); // 'user_modified' | 'session' | 'commit_interval' | 'heuristic' | 'manual'
+
+        sqlx::query("ALTER TABLE work_items ADD COLUMN hours_estimated REAL")
+            .execute(&self.pool)
+            .await
+            .ok(); // System-calculated hours (preserved even if user overrides)
+
+        sqlx::query("ALTER TABLE work_items ADD COLUMN commit_hash TEXT")
+            .execute(&self.pool)
+            .await
+            .ok(); // Git commit hash for commit-based items
+
+        sqlx::query("ALTER TABLE work_items ADD COLUMN session_id TEXT")
+            .execute(&self.pool)
+            .await
+            .ok(); // Claude session ID for session-based items
+
+        // Create index for commit hash lookups
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_work_items_commit_hash ON work_items(commit_hash) WHERE commit_hash IS NOT NULL")
+            .execute(&self.pool)
+            .await
+            .ok();
+
         log::info!("Database migrations completed");
         Ok(())
     }
