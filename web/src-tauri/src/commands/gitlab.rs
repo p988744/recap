@@ -349,73 +349,120 @@ pub async fn sync_gitlab(
             .send()
             .await;
 
-        if let Ok(response) = commits_result {
-            if response.status().is_success() {
-                if let Ok(commits) = response.json::<Vec<GitLabCommit>>().await {
-                    for commit in commits {
-                        // Check if already exists
-                        let existing: Option<(i64,)> = sqlx::query_as(
-                            "SELECT COUNT(*) FROM work_items WHERE source = 'gitlab' AND source_id = ?",
-                        )
-                        .bind(&commit.id)
-                        .fetch_optional(&db.pool)
-                        .await
-                        .ok()
-                        .flatten();
+        match commits_result {
+            Ok(response) => {
+                if !response.status().is_success() {
+                    log::warn!(
+                        "GitLab API returned status {} for project {}",
+                        response.status(),
+                        project.path_with_namespace
+                    );
+                    continue;
+                }
 
-                        if existing.map(|r| r.0).unwrap_or(0) > 0 {
-                            continue;
+                match response.json::<Vec<GitLabCommit>>().await {
+                    Ok(commits) => {
+                        // Batch fetch existing source_ids to avoid N+1 queries
+                        let commit_ids: Vec<&str> = commits.iter().map(|c| c.id.as_str()).collect();
+                        let existing_ids: std::collections::HashSet<String> = if !commit_ids.is_empty() {
+                            let placeholders = commit_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                            let query = format!(
+                                "SELECT source_id FROM work_items WHERE source = 'gitlab' AND source_id IN ({})",
+                                placeholders
+                            );
+                            let mut q = sqlx::query_as::<_, (String,)>(&query);
+                            for id in &commit_ids {
+                                q = q.bind(id);
+                            }
+                            q.fetch_all(&db.pool)
+                                .await
+                                .map_err(|e| {
+                                    log::warn!("Failed to query existing commits: {}", e);
+                                    e
+                                })
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|(id,)| id)
+                                .collect()
+                        } else {
+                            std::collections::HashSet::new()
+                        };
+
+                        for commit in commits {
+                            // Skip if already exists (using batch-fetched set)
+                            if existing_ids.contains(&commit.id) {
+                                continue;
+                            }
+
+                            // Create work item from commit
+                            let work_item_id = Uuid::new_v4().to_string();
+                            let now = Utc::now();
+                            let commit_date = commit
+                                .committed_date
+                                .split('T')
+                                .next()
+                                .unwrap_or(&commit.committed_date);
+
+                            let source_url = format!(
+                                "{}/{}/-/commit/{}",
+                                gitlab_url, project.path_with_namespace, commit.id
+                            );
+
+                            if let Err(e) = sqlx::query(
+                                r#"
+                                INSERT INTO work_items (id, user_id, source, source_id, source_url, title,
+                                    description, hours, date, created_at, updated_at)
+                                VALUES (?, ?, 'gitlab', ?, ?, ?, ?, 0, ?, ?, ?)
+                                "#,
+                            )
+                            .bind(&work_item_id)
+                            .bind(&claims.sub)
+                            .bind(&commit.id)
+                            .bind(&source_url)
+                            .bind(&commit.title)
+                            .bind(&commit.message)
+                            .bind(commit_date)
+                            .bind(now)
+                            .bind(now)
+                            .execute(&db.pool)
+                            .await
+                            {
+                                log::warn!("Failed to insert GitLab commit {}: {}", commit.id, e);
+                                continue;
+                            }
+
+                            synced_commits += 1;
+                            work_items_created += 1;
                         }
-
-                        // Create work item from commit
-                        let work_item_id = Uuid::new_v4().to_string();
-                        let now = Utc::now();
-                        let commit_date = commit
-                            .committed_date
-                            .split('T')
-                            .next()
-                            .unwrap_or(&commit.committed_date);
-
-                        let source_url = format!(
-                            "{}/{}/-/commit/{}",
-                            gitlab_url, project.path_with_namespace, commit.id
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to parse commits JSON for project {}: {}",
+                            project.path_with_namespace,
+                            e
                         );
-
-                        sqlx::query(
-                            r#"
-                            INSERT INTO work_items (id, user_id, source, source_id, source_url, title,
-                                description, hours, date, created_at, updated_at)
-                            VALUES (?, ?, 'gitlab', ?, ?, ?, ?, 0, ?, ?, ?)
-                            "#,
-                        )
-                        .bind(&work_item_id)
-                        .bind(&claims.sub)
-                        .bind(&commit.id)
-                        .bind(&source_url)
-                        .bind(&commit.title)
-                        .bind(&commit.message)
-                        .bind(commit_date)
-                        .bind(now)
-                        .bind(now)
-                        .execute(&db.pool)
-                        .await
-                        .ok();
-
-                        synced_commits += 1;
-                        work_items_created += 1;
                     }
                 }
+            }
+            Err(e) => {
+                log::warn!(
+                    "Failed to fetch commits for project {}: {}",
+                    project.path_with_namespace,
+                    e
+                );
             }
         }
 
         // Update last_synced
         let now = Utc::now();
-        sqlx::query("UPDATE gitlab_projects SET last_synced = ? WHERE id = ?")
+        if let Err(e) = sqlx::query("UPDATE gitlab_projects SET last_synced = ? WHERE id = ?")
             .bind(now)
             .bind(&project.id)
             .execute(&db.pool)
             .await
-            .ok();
+        {
+            log::warn!("Failed to update last_synced for project {}: {}", project.id, e);
+        }
     }
 
     Ok(SyncGitLabResponse {

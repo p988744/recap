@@ -698,12 +698,14 @@ pub async fn import_claude_sessions(
         if let Some(file_path) = session_files.get(session_id) {
             if let Some(session) = parse_session_file(file_path) {
                 if session.message_count == 0 {
+                    log::debug!("Skipping session {} - no meaningful messages", session_id);
                     continue;
                 }
 
                 let hours = calculate_session_hours(&session.first_timestamp, &session.last_timestamp);
 
                 if hours < 0.08 {
+                    log::debug!("Skipping session {} - duration too short ({:.2} hours)", session_id, hours);
                     continue;
                 }
 
@@ -736,6 +738,7 @@ pub async fn import_claude_sessions(
                 .map_err(|e| e.to_string())?;
 
                 if existing.is_some() {
+                    log::debug!("Skipping session {} - already exists with hash {}", session_id, content_hash);
                     continue;
                 }
 

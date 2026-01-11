@@ -151,6 +151,21 @@ impl Database {
             .execute(&self.pool)
             .await?;
 
+        // Create index for GitLab deduplication (source + source_id)
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_work_items_source_source_id ON work_items(source, source_id)")
+            .execute(&self.pool)
+            .await?;
+
+        // Create composite index for date-based filtering by source
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_work_items_source_date ON work_items(source, date)")
+            .execute(&self.pool)
+            .await?;
+
+        // Create composite index for user + date queries (most common)
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_work_items_user_date ON work_items(user_id, date)")
+            .execute(&self.pool)
+            .await?;
+
         // Add LLM configuration fields to users table
         sqlx::query("ALTER TABLE users ADD COLUMN llm_provider TEXT DEFAULT 'openai'")
             .execute(&self.pool)

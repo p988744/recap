@@ -96,20 +96,35 @@ pub async fn auto_sync(
             .into_iter()
             .filter_map(|p| {
                 // Read first session to get actual cwd
-                if let Ok(files) = std::fs::read_dir(&p) {
-                    for file in files.flatten() {
-                        let path = file.path();
-                        if path.extension().map(|e| e == "jsonl").unwrap_or(false) {
-                            if let Ok(content) = std::fs::read_to_string(&path) {
-                                if let Some(first_line) = content.lines().next() {
-                                    if let Ok(msg) = serde_json::from_str::<serde_json::Value>(first_line) {
-                                        if let Some(cwd) = msg.get("cwd").and_then(|v| v.as_str()) {
-                                            return Some(cwd.to_string());
+                match std::fs::read_dir(&p) {
+                    Ok(files) => {
+                        for file in files.flatten() {
+                            let path = file.path();
+                            if path.extension().map(|e| e == "jsonl").unwrap_or(false) {
+                                match std::fs::read_to_string(&path) {
+                                    Ok(content) => {
+                                        if let Some(first_line) = content.lines().next() {
+                                            match serde_json::from_str::<serde_json::Value>(first_line) {
+                                                Ok(msg) => {
+                                                    if let Some(cwd) = msg.get("cwd").and_then(|v| v.as_str()) {
+                                                        return Some(cwd.to_string());
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    log::debug!("Failed to parse session JSON in {:?}: {}", path, e);
+                                                }
+                                            }
                                         }
+                                    }
+                                    Err(e) => {
+                                        log::debug!("Failed to read session file {:?}: {}", path, e);
                                     }
                                 }
                             }
                         }
+                    }
+                    Err(e) => {
+                        log::debug!("Failed to read directory {:?}: {}", p, e);
                     }
                 }
                 None
