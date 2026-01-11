@@ -14,6 +14,117 @@ use crate::services::is_meaningful_message;
 
 use super::AppState;
 
+/// Helper for building parameterized SQL queries safely (prevents SQL injection)
+mod query_builder {
+    use sqlx::{sqlite::SqliteRow, FromRow, SqlitePool};
+
+    /// Represents a single WHERE condition with its bound value
+    #[derive(Clone)]
+    pub enum BindValue {
+        String(String),
+        Int(i64),
+        Bool(bool),
+    }
+
+    /// Query builder that constructs parameterized queries
+    pub struct SafeQueryBuilder {
+        conditions: Vec<String>,
+        bindings: Vec<BindValue>,
+    }
+
+    impl SafeQueryBuilder {
+        pub fn new() -> Self {
+            Self {
+                conditions: Vec::new(),
+                bindings: Vec::new(),
+            }
+        }
+
+        /// Add a condition with a string value
+        pub fn add_string_condition(&mut self, column: &str, op: &str, value: &str) {
+            self.conditions.push(format!("{} {} ?", column, op));
+            self.bindings.push(BindValue::String(value.to_string()));
+        }
+
+        /// Add a condition with an integer value
+        pub fn add_int_condition(&mut self, column: &str, op: &str, value: i64) {
+            self.conditions.push(format!("{} {} ?", column, op));
+            self.bindings.push(BindValue::Int(value));
+        }
+
+        /// Add a NULL check condition (no binding needed)
+        pub fn add_null_condition(&mut self, column: &str, is_null: bool) {
+            if is_null {
+                self.conditions.push(format!("{} IS NULL", column));
+            } else {
+                self.conditions.push(format!("{} IS NOT NULL", column));
+            }
+        }
+
+        /// Build the WHERE clause
+        pub fn build_where_clause(&self) -> String {
+            if self.conditions.is_empty() {
+                "1=1".to_string()
+            } else {
+                self.conditions.join(" AND ")
+            }
+        }
+
+        /// Execute a SELECT query and return results
+        pub async fn fetch_all<T>(
+            &self,
+            pool: &SqlitePool,
+            base_query: &str,
+            order_by: &str,
+            limit: Option<i64>,
+            offset: Option<i64>,
+        ) -> Result<Vec<T>, String>
+        where
+            T: for<'r> FromRow<'r, SqliteRow> + Send + Unpin,
+        {
+            let where_clause = self.build_where_clause();
+            let mut sql = format!("{} WHERE {} {}", base_query, where_clause, order_by);
+
+            if let Some(l) = limit {
+                sql.push_str(&format!(" LIMIT {}", l));
+            }
+            if let Some(o) = offset {
+                sql.push_str(&format!(" OFFSET {}", o));
+            }
+
+            let mut query = sqlx::query_as::<_, T>(&sql);
+
+            for binding in &self.bindings {
+                query = match binding {
+                    BindValue::String(s) => query.bind(s),
+                    BindValue::Int(i) => query.bind(*i),
+                    BindValue::Bool(b) => query.bind(*b),
+                };
+            }
+
+            query.fetch_all(pool).await.map_err(|e| e.to_string())
+        }
+
+        /// Execute a COUNT query
+        pub async fn count(&self, pool: &SqlitePool, table: &str) -> Result<i64, String> {
+            let where_clause = self.build_where_clause();
+            let sql = format!("SELECT COUNT(*) FROM {} WHERE {}", table, where_clause);
+
+            let mut query = sqlx::query_scalar::<_, i64>(&sql);
+
+            for binding in &self.bindings {
+                query = match binding {
+                    BindValue::String(s) => query.bind(s),
+                    BindValue::Int(i) => query.bind(*i),
+                    BindValue::Bool(b) => query.bind(*b),
+                };
+            }
+
+            query.fetch_one(pool).await.map_err(|e| e.to_string())
+        }
+    }
+}
+
 // Types
 
 #[derive(Debug, Serialize)]
@@ -190,6 +301,8 @@ pub async fn list_work_items(
     token: String,
     filters: WorkItemFilters,
 ) -> Result<PaginatedResponse<WorkItemWithChildren>, String> {
+    use query_builder::SafeQueryBuilder;
+
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
     let db = state.db.lock().await;
 
@@ -197,62 +310,55 @@ pub async fn list_work_items(
     let per_page = filters.per_page.unwrap_or(20).min(100);
     let offset = (page - 1) * per_page;
 
-    // Build dynamic query
-    let mut conditions = vec![format!("user_id = '{}'", claims.sub)];
+    // Build parameterized query safely
+    let mut builder = SafeQueryBuilder::new();
+
+    // Always filter by user_id
+    builder.add_string_condition("user_id", "=", &claims.sub);
 
     if let Some(parent_id) = &filters.parent_id {
-        conditions.push(format!("parent_id = '{}'", parent_id.replace('\'', "''")));
+        builder.add_string_condition("parent_id", "=", parent_id);
     } else if !filters.show_all.unwrap_or(false) {
-        conditions.push("parent_id IS NULL".to_string());
+        builder.add_null_condition("parent_id", true);
     }
 
     if let Some(source) = &filters.source {
-        conditions.push(format!("source = '{}'", source.replace('\'', "''")));
+        builder.add_string_condition("source", "=", source);
     }
 
     if let Some(category) = &filters.category {
-        conditions.push(format!("category = '{}'", category.replace('\'', "''")));
+        builder.add_string_condition("category", "=", category);
     }
 
     if let Some(jira_mapped) = filters.jira_mapped {
-        if jira_mapped {
-            conditions.push("jira_issue_key IS NOT NULL".to_string());
-        } else {
-            conditions.push("jira_issue_key IS NULL".to_string());
-        }
+        builder.add_null_condition("jira_issue_key", !jira_mapped);
     }
 
     if let Some(synced) = filters.synced_to_tempo {
-        conditions.push(format!("synced_to_tempo = {}", if synced { 1 } else { 0 }));
+        builder.add_int_condition("synced_to_tempo", "=", if synced { 1 } else { 0 });
     }
 
     if let Some(start_date) = &filters.start_date {
-        conditions.push(format!("date >= '{}'", start_date));
+        builder.add_string_condition("date", ">=", start_date);
     }
 
     if let Some(end_date) = &filters.end_date {
-        conditions.push(format!("date <= '{}'", end_date));
+        builder.add_string_condition("date", "<=", end_date);
     }
 
-    let where_clause = conditions.join(" AND ");
-
     // Count total
-    let count_query = format!("SELECT COUNT(*) FROM work_items WHERE {}", where_clause);
-    let total: (i64,) = sqlx::query_as(&count_query)
-        .fetch_one(&db.pool)
-        .await
-        .map_err(|e| e.to_string())?;
+    let total = builder.count(&db.pool, "work_items").await?;
 
     // Fetch items
-    let query = format!(
-        "SELECT * FROM work_items WHERE {} ORDER BY date DESC, created_at DESC LIMIT {} OFFSET {}",
-        where_clause, per_page, offset
-    );
-
-    let items: Vec<WorkItem> = sqlx::query_as(&query)
-        .fetch_all(&db.pool)
-        .await
-        .map_err(|e| e.to_string())?;
+    let items: Vec<WorkItem> = builder
+        .fetch_all(
+            &db.pool,
+            "SELECT * FROM work_items",
+            "ORDER BY date DESC, created_at DESC",
+            Some(per_page),
+            Some(offset),
+        )
+        .await?;
 
     // Get child counts
     let mut items_with_children: Vec<WorkItemWithChildren> = Vec::new();
@@ -269,11 +375,11 @@ pub async fn list_work_items(
         });
     }
 
-    let pages = (total.0 as f64 / per_page as f64).ceil() as i64;
+    let pages = (total as f64 / per_page as f64).ceil() as i64;
 
     Ok(PaginatedResponse {
         items: items_with_children,
-        total: total.0,
+        total,
         page,
         per_page,
         pages,
@@ -496,24 +602,25 @@ pub async fn get_stats_summary(
     token: String,
     query: StatsQuery,
 ) -> Result<WorkItemStatsResponse, String> {
+    use query_builder::SafeQueryBuilder;
+
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
     let db = state.db.lock().await;
 
-    // Build date filter
-    let mut date_filter = String::new();
+    // Build parameterized query safely
+    let mut builder = SafeQueryBuilder::new();
+    builder.add_string_condition("user_id", "=", &claims.sub);
+
     if let Some(start) = &query.start_date {
-        date_filter.push_str(&format!(" AND date >= '{}'", start));
+        builder.add_string_condition("date", ">=", start);
     }
     if let Some(end) = &query.end_date {
-        date_filter.push_str(&format!(" AND date <= '{}'", end));
+        builder.add_string_condition("date", "<=", end);
     }
 
-    let sql = format!("SELECT * FROM work_items WHERE user_id = ?{}", date_filter);
-    let work_items: Vec<WorkItem> = sqlx::query_as(&sql)
-        .bind(&claims.sub)
-        .fetch_all(&db.pool)
-        .await
-        .map_err(|e| e.to_string())?;
+    let work_items: Vec<WorkItem> = builder
+        .fetch_all(&db.pool, "SELECT * FROM work_items", "", None, None)
+        .await?;
 
     let total_items = work_items.len() as i64;
     let total_hours: f64 = work_items.iter().map(|i| i.hours).sum();
@@ -603,29 +710,32 @@ pub async fn get_grouped_work_items(
     token: String,
     query: GroupedQuery,
 ) -> Result<GroupedWorkItemsResponse, String> {
+    use query_builder::SafeQueryBuilder;
+
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
     let db = state.db.lock().await;
 
-    // Build query
-    let mut conditions = vec![format!("user_id = '{}'", claims.sub)];
-    conditions.push("parent_id IS NULL".to_string());
+    // Build parameterized query safely
+    let mut builder = SafeQueryBuilder::new();
+    builder.add_string_condition("user_id", "=", &claims.sub);
+    builder.add_null_condition("parent_id", true);
 
     if let Some(start) = &query.start_date {
-        conditions.push(format!("date >= '{}'", start));
+        builder.add_string_condition("date", ">=", start);
     }
     if let Some(end) = &query.end_date {
-        conditions.push(format!("date <= '{}'", end));
+        builder.add_string_condition("date", "<=", end);
     }
 
-    let sql = format!(
-        "SELECT * FROM work_items WHERE {} ORDER BY date DESC, title",
-        conditions.join(" AND ")
-    );
-
-    let items: Vec<WorkItem> = sqlx::query_as(&sql)
-        .fetch_all(&db.pool)
-        .await
-        .map_err(|e| e.to_string())?;
+    let items: Vec<WorkItem> = builder
+        .fetch_all(
+            &db.pool,
+            "SELECT * FROM work_items",
+            "ORDER BY date DESC, title",
+            None,
+            None,
+        )
+        .await?;
 
     let total_items = items.len() as i64;
     let total_hours: f64 = items.iter().map(|i| i.hours).sum();
@@ -1000,31 +1110,34 @@ pub async fn aggregate_work_items(
     token: String,
     request: AggregateRequest,
 ) -> Result<AggregateResponse, String> {
+    use query_builder::SafeQueryBuilder;
+
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
     let db = state.db.lock().await;
 
-    // Build query with filters
-    let mut conditions = vec![format!("user_id = '{}'", claims.sub)];
+    // Build parameterized query safely
+    let mut builder = SafeQueryBuilder::new();
+    builder.add_string_condition("user_id", "=", &claims.sub);
 
     if let Some(start) = &request.start_date {
-        conditions.push(format!("date >= '{}'", start));
+        builder.add_string_condition("date", ">=", start);
     }
     if let Some(end) = &request.end_date {
-        conditions.push(format!("date <= '{}'", end));
+        builder.add_string_condition("date", "<=", end);
     }
     if let Some(source) = &request.source {
-        conditions.push(format!("source = '{}'", source.replace('\'', "''")));
+        builder.add_string_condition("source", "=", source);
     }
 
-    let sql = format!(
-        "SELECT * FROM work_items WHERE {} ORDER BY date, title",
-        conditions.join(" AND ")
-    );
-
-    let work_items: Vec<WorkItem> = sqlx::query_as(&sql)
-        .fetch_all(&db.pool)
-        .await
-        .map_err(|e| e.to_string())?;
+    let work_items: Vec<WorkItem> = builder
+        .fetch_all(
+            &db.pool,
+            "SELECT * FROM work_items",
+            "ORDER BY date, title",
+            None,
+            None,
+        )
+        .await?;
 
     let original_count = work_items.len();
 

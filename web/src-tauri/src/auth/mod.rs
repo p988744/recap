@@ -2,11 +2,39 @@
 
 use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use std::sync::OnceLock;
 
 use crate::models::{Claims, User};
 
-// Secret key (in production, use environment variable)
-const JWT_SECRET: &str = "recap-secret-key-change-in-production";
+/// JWT secret key - reads from environment variable or generates a secure random key
+/// In production, set RECAP_JWT_SECRET environment variable
+fn get_jwt_secret() -> &'static [u8] {
+    static JWT_SECRET: OnceLock<Vec<u8>> = OnceLock::new();
+
+    JWT_SECRET.get_or_init(|| {
+        match std::env::var("RECAP_JWT_SECRET") {
+            Ok(secret) if secret.len() >= 32 => {
+                // Use environment variable if it's set and long enough
+                secret.into_bytes()
+            }
+            Ok(secret) if !secret.is_empty() => {
+                // Warn if secret is too short but still use it
+                eprintln!("WARNING: RECAP_JWT_SECRET is shorter than 32 characters. Consider using a longer secret.");
+                secret.into_bytes()
+            }
+            _ => {
+                // Generate a secure random secret for this session
+                // Note: This means tokens won't persist across app restarts
+                eprintln!("WARNING: RECAP_JWT_SECRET not set. Generating random secret. Tokens won't persist across restarts.");
+                use rand::Rng;
+                let mut rng = rand::thread_rng();
+                let secret: Vec<u8> = (0..64).map(|_| rng.gen::<u8>()).collect();
+                secret
+            }
+        }
+    })
+}
+
 const TOKEN_EXPIRY_DAYS: i64 = 7;
 
 /// Create a JWT token for a user
@@ -25,7 +53,7 @@ pub fn create_token(user: &User) -> Result<String, jsonwebtoken::errors::Error> 
     encode(
         &Header::default(),
         &claims,
-        &EncodingKey::from_secret(JWT_SECRET.as_bytes()),
+        &EncodingKey::from_secret(get_jwt_secret()),
     )
 }
 
@@ -33,7 +61,7 @@ pub fn create_token(user: &User) -> Result<String, jsonwebtoken::errors::Error> 
 pub fn verify_token(token: &str) -> Result<Claims, jsonwebtoken::errors::Error> {
     let token_data = decode::<Claims>(
         token,
-        &DecodingKey::from_secret(JWT_SECRET.as_bytes()),
+        &DecodingKey::from_secret(get_jwt_secret()),
         &Validation::default(),
     )?;
     Ok(token_data.claims)
