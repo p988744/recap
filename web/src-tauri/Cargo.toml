@@ -59,3 +59,11 @@ rust_xlsxwriter = "0.79"
 # Config
 directories = "5"
 dirs = "5"
+
+[dev-dependencies]
+tempfile = "3"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "timeline_parsing"
+harness = false

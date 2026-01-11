@@ -2,7 +2,7 @@
 //!
 //! Tauri commands for work item operations.
 
-use chrono::{NaiveDate, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::State;
@@ -766,6 +766,7 @@ pub async fn get_grouped_work_items(
 }
 
 /// Get timeline data for Gantt chart visualization
+/// Optimized version with parallel processing and early filtering
 #[tauri::command]
 pub async fn get_timeline_data(
     _state: State<'_, AppState>,
@@ -775,86 +776,139 @@ pub async fn get_timeline_data(
     let _claims = verify_token(&token).map_err(|e| e.to_string())?;
 
     use std::path::PathBuf;
+    use chrono::NaiveDate;
+
+    let target_date = NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+        .map_err(|e| format!("Invalid date format: {}", e))?;
 
     let claude_home = std::env::var("HOME")
         .ok()
         .map(|h| PathBuf::from(h).join(".claude").join("projects"));
 
-    let mut sessions: Vec<TimelineSession> = Vec::new();
+    let projects_dir = match claude_home {
+        Some(dir) if dir.exists() => dir,
+        _ => {
+            return Ok(TimelineResponse {
+                date,
+                sessions: Vec::new(),
+                total_hours: 0.0,
+                total_commits: 0,
+            });
+        }
+    };
 
-    if let Some(projects_dir) = claude_home {
-        if projects_dir.exists() {
-            if let Ok(entries) = std::fs::read_dir(&projects_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if !path.is_dir() {
+    // Phase 1: Collect all candidate files (quick filesystem scan)
+    let mut candidate_files: Vec<(PathBuf, String)> = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(&projects_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+
+            let dir_name = path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+
+            if dir_name.starts_with('.') {
+                continue;
+            }
+
+            let project_name = dir_name.split('-').last().unwrap_or(&dir_name).to_string();
+
+            if let Ok(files) = std::fs::read_dir(&path) {
+                for file_entry in files.flatten() {
+                    let file_path = file_entry.path();
+                    if !file_path.extension().map(|e| e == "jsonl").unwrap_or(false) {
                         continue;
                     }
 
-                    let dir_name = path.file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("")
-                        .to_string();
-
-                    if dir_name.starts_with('.') {
-                        continue;
-                    }
-
-                    let project_name = dir_name.split('-').last().unwrap_or(&dir_name).to_string();
-
-                    if let Ok(files) = std::fs::read_dir(&path) {
-                        for file_entry in files.flatten() {
-                            let file_path = file_entry.path();
-                            if !file_path.extension().map(|e| e == "jsonl").unwrap_or(false) {
+                    // Quick filter: check file modification date
+                    if let Ok(file_meta) = file_entry.metadata() {
+                        if let Ok(modified) = file_meta.modified() {
+                            let modified_date: chrono::DateTime<chrono::Local> = modified.into();
+                            let file_date = modified_date.date_naive();
+                            // Allow files modified on target date or day after (for sessions spanning midnight)
+                            let day_before = target_date - chrono::Duration::days(1);
+                            let day_after = target_date + chrono::Duration::days(1);
+                            if file_date < day_before || file_date > day_after {
                                 continue;
-                            }
-
-                            if let Some(metadata) = parse_session_timestamps(&file_path) {
-                                let session_date = metadata.first_ts.split('T').next().unwrap_or("");
-                                if session_date != date {
-                                    continue;
-                                }
-
-                                let hours = calculate_hours(&metadata.first_ts, &metadata.last_ts);
-                                if hours < 0.08 {
-                                    continue;
-                                }
-
-                                let actual_project_name = metadata.cwd.as_ref()
-                                    .and_then(|c| c.split('/').last())
-                                    .unwrap_or(&project_name)
-                                    .to_string();
-
-                                let project_path_for_git = metadata.cwd.as_ref()
-                                    .map(|c| c.as_str())
-                                    .unwrap_or("");
-
-                                let commits = get_commits_in_range(project_path_for_git, &metadata.first_ts, &metadata.last_ts);
-
-                                let session_id = file_path.file_stem()
-                                    .and_then(|s| s.to_str())
-                                    .unwrap_or("unknown")
-                                    .to_string();
-
-                                let title = metadata.first_msg.unwrap_or_else(|| "Claude Code session".to_string());
-
-                                sessions.push(TimelineSession {
-                                    id: session_id,
-                                    project: actual_project_name,
-                                    title,
-                                    start_time: metadata.first_ts,
-                                    end_time: metadata.last_ts,
-                                    hours,
-                                    commits,
-                                });
                             }
                         }
                     }
+
+                    candidate_files.push((file_path, project_name.clone()));
                 }
             }
         }
     }
 
+    // Phase 2: Process files in parallel using tokio
+    let date_clone = date.clone();
+    let sessions: Vec<TimelineSession> = tokio::task::spawn_blocking(move || {
+        use std::sync::Mutex;
+        use std::thread;
+
+        let results: Mutex<Vec<TimelineSession>> = Mutex::new(Vec::new());
+        let chunk_size = (candidate_files.len() / 4).max(1);
+        let chunks: Vec<_> = candidate_files.chunks(chunk_size).map(|c| c.to_vec()).collect();
+
+        thread::scope(|s| {
+            for chunk in chunks {
+                let results_ref = &results;
+                let date_ref = &date_clone;
+                s.spawn(move || {
+                    let mut local_sessions = Vec::new();
+                    for (file_path, project_name) in chunk {
+                        if let Some(metadata) = parse_session_timestamps_fast(&file_path) {
+                            let session_date = metadata.first_ts.split('T').next().unwrap_or("");
+                            if session_date != date_ref {
+                                continue;
+                            }
+
+                            let hours = calculate_hours(&metadata.first_ts, &metadata.last_ts);
+                            if hours < 0.08 {
+                                continue;
+                            }
+
+                            let actual_project_name = metadata.cwd.as_ref()
+                                .and_then(|c| c.split('/').last())
+                                .unwrap_or(&project_name)
+                                .to_string();
+
+                            let project_path_for_git = metadata.cwd.clone().unwrap_or_default();
+
+                            let commits = get_commits_in_range(&project_path_for_git, &metadata.first_ts, &metadata.last_ts);
+
+                            let session_id = file_path.file_stem()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("unknown")
+                                .to_string();
+
+                            let title = metadata.first_msg.unwrap_or_else(|| "Claude Code session".to_string());
+
+                            local_sessions.push(TimelineSession {
+                                id: session_id,
+                                project: actual_project_name,
+                                title,
+                                start_time: metadata.first_ts,
+                                end_time: metadata.last_ts,
+                                hours,
+                                commits,
+                            });
+                        }
+                    }
+                    results_ref.lock().unwrap().extend(local_sessions);
+                });
+            }
+        });
+
+        results.into_inner().unwrap()
+    }).await.map_err(|e| format!("Task failed: {}", e))?;
+
+    let mut sessions = sessions;
     sessions.sort_by(|a, b| a.start_time.cmp(&b.start_time));
 
     let total_hours: f64 = sessions.iter().map(|s| s.hours).sum();
@@ -1130,7 +1184,140 @@ struct SessionMetadata {
     cwd: Option<String>,
 }
 
-fn parse_session_timestamps(path: &std::path::PathBuf) -> Option<SessionMetadata> {
+/// Optimized version: reads only the beginning and end of the file
+/// instead of parsing the entire JSONL file line by line
+fn parse_session_timestamps_fast(path: &std::path::PathBuf) -> Option<SessionMetadata> {
+    use std::io::{BufRead, BufReader, Seek, SeekFrom};
+
+    let file = std::fs::File::open(path).ok()?;
+    let file_size = file.metadata().ok()?.len();
+
+    // For small files (< 50KB), use the original approach
+    if file_size < 50_000 {
+        return parse_session_timestamps_full(path);
+    }
+
+    let mut reader = BufReader::new(file);
+
+    let mut first_ts: Option<String> = None;
+    let mut last_ts: Option<String> = None;
+    let mut first_msg: Option<String> = None;
+    let mut cwd: Option<String> = None;
+    let mut meaningful_count = 0;
+
+    // Read first 20 lines to get first_ts, cwd, and first_msg
+    let mut lines_read = 0;
+    let max_initial_lines = 20;
+
+    loop {
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => break, // EOF
+            Ok(_) => {
+                if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) {
+                    if first_ts.is_none() {
+                        if let Some(ts) = msg.get("timestamp").and_then(|v| v.as_str()) {
+                            first_ts = Some(ts.to_string());
+                        }
+                    }
+
+                    if cwd.is_none() {
+                        if let Some(c) = msg.get("cwd").and_then(|v| v.as_str()) {
+                            cwd = Some(c.to_string());
+                        }
+                    }
+
+                    if first_msg.is_none() {
+                        if let Some(message) = msg.get("message") {
+                            if message.get("role").and_then(|r| r.as_str()) == Some("user") {
+                                if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
+                                    let trimmed = content.trim();
+                                    if trimmed.len() >= 10
+                                        && !trimmed.to_lowercase().starts_with("warmup")
+                                        && !trimmed.starts_with("<command-")
+                                    {
+                                        meaningful_count += 1;
+                                        first_msg = Some(trimmed.chars().take(150).collect());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                lines_read += 1;
+                if lines_read >= max_initial_lines && first_ts.is_some() && cwd.is_some() {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+
+    // If we couldn't get first_ts, fall back to full parse
+    if first_ts.is_none() {
+        return parse_session_timestamps_full(path);
+    }
+
+    // Read the last ~32KB of the file to find the last timestamp
+    let tail_size: u64 = 32_000.min(file_size);
+    let seek_pos = file_size.saturating_sub(tail_size);
+
+    if reader.seek(SeekFrom::Start(seek_pos)).is_ok() {
+        // Skip partial line if we're not at the start
+        if seek_pos > 0 {
+            let mut skip_line = String::new();
+            let _ = reader.read_line(&mut skip_line);
+        }
+
+        // Read remaining lines to find the last timestamp
+        for line in reader.lines().flatten() {
+            if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) {
+                if let Some(ts) = msg.get("timestamp").and_then(|v| v.as_str()) {
+                    last_ts = Some(ts.to_string());
+                }
+
+                // Also look for meaningful messages in case we missed one
+                if meaningful_count == 0 {
+                    if let Some(message) = msg.get("message") {
+                        if message.get("role").and_then(|r| r.as_str()) == Some("user") {
+                            if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
+                                let trimmed = content.trim();
+                                if trimmed.len() >= 10
+                                    && !trimmed.to_lowercase().starts_with("warmup")
+                                    && !trimmed.starts_with("<command-")
+                                {
+                                    meaningful_count += 1;
+                                    if first_msg.is_none() {
+                                        first_msg = Some(trimmed.chars().take(150).collect());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if meaningful_count == 0 {
+        return None;
+    }
+
+    let last_ts = last_ts.or_else(|| first_ts.clone());
+    match (first_ts, last_ts) {
+        (Some(f), Some(l)) => Some(SessionMetadata {
+            first_ts: f,
+            last_ts: l,
+            first_msg,
+            cwd,
+        }),
+        _ => None,
+    }
+}
+
+/// Full file parse (used for small files or as fallback)
+fn parse_session_timestamps_full(path: &std::path::PathBuf) -> Option<SessionMetadata> {
     use std::io::{BufRead, BufReader};
 
     let file = std::fs::File::open(path).ok()?;
@@ -1253,4 +1440,539 @@ fn get_commits_in_range(project_path: &str, start: &str, end: &str) -> Vec<Timel
     }
 
     commits
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    fn create_test_jsonl(content: &str) -> NamedTempFile {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+        file.flush().unwrap();
+        file
+    }
+
+    #[test]
+    fn test_calculate_hours_valid() {
+        let start = "2025-01-10T09:00:00+08:00";
+        let end = "2025-01-10T11:30:00+08:00";
+        let hours = calculate_hours(start, end);
+        assert!((hours - 2.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_calculate_hours_max_cap() {
+        // Should cap at 8 hours
+        let start = "2025-01-10T00:00:00+08:00";
+        let end = "2025-01-10T12:00:00+08:00";
+        let hours = calculate_hours(start, end);
+        assert!((hours - 8.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_calculate_hours_invalid_format() {
+        let hours = calculate_hours("invalid", "also-invalid");
+        assert!((hours - 0.5).abs() < 0.01); // Default fallback
+    }
+
+    #[test]
+    fn test_parse_session_timestamps_full_basic() {
+        let content = r#"{"timestamp":"2025-01-10T09:00:00+08:00","cwd":"/home/user/project","message":{"role":"user","content":"This is a meaningful test message"}}
+{"timestamp":"2025-01-10T09:30:00+08:00","message":{"role":"assistant","content":"Response"}}
+{"timestamp":"2025-01-10T10:00:00+08:00","message":{"role":"user","content":"Another message"}}"#;
+
+        let file = create_test_jsonl(content);
+        let path = file.path().to_path_buf();
+
+        let result = parse_session_timestamps_full(&path);
+        assert!(result.is_some());
+
+        let metadata = result.unwrap();
+        assert_eq!(metadata.first_ts, "2025-01-10T09:00:00+08:00");
+        assert_eq!(metadata.last_ts, "2025-01-10T10:00:00+08:00");
+        assert_eq!(metadata.cwd, Some("/home/user/project".to_string()));
+        assert!(metadata.first_msg.is_some());
+    }
+
+    #[test]
+    fn test_parse_session_timestamps_full_no_meaningful_message() {
+        let content = r#"{"timestamp":"2025-01-10T09:00:00+08:00","cwd":"/home/user/project"}
+{"timestamp":"2025-01-10T09:30:00+08:00","message":{"role":"user","content":"short"}}
+{"timestamp":"2025-01-10T10:00:00+08:00","message":{"role":"user","content":"warmup test"}}"#;
+
+        let file = create_test_jsonl(content);
+        let path = file.path().to_path_buf();
+
+        let result = parse_session_timestamps_full(&path);
+        assert!(result.is_none()); // No meaningful message found
+    }
+
+    #[test]
+    fn test_parse_session_timestamps_full_skip_command_messages() {
+        let content = r#"{"timestamp":"2025-01-10T09:00:00+08:00","cwd":"/home/user/project","message":{"role":"user","content":"<command-name>test</command-name>"}}
+{"timestamp":"2025-01-10T09:30:00+08:00","message":{"role":"user","content":"This is a real meaningful message here"}}
+{"timestamp":"2025-01-10T10:00:00+08:00"}"#;
+
+        let file = create_test_jsonl(content);
+        let path = file.path().to_path_buf();
+
+        let result = parse_session_timestamps_full(&path);
+        assert!(result.is_some());
+
+        let metadata = result.unwrap();
+        assert!(metadata.first_msg.unwrap().contains("real meaningful"));
+    }
+
+    #[test]
+    fn test_parse_session_timestamps_fast_small_file() {
+        // Small files should use full parse
+        let content = r#"{"timestamp":"2025-01-10T09:00:00+08:00","cwd":"/home/user/project","message":{"role":"user","content":"This is a meaningful test message"}}
+{"timestamp":"2025-01-10T10:00:00+08:00"}"#;
+
+        let file = create_test_jsonl(content);
+        let path = file.path().to_path_buf();
+
+        let result = parse_session_timestamps_fast(&path);
+        assert!(result.is_some());
+
+        let metadata = result.unwrap();
+        assert_eq!(metadata.first_ts, "2025-01-10T09:00:00+08:00");
+        assert_eq!(metadata.last_ts, "2025-01-10T10:00:00+08:00");
+    }
+
+    #[test]
+    fn test_parse_session_timestamps_fast_large_file() {
+        // Create a large file (> 50KB) to test the fast path
+        let mut content = String::new();
+
+        // First line with timestamp and meaningful message
+        content.push_str(r#"{"timestamp":"2025-01-10T09:00:00+08:00","cwd":"/home/user/project","message":{"role":"user","content":"This is a meaningful test message for the session"}}"#);
+        content.push('\n');
+
+        // Add padding lines to make file > 50KB
+        for i in 0..500 {
+            content.push_str(&format!(
+                r#"{{"timestamp":"2025-01-10T09:{:02}:00+08:00","message":{{"role":"assistant","content":"Response line {} with some padding text to make this longer and reach the size threshold we need for testing the fast path optimization"}}}}"#,
+                i % 60,
+                i
+            ));
+            content.push('\n');
+        }
+
+        // Last line with final timestamp
+        content.push_str(r#"{"timestamp":"2025-01-10T17:00:00+08:00","message":{"role":"assistant","content":"Final response"}}"#);
+
+        let file = create_test_jsonl(&content);
+        let path = file.path().to_path_buf();
+
+        // Verify file is large enough
+        let file_size = std::fs::metadata(&path).unwrap().len();
+        assert!(file_size > 50_000, "Test file should be > 50KB, got {} bytes", file_size);
+
+        let result = parse_session_timestamps_fast(&path);
+        assert!(result.is_some());
+
+        let metadata = result.unwrap();
+        assert_eq!(metadata.first_ts, "2025-01-10T09:00:00+08:00");
+        assert_eq!(metadata.last_ts, "2025-01-10T17:00:00+08:00");
+        assert_eq!(metadata.cwd, Some("/home/user/project".to_string()));
+    }
+
+    #[test]
+    fn test_get_commits_in_range_empty_path() {
+        let commits = get_commits_in_range("", "2025-01-10T00:00:00+08:00", "2025-01-10T23:59:59+08:00");
+        assert!(commits.is_empty());
+    }
+
+    #[test]
+    fn test_get_commits_in_range_nonexistent_path() {
+        let commits = get_commits_in_range("/nonexistent/path", "2025-01-10T00:00:00+08:00", "2025-01-10T23:59:59+08:00");
+        assert!(commits.is_empty());
+    }
+
+    // ==================== Edge Case Tests ====================
+
+    #[test]
+    fn test_parse_empty_file() {
+        let file = create_test_jsonl("");
+        let path = file.path().to_path_buf();
+
+        let result = parse_session_timestamps_full(&path);
+        assert!(result.is_none());
+
+        let result_fast = parse_session_timestamps_fast(&path);
+        assert!(result_fast.is_none());
+    }
+
+    #[test]
+    fn test_parse_single_line_file() {
+        let content = r#"{"timestamp":"2025-01-10T09:00:00+08:00","cwd":"/home/user/project","message":{"role":"user","content":"This is a single meaningful message"}}"#;
+
+        let file = create_test_jsonl(content);
+        let path = file.path().to_path_buf();
+
+        let result = parse_session_timestamps_full(&path);
+        assert!(result.is_some());
+
+        let metadata = result.unwrap();
+        assert_eq!(metadata.first_ts, "2025-01-10T09:00:00+08:00");
+        assert_eq!(metadata.last_ts, "2025-01-10T09:00:00+08:00");
+    }
+
+    #[test]
+    fn test_parse_corrupted_json_with_valid_lines() {
+        let content = r#"{"timestamp":"2025-01-10T09:00:00+08:00","cwd":"/home/user/project","message":{"role":"user","content":"Valid meaningful message here"}}
+{this is not valid json at all}
+{"timestamp":"2025-01-10T10:00:00+08:00"}"#;
+
+        let file = create_test_jsonl(content);
+        let path = file.path().to_path_buf();
+
+        let result = parse_session_timestamps_full(&path);
+        assert!(result.is_some());
+
+        let metadata = result.unwrap();
+        assert_eq!(metadata.first_ts, "2025-01-10T09:00:00+08:00");
+        assert_eq!(metadata.last_ts, "2025-01-10T10:00:00+08:00");
+    }
+
+    #[test]
+    fn test_parse_message_truncation() {
+        // Message longer than 150 chars should be truncated
+        let long_message = "A".repeat(200);
+        let content = format!(
+            r#"{{"timestamp":"2025-01-10T09:00:00+08:00","cwd":"/home/user/project","message":{{"role":"user","content":"{}"}}}}"#,
+            long_message
+        );
+
+        let file = create_test_jsonl(&content);
+        let path = file.path().to_path_buf();
+
+        let result = parse_session_timestamps_full(&path);
+        assert!(result.is_some());
+
+        let metadata = result.unwrap();
+        assert!(metadata.first_msg.is_some());
+        assert_eq!(metadata.first_msg.unwrap().len(), 150);
+    }
+
+    #[test]
+    fn test_parse_midnight_crossing_session() {
+        // Session that starts before midnight and ends after
+        let content = r#"{"timestamp":"2025-01-10T23:30:00+08:00","cwd":"/home/user/project","message":{"role":"user","content":"Late night meaningful work session"}}
+{"timestamp":"2025-01-11T00:30:00+08:00","message":{"role":"assistant","content":"Response"}}"#;
+
+        let file = create_test_jsonl(content);
+        let path = file.path().to_path_buf();
+
+        let result = parse_session_timestamps_full(&path);
+        assert!(result.is_some());
+
+        let metadata = result.unwrap();
+        assert_eq!(metadata.first_ts, "2025-01-10T23:30:00+08:00");
+        assert_eq!(metadata.last_ts, "2025-01-11T00:30:00+08:00");
+
+        // Hours should be 1 hour
+        let hours = calculate_hours(&metadata.first_ts, &metadata.last_ts);
+        assert!((hours - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_parse_no_timestamp_lines() {
+        let content = r#"{"cwd":"/home/user/project","message":{"role":"user","content":"No timestamp here"}}
+{"message":{"role":"assistant","content":"Also no timestamp"}}"#;
+
+        let file = create_test_jsonl(content);
+        let path = file.path().to_path_buf();
+
+        let result = parse_session_timestamps_full(&path);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_only_assistant_messages() {
+        // No user messages, only assistant - should return None
+        let content = r#"{"timestamp":"2025-01-10T09:00:00+08:00","cwd":"/home/user/project","message":{"role":"assistant","content":"This is an assistant message"}}
+{"timestamp":"2025-01-10T10:00:00+08:00","message":{"role":"assistant","content":"Another assistant message"}}"#;
+
+        let file = create_test_jsonl(content);
+        let path = file.path().to_path_buf();
+
+        let result = parse_session_timestamps_full(&path);
+        assert!(result.is_none()); // No meaningful user message
+    }
+
+    #[test]
+    fn test_calculate_hours_minimum() {
+        // Very short session should have minimum 0.1 hours
+        let start = "2025-01-10T09:00:00+08:00";
+        let end = "2025-01-10T09:01:00+08:00"; // 1 minute
+        let hours = calculate_hours(start, end);
+        assert!((hours - 0.1).abs() < 0.01); // Minimum is 0.1
+    }
+
+    #[test]
+    fn test_calculate_hours_negative_duration() {
+        // End before start (edge case)
+        let start = "2025-01-10T10:00:00+08:00";
+        let end = "2025-01-10T09:00:00+08:00";
+        let hours = calculate_hours(start, end);
+        // Should return minimum 0.1 due to .max(0.1)
+        assert!((hours - 0.1).abs() < 0.01);
+    }
+
+    // ==================== Parallel Processing Tests ====================
+
+    #[test]
+    fn test_parallel_processing_multiple_files() {
+        use std::sync::Arc;
+        use std::thread;
+
+        // Create multiple test files
+        let files: Vec<_> = (0..10)
+            .map(|i| {
+                let content = format!(
+                    r#"{{"timestamp":"2025-01-10T{:02}:00:00+08:00","cwd":"/home/user/project{}","message":{{"role":"user","content":"Meaningful message for session {}"}}}}
+{{"timestamp":"2025-01-10T{:02}:30:00+08:00"}}"#,
+                    9 + i % 8,
+                    i,
+                    i,
+                    9 + i % 8
+                );
+                create_test_jsonl(&content)
+            })
+            .collect();
+
+        let paths: Vec<_> = files.iter().map(|f| f.path().to_path_buf()).collect();
+        let paths = Arc::new(paths);
+
+        // Process in parallel
+        let handles: Vec<_> = (0..4)
+            .map(|thread_id| {
+                let paths = Arc::clone(&paths);
+                thread::spawn(move || {
+                    let mut results = Vec::new();
+                    for (i, path) in paths.iter().enumerate() {
+                        if i % 4 == thread_id {
+                            if let Some(metadata) = parse_session_timestamps_fast(path) {
+                                results.push(metadata);
+                            }
+                        }
+                    }
+                    results
+                })
+            })
+            .collect();
+
+        let all_results: Vec<_> = handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap())
+            .collect();
+
+        assert_eq!(all_results.len(), 10);
+    }
+
+    #[test]
+    fn test_thread_safety_concurrent_reads() {
+        use std::sync::Arc;
+        use std::thread;
+
+        // Create a single large file
+        let mut content = String::new();
+        content.push_str(r#"{"timestamp":"2025-01-10T09:00:00+08:00","cwd":"/home/user/project","message":{"role":"user","content":"This is a meaningful test message for concurrency"}}"#);
+        content.push('\n');
+        for i in 0..100 {
+            content.push_str(&format!(
+                r#"{{"timestamp":"2025-01-10T09:{:02}:00+08:00","message":{{"role":"assistant","content":"Response {}"}}}}"#,
+                i % 60,
+                i
+            ));
+            content.push('\n');
+        }
+        content.push_str(r#"{"timestamp":"2025-01-10T17:00:00+08:00"}"#);
+
+        let file = create_test_jsonl(&content);
+        let path = Arc::new(file.path().to_path_buf());
+
+        // Read the same file from multiple threads concurrently
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let path = Arc::clone(&path);
+                thread::spawn(move || {
+                    parse_session_timestamps_fast(&path)
+                })
+            })
+            .collect();
+
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+
+        // All threads should get the same result
+        assert!(results.iter().all(|r| r.is_some()));
+        let first = results[0].as_ref().unwrap();
+        for result in &results[1..] {
+            let r = result.as_ref().unwrap();
+            assert_eq!(r.first_ts, first.first_ts);
+            assert_eq!(r.last_ts, first.last_ts);
+        }
+    }
+
+    // ==================== Integration Tests ====================
+
+    #[test]
+    fn test_timeline_session_creation() {
+        // Test the full flow of creating a TimelineSession
+        let content = r#"{"timestamp":"2025-01-10T09:00:00+08:00","cwd":"/home/user/my-project","message":{"role":"user","content":"Working on feature implementation"}}
+{"timestamp":"2025-01-10T11:30:00+08:00","message":{"role":"assistant","content":"Done"}}"#;
+
+        let file = create_test_jsonl(content);
+        let path = file.path().to_path_buf();
+
+        let metadata = parse_session_timestamps_fast(&path).unwrap();
+        let hours = calculate_hours(&metadata.first_ts, &metadata.last_ts);
+
+        let session = TimelineSession {
+            id: "test-session".to_string(),
+            project: metadata.cwd.as_ref()
+                .and_then(|c| c.split('/').last())
+                .unwrap_or("unknown")
+                .to_string(),
+            title: metadata.first_msg.unwrap_or_else(|| "Untitled".to_string()),
+            start_time: metadata.first_ts.clone(),
+            end_time: metadata.last_ts.clone(),
+            hours,
+            commits: Vec::new(),
+        };
+
+        assert_eq!(session.project, "my-project");
+        assert_eq!(session.start_time, "2025-01-10T09:00:00+08:00");
+        assert_eq!(session.end_time, "2025-01-10T11:30:00+08:00");
+        assert!((session.hours - 2.5).abs() < 0.01);
+        assert!(session.title.contains("feature implementation"));
+    }
+
+    #[test]
+    fn test_session_filtering_by_minimum_hours() {
+        // Sessions < 0.08 hours should be filtered out
+        let content = r#"{"timestamp":"2025-01-10T09:00:00+08:00","cwd":"/home/user/project","message":{"role":"user","content":"Very short meaningful session"}}
+{"timestamp":"2025-01-10T09:02:00+08:00"}"#;
+
+        let file = create_test_jsonl(content);
+        let path = file.path().to_path_buf();
+
+        let metadata = parse_session_timestamps_fast(&path).unwrap();
+        let hours = calculate_hours(&metadata.first_ts, &metadata.last_ts);
+
+        // 2 minutes = 0.033 hours, but minimum is 0.1
+        // The actual filtering happens in get_timeline_data where hours < 0.08 is skipped
+        assert!(hours >= 0.1); // Due to .max(0.1) in calculate_hours
+    }
+
+    #[test]
+    fn test_directory_structure_simulation() {
+        use tempfile::TempDir;
+        use std::fs;
+
+        // Simulate Claude projects directory structure
+        let temp_dir = TempDir::new().unwrap();
+        let projects_dir = temp_dir.path();
+
+        // Create project directories
+        let project1_dir = projects_dir.join("abc123-myproject");
+        let project2_dir = projects_dir.join("def456-another");
+        let hidden_dir = projects_dir.join(".hidden");
+
+        fs::create_dir_all(&project1_dir).unwrap();
+        fs::create_dir_all(&project2_dir).unwrap();
+        fs::create_dir_all(&hidden_dir).unwrap();
+
+        // Create session files
+        let session1_content = r#"{"timestamp":"2025-01-10T09:00:00+08:00","cwd":"/home/user/myproject","message":{"role":"user","content":"Working on myproject feature"}}
+{"timestamp":"2025-01-10T11:00:00+08:00"}"#;
+
+        let session2_content = r#"{"timestamp":"2025-01-10T14:00:00+08:00","cwd":"/home/user/another","message":{"role":"user","content":"Working on another project"}}
+{"timestamp":"2025-01-10T16:00:00+08:00"}"#;
+
+        fs::write(project1_dir.join("session1.jsonl"), session1_content).unwrap();
+        fs::write(project2_dir.join("session2.jsonl"), session2_content).unwrap();
+        fs::write(hidden_dir.join("hidden.jsonl"), session1_content).unwrap();
+
+        // Verify directory structure
+        let entries: Vec<_> = fs::read_dir(projects_dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                e.path().is_dir() && !name.starts_with('.')
+            })
+            .collect();
+
+        assert_eq!(entries.len(), 2); // Should not include hidden dir
+    }
+
+    // ==================== Fast vs Full Parser Consistency Tests ====================
+
+    #[test]
+    fn test_fast_and_full_parser_consistency_small_file() {
+        let content = r#"{"timestamp":"2025-01-10T09:00:00+08:00","cwd":"/home/user/project","message":{"role":"user","content":"This is a meaningful test message"}}
+{"timestamp":"2025-01-10T09:30:00+08:00","message":{"role":"assistant","content":"Response"}}
+{"timestamp":"2025-01-10T10:00:00+08:00"}"#;
+
+        let file = create_test_jsonl(content);
+        let path = file.path().to_path_buf();
+
+        let full_result = parse_session_timestamps_full(&path);
+        let fast_result = parse_session_timestamps_fast(&path);
+
+        assert!(full_result.is_some());
+        assert!(fast_result.is_some());
+
+        let full = full_result.unwrap();
+        let fast = fast_result.unwrap();
+
+        assert_eq!(full.first_ts, fast.first_ts);
+        assert_eq!(full.last_ts, fast.last_ts);
+        assert_eq!(full.cwd, fast.cwd);
+    }
+
+    #[test]
+    fn test_fast_parser_large_file_correctness() {
+        // Create a large file and verify fast parser gets correct first/last timestamps
+        let mut content = String::new();
+
+        // Known first timestamp
+        content.push_str(r#"{"timestamp":"2025-01-10T08:00:00+08:00","cwd":"/home/user/project","message":{"role":"user","content":"First meaningful message of the day"}}"#);
+        content.push('\n');
+
+        // Many middle lines
+        for i in 0..600 {
+            content.push_str(&format!(
+                r#"{{"timestamp":"2025-01-10T{:02}:{:02}:00+08:00","message":{{"role":"assistant","content":"Middle response {} with padding text to increase file size"}}}}"#,
+                9 + (i / 60) % 8,
+                i % 60,
+                i
+            ));
+            content.push('\n');
+        }
+
+        // Known last timestamp
+        content.push_str(r#"{"timestamp":"2025-01-10T18:00:00+08:00","message":{"role":"assistant","content":"Final response"}}"#);
+
+        let file = create_test_jsonl(&content);
+        let path = file.path().to_path_buf();
+
+        // Verify file is large enough for fast path
+        let file_size = std::fs::metadata(&path).unwrap().len();
+        assert!(file_size > 50_000);
+
+        let result = parse_session_timestamps_fast(&path);
+        assert!(result.is_some());
+
+        let metadata = result.unwrap();
+        assert_eq!(metadata.first_ts, "2025-01-10T08:00:00+08:00");
+        assert_eq!(metadata.last_ts, "2025-01-10T18:00:00+08:00");
+        assert_eq!(metadata.cwd, Some("/home/user/project".to_string()));
+    }
 }
