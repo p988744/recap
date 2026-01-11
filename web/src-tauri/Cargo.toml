@@ -67,3 +67,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 [[bench]]
 name = "timeline_parsing"
 harness = false
+
+[[example]]
+name = "verify_worklog"
+path = "examples/verify_worklog.rs"

@@ -5,8 +5,8 @@
 mod auth;
 mod commands;
 mod db;
-mod models;
-mod services;
+pub mod models;
+pub mod services;
 
 use tauri::{
     menu::{Menu, MenuItem},

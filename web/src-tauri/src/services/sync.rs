@@ -730,11 +730,12 @@ pub async fn sync_claude_projects(
         if let Some((existing_id,)) = existing {
             sqlx::query(
                 r#"UPDATE work_items
-                SET title = ?, description = ?, hours = ?, updated_at = ?
+                SET title = ?, description = ?, hours = ?, hours_source = 'session', hours_estimated = ?, updated_at = ?
                 WHERE id = ?"#,
             )
             .bind(&title)
             .bind(&description)
+            .bind(total_hours)
             .bind(total_hours)
             .bind(now)
             .bind(&existing_id)
@@ -747,8 +748,8 @@ pub async fn sync_claude_projects(
             let id = Uuid::new_v4().to_string();
             sqlx::query(
                 r#"INSERT INTO work_items
-                (id, user_id, source, title, description, hours, date, content_hash, created_at, updated_at)
-                VALUES (?, ?, 'claude_code', ?, ?, ?, ?, ?, ?, ?)"#,
+                (id, user_id, source, title, description, hours, date, content_hash, hours_source, hours_estimated, created_at, updated_at)
+                VALUES (?, ?, 'claude_code', ?, ?, ?, ?, ?, 'session', ?, ?, ?)"#,
             )
             .bind(&id)
             .bind(user_id)
@@ -757,6 +758,7 @@ pub async fn sync_claude_projects(
             .bind(total_hours)
             .bind(&date)
             .bind(&content_hash)
+            .bind(total_hours)
             .bind(now)
             .bind(now)
             .execute(pool)

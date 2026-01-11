@@ -12,6 +12,6 @@ pub use sync::{create_sync_service, sync_claude_projects, ClaudeSyncResult, Sync
 pub use tempo::{JiraClient, TempoClient, WorklogUploader, WorklogEntry, JiraAuthType};
 pub use worklog::{
     CommitRecord, DailyWorklog, FileChange, HoursEstimate, SessionBrief,
-    StandaloneSession, estimate_commit_hours, get_commits_for_date,
+    StandaloneSession, estimate_commit_hours, estimate_from_diff, get_commits_for_date,
     build_rule_based_outcome,
 };

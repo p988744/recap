@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use crate::auth::verify_token;
 use crate::models::GitLabProject;
+use crate::services::worklog;
 
 use super::AppState;
 
@@ -58,6 +59,14 @@ struct GitLabCommit {
     title: String,
     message: Option<String>,
     committed_date: String,
+    stats: Option<CommitStats>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CommitStats {
+    additions: i32,
+    deletions: i32,
+    total: i32,
 }
 
 #[derive(Debug, Serialize)]
@@ -345,7 +354,7 @@ pub async fn sync_gitlab(
         let commits_result = client
             .get(&commits_url)
             .header("PRIVATE-TOKEN", &gitlab_pat)
-            .query(&[("per_page", "100")])
+            .query(&[("per_page", "100"), ("with_stats", "true")])
             .send()
             .await;
 
@@ -364,7 +373,11 @@ pub async fn sync_gitlab(
                     Ok(commits) => {
                         // Batch fetch existing source_ids to avoid N+1 queries
                         let commit_ids: Vec<&str> = commits.iter().map(|c| c.id.as_str()).collect();
-                        let existing_ids: std::collections::HashSet<String> = if !commit_ids.is_empty() {
+                        let short_hashes: Vec<String> = commit_ids.iter().map(|id| id.chars().take(8).collect()).collect();
+
+                        // Check both source_id (GitLab) and commit_hash (cross-source dedup)
+                        let (existing_source_ids, existing_hashes): (std::collections::HashSet<String>, std::collections::HashSet<String>) = if !commit_ids.is_empty() {
+                            // Query existing GitLab source_ids
                             let placeholders = commit_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
                             let query = format!(
                                 "SELECT source_id FROM work_items WHERE source = 'gitlab' AND source_id IN ({})",
@@ -374,7 +387,7 @@ pub async fn sync_gitlab(
                             for id in &commit_ids {
                                 q = q.bind(id);
                             }
-                            q.fetch_all(&db.pool)
+                            let source_ids = q.fetch_all(&db.pool)
                                 .await
                                 .map_err(|e| {
                                     log::warn!("Failed to query existing commits: {}", e);
@@ -383,14 +396,35 @@ pub async fn sync_gitlab(
                                 .unwrap_or_default()
                                 .into_iter()
                                 .map(|(id,)| id)
-                                .collect()
+                                .collect();
+
+                            // Query existing commit_hash (cross-source deduplication)
+                            let hash_placeholders = short_hashes.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                            let hash_query = format!(
+                                "SELECT commit_hash FROM work_items WHERE commit_hash IS NOT NULL AND commit_hash IN ({})",
+                                hash_placeholders
+                            );
+                            let mut hq = sqlx::query_as::<_, (String,)>(&hash_query);
+                            for hash in &short_hashes {
+                                hq = hq.bind(hash);
+                            }
+                            let hashes = hq.fetch_all(&db.pool)
+                                .await
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|(h,)| h)
+                                .collect();
+
+                            (source_ids, hashes)
                         } else {
-                            std::collections::HashSet::new()
+                            (std::collections::HashSet::new(), std::collections::HashSet::new())
                         };
 
                         for commit in commits {
-                            // Skip if already exists (using batch-fetched set)
-                            if existing_ids.contains(&commit.id) {
+                            let short_hash = commit.id.chars().take(8).collect::<String>();
+
+                            // Skip if already exists by source_id OR commit_hash (cross-source dedup)
+                            if existing_source_ids.contains(&commit.id) || existing_hashes.contains(&short_hash) {
                                 continue;
                             }
 
@@ -408,11 +442,20 @@ pub async fn sync_gitlab(
                                 gitlab_url, project.path_with_namespace, commit.id
                             );
 
+                            // Calculate hours using heuristic from diff stats
+                            let (additions, deletions) = commit.stats
+                                .as_ref()
+                                .map(|s| (s.additions, s.deletions))
+                                .unwrap_or((0, 0));
+                            // Use 1 file as estimate since GitLab list doesn't give file count
+                            let estimated_hours = worklog::estimate_from_diff(additions, deletions, 1);
+                            // short_hash is already calculated above for dedup check
+
                             if let Err(e) = sqlx::query(
                                 r#"
                                 INSERT INTO work_items (id, user_id, source, source_id, source_url, title,
-                                    description, hours, date, created_at, updated_at)
-                                VALUES (?, ?, 'gitlab', ?, ?, ?, ?, 0, ?, ?, ?)
+                                    description, hours, date, hours_source, hours_estimated, commit_hash, created_at, updated_at)
+                                VALUES (?, ?, 'gitlab', ?, ?, ?, ?, ?, ?, 'heuristic', ?, ?, ?, ?)
                                 "#,
                             )
                             .bind(&work_item_id)
@@ -421,7 +464,10 @@ pub async fn sync_gitlab(
                             .bind(&source_url)
                             .bind(&commit.title)
                             .bind(&commit.message)
+                            .bind(estimated_hours)
                             .bind(commit_date)
+                            .bind(estimated_hours)
+                            .bind(&short_hash)
                             .bind(now)
                             .bind(now)
                             .execute(&db.pool)

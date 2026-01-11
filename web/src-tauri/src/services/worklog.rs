@@ -113,7 +113,9 @@ pub fn estimate_commit_hours(
 
         // Only use interval if gap is between 5 minutes and 4 hours
         if gap_minutes > 5 && gap_minutes < 240 {
-            let hours = (gap_minutes as f64 / 60.0).min(4.0);
+            let raw_hours = (gap_minutes as f64 / 60.0).min(4.0).max(0.25);
+            // Round to nearest 0.25
+            let hours = (raw_hours * 4.0).round() / 4.0;
             return HoursEstimate {
                 hours,
                 source: HoursSource::CommitInterval,
@@ -130,7 +132,7 @@ pub fn estimate_commit_hours(
 }
 
 /// Estimate hours from diff statistics using logarithmic scaling
-fn estimate_from_diff(additions: i32, deletions: i32, files_count: usize) -> f64 {
+pub fn estimate_from_diff(additions: i32, deletions: i32, files_count: usize) -> f64 {
     let total_lines = (additions + deletions) as f64;
     let files = files_count as f64;
 
