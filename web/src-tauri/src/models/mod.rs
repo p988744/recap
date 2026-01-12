@@ -265,3 +265,74 @@ pub struct SyncResult {
     pub items_synced: i32,
     pub message: Option<String>,
 }
+
+/// Local Git repository model
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct GitRepo {
+    pub id: String,
+    pub user_id: String,
+    pub path: String,
+    pub name: String,
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Git repo info for API response (includes runtime validation)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitRepoInfo {
+    pub id: String,
+    pub path: String,
+    pub name: String,
+    pub valid: bool,
+    pub last_commit: Option<String>,
+    pub last_commit_date: Option<String>,
+}
+
+/// Sources response for API
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourcesResponse {
+    pub mode: String,
+    pub git_repos: Vec<GitRepoInfo>,
+    pub claude_connected: bool,
+    pub claude_path: Option<String>,
+}
+
+/// Worklog entry for Tempo sync
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorklogEntry {
+    pub issue_key: String,
+    pub date: String,
+    pub minutes: i32,
+    pub description: String,
+}
+
+/// Sync worklogs request
+#[derive(Debug, Clone, Deserialize)]
+pub struct SyncWorklogsRequest {
+    pub entries: Vec<WorklogEntry>,
+    pub dry_run: bool,
+}
+
+/// Individual worklog sync result
+#[derive(Debug, Clone, Serialize)]
+pub struct WorklogSyncResult {
+    pub id: Option<String>,
+    pub issue_key: String,
+    pub date: String,
+    pub minutes: i32,
+    pub hours: f64,
+    pub description: String,
+    pub status: String,
+    pub error_message: Option<String>,
+}
+
+/// Sync worklogs response
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncWorklogsResponse {
+    pub success: bool,
+    pub total_entries: i32,
+    pub successful: i32,
+    pub failed: i32,
+    pub results: Vec<WorklogSyncResult>,
+    pub dry_run: bool,
+}

@@ -40,12 +40,18 @@ pub fn run() {
             commands::work_items::get_work_item,
             commands::work_items::update_work_item,
             commands::work_items::delete_work_item,
+            commands::work_items::map_work_item_jira,
             commands::work_items::get_stats_summary,
             commands::work_items::get_grouped_work_items,
             commands::work_items::get_timeline_data,
             commands::work_items::batch_sync_tempo,
             commands::work_items::aggregate_work_items,
             commands::work_items::get_commit_centric_worklog,
+            // Sources
+            commands::sources::get_sources,
+            commands::sources::add_git_repo,
+            commands::sources::remove_git_repo,
+            commands::sources::set_source_mode,
             // Claude
             commands::claude::list_claude_sessions,
             commands::claude::import_claude_sessions,

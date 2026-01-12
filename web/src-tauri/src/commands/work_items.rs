@@ -23,7 +23,6 @@ mod query_builder {
     pub enum BindValue {
         String(String),
         Int(i64),
-        Bool(bool),
     }
 
     /// Query builder that constructs parameterized queries
@@ -98,7 +97,6 @@ mod query_builder {
                 query = match binding {
                     BindValue::String(s) => query.bind(s),
                     BindValue::Int(i) => query.bind(*i),
-                    BindValue::Bool(b) => query.bind(*b),
                 };
             }
 
@@ -116,7 +114,6 @@ mod query_builder {
                 query = match binding {
                     BindValue::String(s) => query.bind(s),
                     BindValue::Int(i) => query.bind(*i),
-                    BindValue::Bool(b) => query.bind(*b),
                 };
             }
 
@@ -593,6 +590,55 @@ pub async fn delete_work_item(
     }
 
     Ok(())
+}
+
+/// Map a work item to a Jira issue
+#[tauri::command]
+pub async fn map_work_item_jira(
+    state: State<'_, AppState>,
+    token: String,
+    work_item_id: String,
+    jira_issue_key: String,
+    jira_issue_title: Option<String>,
+) -> Result<WorkItem, String> {
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
+    let now = Utc::now();
+
+    // Check ownership
+    let existing: Option<WorkItem> =
+        sqlx::query_as("SELECT * FROM work_items WHERE id = ? AND user_id = ?")
+            .bind(&work_item_id)
+            .bind(&claims.sub)
+            .fetch_optional(&db.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+    if existing.is_none() {
+        return Err("Work item not found".to_string());
+    }
+
+    // Update jira mapping
+    sqlx::query(
+        "UPDATE work_items SET jira_issue_key = ?, jira_issue_title = ?, updated_at = ? WHERE id = ? AND user_id = ?"
+    )
+    .bind(&jira_issue_key)
+    .bind(&jira_issue_title)
+    .bind(now)
+    .bind(&work_item_id)
+    .bind(&claims.sub)
+    .execute(&db.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // Fetch updated item
+    let item: WorkItem = sqlx::query_as("SELECT * FROM work_items WHERE id = ?")
+        .bind(&work_item_id)
+        .fetch_one(&db.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(item)
 }
 
 /// Get work item statistics summary

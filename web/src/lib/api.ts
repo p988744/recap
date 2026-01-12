@@ -499,24 +499,54 @@ export const api = {
       body: JSON.stringify(data),
     })
   },
-  testJira: () => fetchApi<{ success: boolean; message: string }>('/config/test-jira'),
+  testJira: async () => {
+    if (isTauri) {
+      return tauriApi.testTempoConnection(getRequiredToken())
+    }
+    return fetchApi<{ success: boolean; message: string }>('/config/test-jira')
+  },
   getTeams: () => fetchApi<{ teams: Team[]; total: number }>('/config/teams'),
 
-  // Sources
-  getSources: () => fetchApi<SourcesResponse>('/sources'),
-  addGitRepo: (path: string) =>
-    fetchApi<{ success: boolean; message: string }>('/sources/git', {
+  // Sources - Use Tauri API when available
+  getSources: async () => {
+    if (isTauri) {
+      const result = await tauriApi.getSources(getRequiredToken())
+      return {
+        ...result,
+        outlook_enabled: false, // Not implemented in Tauri yet
+      } as SourcesResponse
+    }
+    return fetchApi<SourcesResponse>('/sources')
+  },
+  addGitRepo: async (path: string) => {
+    if (isTauri) {
+      return tauriApi.addGitRepo(getRequiredToken(), path)
+    }
+    return fetchApi<{ success: boolean; message: string }>('/sources/git', {
       method: 'POST',
       body: JSON.stringify({ path }),
-    }),
-  removeGitRepo: (name: string) =>
-    fetchApi<{ success: boolean; message: string }>(`/sources/git/${name}`, {
+    })
+  },
+  removeGitRepo: async (repoId: string) => {
+    if (isTauri) {
+      return tauriApi.removeGitRepo(getRequiredToken(), repoId)
+    }
+    return fetchApi<{ success: boolean; message: string }>(`/sources/git/${repoId}`, {
       method: 'DELETE',
-    }),
-  setGitMode: () =>
-    fetchApi<{ success: boolean; message: string }>('/sources/mode/git', { method: 'POST' }),
-  setClaudeMode: () =>
-    fetchApi<{ success: boolean; message: string }>('/sources/mode/claude', { method: 'POST' }),
+    })
+  },
+  setGitMode: async () => {
+    if (isTauri) {
+      return tauriApi.setSourceMode(getRequiredToken(), 'git')
+    }
+    return fetchApi<{ success: boolean; message: string }>('/sources/mode/git', { method: 'POST' })
+  },
+  setClaudeMode: async () => {
+    if (isTauri) {
+      return tauriApi.setSourceMode(getRequiredToken(), 'claude')
+    }
+    return fetchApi<{ success: boolean; message: string }>('/sources/mode/claude', { method: 'POST' })
+  },
 
   // GitLab - Use Tauri API when available
   configureGitLab: async (gitlabUrl: string, gitlabPat: string) => {
@@ -697,14 +727,26 @@ export const api = {
     return fetchApi<string[]>(`/analyze/dates${params}`)
   },
 
-  // Tempo
-  testTempo: () => fetchApi<{ success: boolean; message: string }>('/tempo/test'),
-  validateIssue: (issueKey: string) =>
-    fetchApi<{ success: boolean; message: string }>(`/tempo/validate-issue/${issueKey}`, {
+  // Tempo - Use Tauri API when available
+  testTempo: async () => {
+    if (isTauri) {
+      return tauriApi.testTempoConnection(getRequiredToken())
+    }
+    return fetchApi<{ success: boolean; message: string }>('/tempo/test')
+  },
+  validateIssue: async (issueKey: string) => {
+    if (isTauri) {
+      return tauriApi.validateJiraIssue(getRequiredToken(), issueKey)
+    }
+    return fetchApi<{ success: boolean; message: string }>(`/tempo/validate-issue/${issueKey}`, {
       method: 'POST',
-    }),
-  syncWorklogs: (entries: Array<{ issue_key: string; date: string; minutes: number; description: string }>, dryRun = false) =>
-    fetchApi<{
+    })
+  },
+  syncWorklogs: async (entries: Array<{ issue_key: string; date: string; minutes: number; description: string }>, dryRun = false) => {
+    if (isTauri) {
+      return tauriApi.syncWorklogsToTempo(getRequiredToken(), { entries, dry_run: dryRun })
+    }
+    return fetchApi<{
       success: boolean
       total_entries: number
       successful: number
@@ -723,7 +765,8 @@ export const api = {
     }>('/tempo/sync', {
       method: 'POST',
       body: JSON.stringify({ entries, dry_run: dryRun }),
-    }),
+    })
+  },
 
   // Work Items - Use Tauri API when available
   getWorkItems: async (filters?: WorkItemFilters) => {
@@ -791,11 +834,15 @@ export const api = {
       method: 'DELETE',
     })
   },
-  mapWorkItemJira: (id: string, jiraIssueKey: string, jiraIssueTitle?: string) =>
-    fetchApi<WorkItem>(`/work-items/${id}/map-jira`, {
+  mapWorkItemJira: async (id: string, jiraIssueKey: string, jiraIssueTitle?: string) => {
+    if (isTauri) {
+      return tauriApi.mapWorkItemJira(getRequiredToken(), id, jiraIssueKey, jiraIssueTitle) as Promise<WorkItem>
+    }
+    return fetchApi<WorkItem>(`/work-items/${id}/map-jira`, {
       method: 'POST',
       body: JSON.stringify({ jira_issue_key: jiraIssueKey, jira_issue_title: jiraIssueTitle }),
-    }),
+    })
+  },
   batchMapWorkItemsJira: (workItemIds: string[], jiraIssueKey: string, jiraIssueTitle?: string) =>
     fetchApi<{ message: string; count: number }>('/work-items/batch-map-jira', {
       method: 'POST',

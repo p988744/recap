@@ -42,7 +42,6 @@ pub struct ExcelReportGenerator {
     workbook: Workbook,
     // Styles
     header_format: Format,
-    subheader_format: Format,
     total_format: Format,
     date_format: Format,
     number_format: Format,
@@ -58,12 +57,6 @@ impl ExcelReportGenerator {
             .set_bold()
             .set_font_color(Color::White)
             .set_background_color(Color::RGB(0x4472C4))
-            .set_align(rust_xlsxwriter::FormatAlign::Center)
-            .set_border(FormatBorder::Thin);
-
-        // Subheader style: light blue background
-        let subheader_format = Format::new()
-            .set_background_color(Color::RGB(0xB4C6E7))
             .set_align(rust_xlsxwriter::FormatAlign::Center)
             .set_border(FormatBorder::Thin);
 
@@ -88,7 +81,6 @@ impl ExcelReportGenerator {
         Ok(Self {
             workbook,
             header_format,
-            subheader_format,
             total_format,
             date_format,
             number_format,

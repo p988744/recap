@@ -118,6 +118,35 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
+        // Create git_repos table for local Git repositories
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS git_repos (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                path TEXT NOT NULL,
+                name TEXT NOT NULL,
+                enabled BOOLEAN NOT NULL DEFAULT 1,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                UNIQUE(user_id, path)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Create index for git_repos
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_git_repos_user_id ON git_repos(user_id)")
+            .execute(&self.pool)
+            .await?;
+
+        // Add source_mode column to users table
+        sqlx::query("ALTER TABLE users ADD COLUMN source_mode TEXT DEFAULT 'claude'")
+            .execute(&self.pool)
+            .await
+            .ok(); // Ignore error if column already exists
+
         // Migration: Add parent_id column for grouping
         sqlx::query(
             "ALTER TABLE work_items ADD COLUMN parent_id TEXT REFERENCES work_items(id)"

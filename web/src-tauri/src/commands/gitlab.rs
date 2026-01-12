@@ -28,8 +28,6 @@ pub struct AddProjectRequest {
 #[derive(Debug, Deserialize)]
 pub struct SyncGitLabRequest {
     pub project_id: Option<String>,
-    pub start_date: Option<String>,
-    pub end_date: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -66,7 +64,6 @@ struct GitLabCommit {
 struct CommitStats {
     additions: i32,
     deletions: i32,
-    total: i32,
 }
 
 #[derive(Debug, Serialize)]

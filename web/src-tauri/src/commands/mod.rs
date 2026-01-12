@@ -8,6 +8,7 @@ pub mod claude;
 pub mod config;
 pub mod gitlab;
 pub mod reports;
+pub mod sources;
 pub mod sync;
 pub mod tempo;
 pub mod users;

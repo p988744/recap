@@ -219,7 +219,6 @@ struct GitCommit {
 /// Session summary for aggregation
 #[derive(Debug, Clone)]
 struct SessionSummary {
-    hours: f64,
     tool_usage: Vec<ToolUsage>,
     files_modified: Vec<String>,
     first_message: Option<String>,
@@ -228,9 +227,6 @@ struct SessionSummary {
 /// Daily work item data (aggregated from multiple sessions)
 #[derive(Debug)]
 struct DailyWorkItem {
-    project_path: String,
-    project_name: String,
-    date: String,
     sessions: Vec<SessionSummary>,
     total_hours: f64,
     git_commits: Vec<GitCommit>,
@@ -479,8 +475,7 @@ pub async fn sync_claude_projects(
         let total_hours: f64 = sessions.iter().map(|(_, h)| h).sum();
         let session_summaries: Vec<SessionSummary> = sessions
             .iter()
-            .map(|(s, h)| SessionSummary {
-                hours: *h,
+            .map(|(s, _h)| SessionSummary {
                 tool_usage: s.tool_usage.clone(),
                 files_modified: s.files_modified.clone(),
                 first_message: s.first_message.clone(),
@@ -516,9 +511,6 @@ pub async fn sync_claude_projects(
         };
 
         let daily = DailyWorkItem {
-            project_path: project_path.clone(),
-            project_name: project_name.clone(),
-            date: date.clone(),
             sessions: session_summaries,
             total_hours,
             git_commits,

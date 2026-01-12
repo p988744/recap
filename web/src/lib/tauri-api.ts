@@ -906,6 +906,114 @@ export async function updateProfile(token: string, request: UpdateProfileRequest
   return invoke<UserResponse>('update_profile', { token, request })
 }
 
+// Sources Types
+
+export interface GitRepoInfo {
+  id: string
+  path: string
+  name: string
+  valid: boolean
+  last_commit?: string
+  last_commit_date?: string
+}
+
+export interface SourcesResponse {
+  mode: string
+  git_repos: GitRepoInfo[]
+  claude_connected: boolean
+  claude_path?: string
+}
+
+export interface AddGitRepoResponse {
+  success: boolean
+  message: string
+  repo?: GitRepoInfo
+}
+
+export interface SourceModeResponse {
+  success: boolean
+  message: string
+}
+
+// Sources Commands
+
+/**
+ * Get data sources configuration
+ */
+export async function getSources(token: string): Promise<SourcesResponse> {
+  return invoke<SourcesResponse>('get_sources', { token })
+}
+
+/**
+ * Add a local Git repository
+ */
+export async function addGitRepo(token: string, path: string): Promise<AddGitRepoResponse> {
+  return invoke<AddGitRepoResponse>('add_git_repo', { token, path })
+}
+
+/**
+ * Remove a local Git repository
+ */
+export async function removeGitRepo(token: string, repoId: string): Promise<SourceModeResponse> {
+  return invoke<SourceModeResponse>('remove_git_repo', { token, repo_id: repoId })
+}
+
+/**
+ * Set data source mode (git or claude)
+ */
+export async function setSourceMode(token: string, mode: string): Promise<SourceModeResponse> {
+  return invoke<SourceModeResponse>('set_source_mode', { token, mode })
+}
+
+// Work Items Additional Commands
+
+/**
+ * Map a work item to a Jira issue
+ */
+export async function mapWorkItemJira(
+  token: string,
+  workItemId: string,
+  jiraIssueKey: string,
+  jiraIssueTitle?: string
+): Promise<WorkItem> {
+  return invoke<WorkItem>('map_work_item_jira', {
+    token,
+    work_item_id: workItemId,
+    jira_issue_key: jiraIssueKey,
+    jira_issue_title: jiraIssueTitle,
+  })
+}
+
+// Commit-centric Worklog Types
+
+export interface CommitWorklogItem {
+  commit_hash: string
+  commit_message: string
+  commit_time: string
+  project_name: string
+  hours: number
+  jira_issue_key?: string
+  jira_issue_title?: string
+  synced_to_tempo: boolean
+  work_item_id?: string
+}
+
+export interface CommitCentricWorklogResponse {
+  items: CommitWorklogItem[]
+  total_hours: number
+  total_commits: number
+}
+
+/**
+ * Get commit-centric worklog data for Tempo sync
+ */
+export async function getCommitCentricWorklog(
+  token: string,
+  query: { start_date?: string; end_date?: string } = {}
+): Promise<CommitCentricWorklogResponse> {
+  return invoke<CommitCentricWorklogResponse>('get_commit_centric_worklog', { token, query })
+}
+
 // Re-export for convenience
 export const tauriApi = {
   // Auth
@@ -963,4 +1071,12 @@ export const tauriApi = {
   // Users
   getProfile,
   updateProfile,
+  // Sources
+  getSources,
+  addGitRepo,
+  removeGitRepo,
+  setSourceMode,
+  // Work Items Additional
+  mapWorkItemJira,
+  getCommitCentricWorklog,
 }
