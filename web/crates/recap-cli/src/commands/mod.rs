@@ -6,6 +6,7 @@ pub mod config;
 pub mod report;
 pub mod source;
 pub mod sync;
+pub mod tempo_report;
 pub mod work;
 
 use crate::output::OutputFormat;

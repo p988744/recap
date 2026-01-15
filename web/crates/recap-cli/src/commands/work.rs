@@ -132,11 +132,13 @@ impl From<recap_core::WorkItem> for WorkItemRow {
     }
 }
 
-fn truncate(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
+fn truncate(s: &str, max_chars: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max_chars {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_len - 3])
+        let truncated: String = chars[..max_chars - 3].iter().collect();
+        format!("{}...", truncated)
     }
 }
 

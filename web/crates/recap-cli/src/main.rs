@@ -61,6 +61,12 @@ enum Commands {
         #[command(subcommand)]
         action: commands::config::ConfigAction,
     },
+
+    /// Generate smart Tempo reports (daily/weekly/monthly/quarterly/semi-annual)
+    Tempo {
+        #[command(subcommand)]
+        action: commands::tempo_report::TempoReportAction,
+    },
 }
 
 #[tokio::main]
@@ -89,5 +95,6 @@ async fn main() -> Result<()> {
         Commands::Source { action } => commands::source::execute(&ctx, action).await,
         Commands::Report { action } => commands::report::execute(&ctx, action).await,
         Commands::Config { action } => commands::config::execute(&ctx, action).await,
+        Commands::Tempo { action } => commands::tempo_report::execute(&ctx, action).await,
     }
 }

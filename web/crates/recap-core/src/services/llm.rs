@@ -98,6 +98,40 @@ Session 內容：
         self.complete(&prompt).await
     }
 
+    /// Generate a project work summary for Tempo reporting
+    pub async fn summarize_project_work(&self, project: &str, work_items: &str) -> Result<Vec<String>, String> {
+        let prompt = format!(
+            r#"你是一個工作報告助手。請將以下「{project}」專案的工作項目整理成 3-5 條簡潔的工作摘要。
+
+工作項目：
+{work_items}
+
+要求：
+1. 每條摘要 10-30 字
+2. 使用動詞開頭（如：實作、研究、修復、設計、優化）
+3. 合併相似的工作項目
+4. 突出技術細節和成果
+5. 使用繁體中文
+
+請直接輸出摘要清單，每行一條，不要編號，不要其他說明。"#,
+            project = project,
+            work_items = work_items.chars().take(3000).collect::<String>()
+        );
+
+        let response = self.complete(&prompt).await?;
+
+        let summaries: Vec<String> = response
+            .lines()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty() && s.len() > 3)
+            .map(|s| s.trim_start_matches(|c: char| c.is_numeric() || c == '.' || c == '-' || c == '•' || c == '*').trim().to_string())
+            .filter(|s| !s.is_empty())
+            .take(5)
+            .collect();
+
+        Ok(summaries)
+    }
+
     /// Generate a daily work summary
     pub async fn summarize_daily_work(&self, sessions_info: &str, commits_info: &str) -> Result<String, String> {
         let prompt = format!(
