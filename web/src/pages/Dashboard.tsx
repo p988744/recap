@@ -23,6 +23,7 @@ import { ContributionHeatmap } from '@/components/ContributionHeatmap'
 import { WorkGanttChart, TimelineSession } from '@/components/WorkGanttChart'
 import { api, WorkItemStats, WorkItem, SyncStatus as SyncStatusType } from '@/lib/api'
 import { getGreeting, formatDate, getWeekProgress, cn } from '@/lib/utils'
+import { useAuth } from '@/lib/auth'
 
 // Muted warm chart colors
 const CHART_COLORS = [
@@ -68,6 +69,7 @@ function getHeatmapRange(weeks: number = 53) {
 }
 
 export function Dashboard() {
+  const { token, isAuthenticated } = useAuth()
   const [stats, setStats] = useState<WorkItemStats | null>(null)
   const [heatmapStats, setHeatmapStats] = useState<WorkItemStats | null>(null)
   const [recentItems, setRecentItems] = useState<WorkItem[]>([])
@@ -90,6 +92,8 @@ export function Dashboard() {
 
   useEffect(() => {
     async function autoSyncAllSources() {
+      // Only sync when authenticated
+      if (!isAuthenticated || !token) return
       if (autoSyncState !== 'idle') return
       setAutoSyncState('syncing')
 
@@ -113,9 +117,12 @@ export function Dashboard() {
       }
     }
     autoSyncAllSources()
-  }, [autoSyncState])
+  }, [autoSyncState, isAuthenticated, token])
 
   useEffect(() => {
+    // Only fetch when authenticated
+    if (!isAuthenticated || !token) return
+
     async function fetchData() {
       try {
         const [statsResult, heatmapResult, itemsResult] = await Promise.all([
@@ -137,10 +144,13 @@ export function Dashboard() {
       }
     }
     fetchData()
-  }, [weekRange, heatmapRange, claudeSyncInfo])
+  }, [weekRange, heatmapRange, claudeSyncInfo, isAuthenticated, token])
 
   // Fetch timeline data for Gantt chart
   useEffect(() => {
+    // Only fetch when authenticated
+    if (!isAuthenticated || !token) return
+
     async function fetchTimeline() {
       setGanttLoading(true)
       try {
@@ -169,7 +179,7 @@ export function Dashboard() {
       }
     }
     fetchTimeline()
-  }, [ganttDate])
+  }, [ganttDate, isAuthenticated, token])
 
   // Sync to Tempo function
   const handleSyncToTempo = useCallback(async () => {

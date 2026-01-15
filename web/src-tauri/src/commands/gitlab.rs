@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 use uuid::Uuid;
 
-use crate::auth::verify_token;
-use crate::models::GitLabProject;
-use crate::services::worklog;
+use recap_core::auth::verify_token;
+use recap_core::models::GitLabProject;
+use recap_core::services::worklog;
 
 use super::AppState;
 

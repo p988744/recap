@@ -10,8 +10,8 @@ use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use tauri::State;
 
-use crate::auth::verify_token;
-use crate::services::{
+use recap_core::auth::verify_token;
+use recap_core::services::{
     generate_daily_hash, is_meaningful_message, extract_tool_detail,
     calculate_session_hours,
 };
@@ -110,7 +110,7 @@ pub struct SyncProjectsRequest {
 }
 
 // SyncResult re-exported from services for API response
-pub use crate::services::ClaudeSyncResult as SyncResult;
+pub use recap_core::services::ClaudeSyncResult as SyncResult;
 
 // Helper functions
 
@@ -574,7 +574,7 @@ pub async fn summarize_claude_session(
     token: String,
     request: SummarizeRequest,
 ) -> Result<SummarizeResult, String> {
-    use crate::services::create_llm_service;
+    use recap_core::services::create_llm_service;
 
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
     let db = state.db.lock().await;

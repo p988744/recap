@@ -14,7 +14,7 @@ pub mod tempo;
 pub mod users;
 pub mod work_items;
 
-use crate::db::Database;
+use recap_core::Database;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 

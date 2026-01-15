@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 use uuid::Uuid;
 
-use crate::{
+use recap_core::{
     auth::{create_token, hash_password, verify_password},
     models::UserResponse,
 };
@@ -230,10 +230,10 @@ pub async fn get_current_user(
     let db = state.db.lock().await;
 
     // Verify token and get claims
-    let claims = crate::auth::verify_token(&token)
+    let claims = recap_core::auth::verify_token(&token)
         .map_err(|e| e.to_string())?;
 
-    let user: crate::models::User = sqlx::query_as("SELECT * FROM users WHERE id = ?")
+    let user: recap_core::models::User = sqlx::query_as("SELECT * FROM users WHERE id = ?")
         .bind(&claims.sub)
         .fetch_one(&db.pool)
         .await

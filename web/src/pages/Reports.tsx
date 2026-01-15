@@ -39,11 +39,13 @@ import {
 } from '@/components/ui/tooltip'
 import { api, AnalyzeResponse, PersonalReport, PEReport } from '@/lib/api'
 import { formatHours, formatDateFull, cn } from '@/lib/utils'
+import { useAuth } from '@/lib/auth'
 
 type ReportPeriod = 'week' | 'last-week' | '7days' | '30days'
 type ReportTab = 'work' | 'pe'
 
 export function Reports() {
+  const { token, isAuthenticated } = useAuth()
   const [data, setData] = useState<AnalyzeResponse | null>(null)
   const [personalReport, setPersonalReport] = useState<PersonalReport | null>(null)
   const [peReport, setPEReport] = useState<PEReport | null>(null)
@@ -104,12 +106,16 @@ export function Reports() {
   }
 
   useEffect(() => {
+    // Only fetch when authenticated
+    if (!isAuthenticated || !token) {
+      return
+    }
     if (activeTab === 'work') {
       fetchReport(period)
     } else {
       fetchPEReport()
     }
-  }, [period, activeTab, peYear, peHalf])
+  }, [period, activeTab, peYear, peHalf, isAuthenticated, token])
 
   const generateReport = () => {
     if (!data) return ''

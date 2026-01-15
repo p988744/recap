@@ -6,7 +6,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::auth::verify_token;
+use recap_core::auth::verify_token;
 
 use super::AppState;
 

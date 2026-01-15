@@ -92,6 +92,10 @@ pub struct WorkItem {
     pub hours_estimated: Option<f64>,    // System-calculated hours (preserved even if user overrides)
     pub commit_hash: Option<String>,     // Git commit hash for commit-based items
     pub session_id: Option<String>,      // Claude session ID for linking
+    // Timeline support fields
+    pub start_time: Option<String>,      // ISO 8601 timestamp for session start
+    pub end_time: Option<String>,        // ISO 8601 timestamp for session end
+    pub project_path: Option<String>,    // Project path for filtering
 }
 
 /// Hours source enum for clarity

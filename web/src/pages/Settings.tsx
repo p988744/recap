@@ -33,7 +33,7 @@ import { useAuth } from '@/lib/auth'
 type SettingsSection = 'profile' | 'account' | 'integrations' | 'preferences' | 'about'
 
 export function SettingsPage() {
-  const { user, logout, appStatus } = useAuth()
+  const { user, logout, appStatus, token, isAuthenticated } = useAuth()
   const [activeSection, setActiveSection] = useState<SettingsSection>('profile')
   const [config, setConfig] = useState<ConfigResponse | null>(null)
   const [sources, setSources] = useState<SourcesResponse | null>(null)
@@ -109,6 +109,11 @@ export function SettingsPage() {
   const [savingLlm, setSavingLlm] = useState(false)
 
   useEffect(() => {
+    // Only fetch data when authenticated
+    if (!isAuthenticated || !token) {
+      return
+    }
+
     async function fetchData() {
       try {
         const [configData, sourcesData] = await Promise.all([
@@ -129,12 +134,13 @@ export function SettingsPage() {
         setGitlabUrl(configData.gitlab_url || '')
       } catch (err) {
         console.error('Failed to fetch data:', err)
+        setMessage({ type: 'error', text: err instanceof Error ? err.message : '載入設定失敗' })
       } finally {
         setLoading(false)
       }
     }
     fetchData()
-  }, [])
+  }, [isAuthenticated, token])
 
   useEffect(() => {
     if (user) {
@@ -153,15 +159,17 @@ export function SettingsPage() {
 
   // Auto-load Claude sessions and GitLab projects when viewing integrations
   useEffect(() => {
-    if (activeSection === 'integrations') {
-      if (claudeProjects.length === 0 && !loadingClaude) {
-        loadClaudeSessions()
-      }
-      if (config?.gitlab_configured && gitlabProjects.length === 0) {
-        loadGitlabProjects()
-      }
+    // Only auto-load when authenticated and viewing integrations
+    if (!isAuthenticated || !token || activeSection !== 'integrations') {
+      return
     }
-  }, [activeSection, config?.gitlab_configured])
+    if (claudeProjects.length === 0 && !loadingClaude) {
+      loadClaudeSessions()
+    }
+    if (config?.gitlab_configured && gitlabProjects.length === 0) {
+      loadGitlabProjects()
+    }
+  }, [activeSection, config?.gitlab_configured, isAuthenticated, token])
 
   const handleSaveProfile = async () => {
     setSavingProfile(true)
@@ -399,10 +407,10 @@ export function SettingsPage() {
     }
   }
 
-  const handleRemoveRepo = async (name: string) => {
+  const handleRemoveRepo = async (repoId: string) => {
     setMessage(null)
     try {
-      await api.removeGitRepo(name)
+      await api.removeGitRepo(repoId)
       const updated = await api.getSources()
       setSources(updated)
       setMessage({ type: 'success', text: '已移除 Git 倉庫' })
@@ -420,6 +428,28 @@ export function SettingsPage() {
       // Expand the first project by default
       if (projects.length > 0) {
         setExpandedProjects(new Set([projects[0].path]))
+      }
+
+      // Auto-add detected Git repos from Claude Code projects
+      if (projects.length > 0 && sources) {
+        const existingPaths = sources.git_repos?.map(r => r.path) || []
+        const newProjects = projects.filter(p => !existingPaths.includes(p.path))
+
+        if (newProjects.length > 0) {
+          // Add all new repos in parallel
+          const addPromises = newProjects.map(p =>
+            api.addGitRepo(p.path).catch(() => null) // Ignore individual failures
+          )
+          await Promise.all(addPromises)
+
+          // Refresh sources to show the added repos
+          const updated = await api.getSources()
+          setSources(updated)
+          setMessage({
+            type: 'success',
+            text: `已自動新增 ${newProjects.length} 個 Git 倉庫`
+          })
+        }
       }
     } catch (err) {
       setMessage({ type: 'error', text: err instanceof Error ? err.message : '載入失敗' })
@@ -733,7 +763,7 @@ export function SettingsPage() {
                   <div className="space-y-2">
                     {sources.git_repos.map((repo) => (
                       <div
-                        key={repo.path}
+                        key={repo.id}
                         className="flex items-center justify-between p-3 bg-muted/30 rounded-lg"
                       >
                         <div className="flex-1 min-w-0">
@@ -749,7 +779,7 @@ export function SettingsPage() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => handleRemoveRepo(repo.name)}
+                            onClick={() => handleRemoveRepo(repo.id)}
                             className="text-muted-foreground hover:text-destructive"
                           >
                             <Trash2 className="w-4 h-4" strokeWidth={1.5} />

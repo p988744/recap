@@ -5,8 +5,8 @@
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::auth::verify_token;
-use crate::services::tempo::{JiraAuthType, JiraClient, TempoClient, WorklogEntry, WorklogUploader};
+use recap_core::auth::verify_token;
+use recap_core::services::tempo::{JiraAuthType, JiraClient, TempoClient, WorklogEntry, WorklogUploader};
 
 use super::AppState;
 

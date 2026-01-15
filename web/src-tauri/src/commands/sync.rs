@@ -5,9 +5,9 @@
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::auth::verify_token;
-use crate::models::SyncResult;
-use crate::services::{sync_claude_projects, SyncService};
+use recap_core::auth::verify_token;
+use recap_core::models::SyncResult;
+use recap_core::services::{sync_claude_projects, SyncService};
 
 use super::AppState;
 

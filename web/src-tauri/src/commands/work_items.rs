@@ -8,9 +8,9 @@ use std::collections::HashMap;
 use tauri::State;
 use uuid::Uuid;
 
-use crate::auth::verify_token;
-use crate::models::{CreateWorkItem, PaginatedResponse, UpdateWorkItem, WorkItem};
-use crate::services::is_meaningful_message;
+use recap_core::auth::verify_token;
+use recap_core::models::{CreateWorkItem, PaginatedResponse, UpdateWorkItem, WorkItem};
+use recap_core::services::is_meaningful_message;
 
 use super::AppState;
 
@@ -237,8 +237,8 @@ pub struct StatsQuery {
 
 // Timeline types
 
-// TimelineCommit is imported from crate::services::TimelineCommit
-pub use crate::services::TimelineCommit;
+// TimelineCommit is imported from recap_core::services
+pub use recap_core::services::TimelineCommit;
 
 #[derive(Debug, Serialize)]
 pub struct TimelineSession {
@@ -918,151 +918,78 @@ pub async fn get_grouped_work_items(
 }
 
 /// Get timeline data for Gantt chart visualization
-/// Optimized version with parallel processing and early filtering
+/// NOW reads from work_items database for consistency with Stats
 #[tauri::command]
 pub async fn get_timeline_data(
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
     token: String,
     date: String,
 ) -> Result<TimelineResponse, String> {
-    let _claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
 
-    use std::path::PathBuf;
-    use chrono::NaiveDate;
+    // Query work_items for the given date with start_time (session timing)
+    let items: Vec<crate::models::WorkItem> = sqlx::query_as(
+        r#"SELECT * FROM work_items
+           WHERE user_id = ? AND date = ? AND source = 'claude_code'
+           ORDER BY start_time ASC"#
+    )
+    .bind(&claims.sub)
+    .bind(&date)
+    .fetch_all(&db.pool)
+    .await
+    .map_err(|e| e.to_string())?;
 
-    let target_date = NaiveDate::parse_from_str(&date, "%Y-%m-%d")
-        .map_err(|e| format!("Invalid date format: {}", e))?;
+    // Convert work items to timeline sessions
+    let mut sessions: Vec<TimelineSession> = Vec::new();
 
-    let claude_home = std::env::var("HOME")
-        .ok()
-        .map(|h| PathBuf::from(h).join(".claude").join("projects"));
+    for item in items {
+        // Extract project name from title [project_name] ...
+        let project = if item.title.starts_with('[') {
+            item.title
+                .split(']')
+                .next()
+                .map(|s| s.trim_start_matches('[').to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        } else {
+            item.project_path
+                .as_ref()
+                .and_then(|p| p.split('/').last())
+                .unwrap_or("unknown")
+                .to_string()
+        };
 
-    let projects_dir = match claude_home {
-        Some(dir) if dir.exists() => dir,
-        _ => {
-            return Ok(TimelineResponse {
-                date,
-                sessions: Vec::new(),
-                total_hours: 0.0,
-                total_commits: 0,
-            });
-        }
-    };
+        // Extract title content (remove [project_name] prefix)
+        let title = if item.title.starts_with('[') {
+            item.title
+                .split(']')
+                .nth(1)
+                .map(|s| s.trim().to_string())
+                .unwrap_or_else(|| item.title.clone())
+        } else {
+            item.title.clone()
+        };
 
-    // Phase 1: Collect all candidate files (quick filesystem scan)
-    let mut candidate_files: Vec<(PathBuf, String)> = Vec::new();
+        // Use start_time/end_time if available, otherwise use date boundaries
+        let start_time = item.start_time.clone()
+            .unwrap_or_else(|| format!("{}T09:00:00+08:00", date));
+        let end_time = item.end_time.clone()
+            .unwrap_or_else(|| format!("{}T17:00:00+08:00", date));
 
-    if let Ok(entries) = std::fs::read_dir(&projects_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
+        // Get commits for this session's time range
+        let project_path = item.project_path.clone().unwrap_or_default();
+        let commits = crate::services::get_commits_in_time_range(&project_path, &start_time, &end_time);
 
-            let dir_name = path.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("")
-                .to_string();
-
-            if dir_name.starts_with('.') {
-                continue;
-            }
-
-            let project_name = dir_name.split('-').last().unwrap_or(&dir_name).to_string();
-
-            if let Ok(files) = std::fs::read_dir(&path) {
-                for file_entry in files.flatten() {
-                    let file_path = file_entry.path();
-                    if !file_path.extension().map(|e| e == "jsonl").unwrap_or(false) {
-                        continue;
-                    }
-
-                    // Quick filter: check file modification date
-                    if let Ok(file_meta) = file_entry.metadata() {
-                        if let Ok(modified) = file_meta.modified() {
-                            let modified_date: chrono::DateTime<chrono::Local> = modified.into();
-                            let file_date = modified_date.date_naive();
-                            // Allow files modified on target date or day after (for sessions spanning midnight)
-                            let day_before = target_date - chrono::Duration::days(1);
-                            let day_after = target_date + chrono::Duration::days(1);
-                            if file_date < day_before || file_date > day_after {
-                                continue;
-                            }
-                        }
-                    }
-
-                    candidate_files.push((file_path, project_name.clone()));
-                }
-            }
-        }
-    }
-
-    // Phase 2: Process files in parallel using tokio
-    let date_clone = date.clone();
-    let sessions: Vec<TimelineSession> = tokio::task::spawn_blocking(move || {
-        use std::sync::Mutex;
-        use std::thread;
-
-        let results: Mutex<Vec<TimelineSession>> = Mutex::new(Vec::new());
-        let chunk_size = (candidate_files.len() / 4).max(1);
-        let chunks: Vec<_> = candidate_files.chunks(chunk_size).map(|c| c.to_vec()).collect();
-
-        thread::scope(|s| {
-            for chunk in chunks {
-                let results_ref = &results;
-                let date_ref = &date_clone;
-                s.spawn(move || {
-                    let mut local_sessions = Vec::new();
-                    for (file_path, project_name) in chunk {
-                        if let Some(metadata) = parse_session_timestamps_fast(&file_path) {
-                            let session_date = metadata.first_ts.split('T').next().unwrap_or("");
-                            if session_date != date_ref {
-                                continue;
-                            }
-
-                            // Use shared worklog service functions
-                            use crate::services::{calculate_session_hours, get_commits_in_time_range};
-
-                            let hours = calculate_session_hours(&metadata.first_ts, &metadata.last_ts);
-                            // Note: calculate_session_hours already enforces minimum 0.1h (6 min)
-
-                            let actual_project_name = metadata.cwd.as_ref()
-                                .and_then(|c| c.split('/').last())
-                                .unwrap_or(&project_name)
-                                .to_string();
-
-                            let project_path_for_git = metadata.cwd.clone().unwrap_or_default();
-
-                            let commits = get_commits_in_time_range(&project_path_for_git, &metadata.first_ts, &metadata.last_ts);
-
-                            let session_id = file_path.file_stem()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or("unknown")
-                                .to_string();
-
-                            let title = metadata.first_msg.unwrap_or_else(|| "Claude Code session".to_string());
-
-                            local_sessions.push(TimelineSession {
-                                id: session_id,
-                                project: actual_project_name,
-                                title,
-                                start_time: metadata.first_ts,
-                                end_time: metadata.last_ts,
-                                hours,
-                                commits,
-                            });
-                        }
-                    }
-                    results_ref.lock().unwrap().extend(local_sessions);
-                });
-            }
+        sessions.push(TimelineSession {
+            id: item.session_id.unwrap_or_else(|| item.id.clone()),
+            project,
+            title,
+            start_time,
+            end_time,
+            hours: item.hours,
+            commits,
         });
-
-        results.into_inner().unwrap()
-    }).await.map_err(|e| format!("Task failed: {}", e))?;
-
-    let mut sessions = sessions;
-    sessions.sort_by(|a, b| a.start_time.cmp(&b.start_time));
+    }
 
     let total_hours: f64 = sessions.iter().map(|s| s.hours).sum();
     let total_commits: i32 = sessions.iter().map(|s| s.commits.len() as i32).sum();
@@ -1331,8 +1258,11 @@ pub async fn aggregate_work_items(
     })
 }
 
-// Helper functions
+// Helper functions - used only in tests
+// NOTE: These are kept for backward compatibility with existing tests
+// Timeline now reads from the work_items database for consistency with Stats.
 
+#[allow(dead_code)]
 struct SessionMetadata {
     first_ts: String,
     last_ts: String,
@@ -1342,6 +1272,7 @@ struct SessionMetadata {
 
 /// Optimized version: reads only the beginning and end of the file
 /// instead of parsing the entire JSONL file line by line
+#[allow(dead_code)]
 fn parse_session_timestamps_fast(path: &std::path::PathBuf) -> Option<SessionMetadata> {
     use std::io::{BufRead, BufReader, Seek, SeekFrom};
 
@@ -1465,6 +1396,7 @@ fn parse_session_timestamps_fast(path: &std::path::PathBuf) -> Option<SessionMet
 }
 
 /// Full file parse (used for small files or as fallback)
+#[allow(dead_code)]
 fn parse_session_timestamps_full(path: &std::path::PathBuf) -> Option<SessionMetadata> {
     use std::io::{BufRead, BufReader};
 
@@ -1553,9 +1485,9 @@ pub async fn get_commit_centric_worklog(
     query: CommitCentricQuery,
 ) -> Result<CommitCentricWorklog, String> {
     use chrono::NaiveDate;
-    use crate::services::get_commits_for_date;
+    use recap_core::services::get_commits_for_date;
 
-    let _claims = crate::auth::verify_token(&token).map_err(|e| e.to_string())?;
+    let _claims = recap_core::auth::verify_token(&token).map_err(|e| e.to_string())?;
 
     let date = NaiveDate::parse_from_str(&query.date, "%Y-%m-%d")
         .map_err(|e| format!("Invalid date format: {}", e))?;
@@ -1601,9 +1533,9 @@ pub async fn get_commit_centric_worklog(
 fn find_standalone_sessions(
     project_path: &str,
     date: &str,
-) -> Result<Vec<crate::services::StandaloneSession>, String> {
+) -> Result<Vec<recap_core::services::StandaloneSession>, String> {
     use chrono::{DateTime, NaiveDate, Local};
-    use crate::services::{build_rule_based_outcome, StandaloneSession};
+    use recap_core::services::{build_rule_based_outcome, StandaloneSession};
 
     let target_date = NaiveDate::parse_from_str(date, "%Y-%m-%d")
         .map_err(|e| format!("Invalid date: {}", e))?;
@@ -1822,7 +1754,7 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
-    use crate::services::{calculate_session_hours, get_commits_in_time_range};
+    use recap_core::services::{calculate_session_hours, get_commits_in_time_range};
 
     // Alias for backward compatibility with existing tests
     fn calculate_hours(start: &str, end: &str) -> f64 {

@@ -55,11 +55,13 @@ import {
 } from '@/components/ui/tooltip'
 import { api, WorkItem, WorkItemFilters, WorkItemStats, GroupedWorkItemsResponse } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { useAuth } from '@/lib/auth'
 import { ViewModeSwitcher, ViewMode } from '@/components/ViewModeSwitcher'
 import { ProjectSummaryCard, ProjectGroup } from '@/components/ProjectSummaryCard'
 import { WorkGanttChart, TimelineSession } from '@/components/WorkGanttChart'
 
 export function WorkItemsPage() {
+  const { token, isAuthenticated } = useAuth()
   const [items, setItems] = useState<WorkItem[]>([])
   const [stats, setStats] = useState<WorkItemStats | null>(null)
   const [loading, setLoading] = useState(true)
@@ -105,20 +107,26 @@ export function WorkItemsPage() {
   const [jiraTitle, setJiraTitle] = useState('')
 
   useEffect(() => {
+    // Only fetch when authenticated
+    if (!isAuthenticated || !token) return
+
     if (viewMode === 'list') {
       fetchWorkItems()
     } else if (viewMode === 'project' || viewMode === 'task') {
       fetchGroupedData()
     }
     fetchStats()
-  }, [page, filters, viewMode])
+  }, [page, filters, viewMode, isAuthenticated, token])
 
   // Fetch timeline data when in timeline view
   useEffect(() => {
+    // Only fetch when authenticated
+    if (!isAuthenticated || !token) return
+
     if (viewMode === 'timeline') {
       fetchTimelineData()
     }
-  }, [viewMode, timelineDate])
+  }, [viewMode, timelineDate, isAuthenticated, token])
 
   async function fetchGroupedData() {
     setLoading(true)

@@ -25,6 +25,7 @@ export interface UpdateLlmConfigRequest {
 }
 
 export interface GitRepoInfo {
+  id: string
   path: string
   name: string
   valid: boolean
@@ -103,8 +104,8 @@ function getRequiredToken(): string {
   return token
 }
 
-// Check if running in Tauri
-const isTauri = typeof window !== 'undefined' && '__TAURI__' in window
+// Check if running in Tauri (v2 uses __TAURI_INTERNALS__)
+const isTauri = typeof window !== 'undefined' && ('__TAURI__' in window || '__TAURI_INTERNALS__' in window)
 
 async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const token = getAuthToken()

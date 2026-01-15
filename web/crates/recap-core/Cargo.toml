@@ -1,0 +1,48 @@
+[package]
+name = "recap-core"
+version = "0.1.0"
+edition = "2021"
+description = "Core business logic for Recap - shared between CLI and Tauri"
+license = "MIT"
+
+[dependencies]
+# These will be gradually added as we migrate modules from src-tauri
+# For now, start with minimal dependencies
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "chrono", "uuid"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Auth
+jsonwebtoken = "9"
+bcrypt = "0.15"
+
+# Utilities
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "1.0"
+anyhow = "1.0"
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+log = "0.4"
+
+# HTTP client (for GitLab/Jira API)
+reqwest = { version = "0.12", features = ["json"] }
+
+# Excel export
+rust_xlsxwriter = "0.79"
+
+# Config
+directories = "5"
+dirs = "5"
+shellexpand = "3"
+
+[dev-dependencies]
+tempfile = "3"

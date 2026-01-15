@@ -2,11 +2,11 @@
 //!
 //! A Tauri application for work item management.
 
-mod auth;
 mod commands;
-mod db;
-pub mod models;
-pub mod services;
+
+// Re-export from recap-core for backwards compatibility
+pub use recap_core::models;
+pub use recap_core::services;
 
 use tauri::{
     menu::{Menu, MenuItem},
@@ -97,7 +97,7 @@ pub fn run() {
             // Initialize database and app state
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                match db::Database::new().await {
+                match recap_core::Database::new().await {
                     Ok(database) => {
                         log::info!("Database initialized successfully");
                         let state = commands::AppState::new(database);

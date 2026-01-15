@@ -16,6 +16,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.5.3", features = [] }
 
 [dependencies]
+# Core library (shared with CLI)
+recap-core = { path = "../crates/recap-core" }
+
 # Tauri
 tauri = { version = "2.9.5", features = ["tray-icon"] }
 tauri-plugin-log = "2"
@@ -27,18 +30,14 @@ tauri-plugin-updater = "2"
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 
-# Database
+# Database (re-exported from recap-core, but needed for sqlx macros)
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "chrono", "uuid"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-# Auth
-jsonwebtoken = "9"
-bcrypt = "0.15"
-
-# Utilities
+# Utilities (commonly used in commands layer)
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 log = "0.4"
@@ -53,9 +52,6 @@ reqwest = { version = "0.12", features = ["json"] }
 
 # File watching (for auto-sync)
 notify = "6"
-
-# Excel export
-rust_xlsxwriter = "0.79"
 
 # Config
 directories = "5"

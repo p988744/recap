@@ -6,8 +6,8 @@ use chrono::Utc;
 use serde::Deserialize;
 use tauri::State;
 
-use crate::auth::verify_token;
-use crate::models::UserResponse;
+use recap_core::auth::verify_token;
+use recap_core::models::UserResponse;
 
 use super::AppState;
 

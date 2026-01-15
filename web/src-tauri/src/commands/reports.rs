@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::State;
 
-use crate::auth::verify_token;
-use crate::models::WorkItem;
-use crate::services::excel::{ExcelReportGenerator, ExcelWorkItem, ProjectSummary, ReportMetadata};
+use recap_core::auth::verify_token;
+use recap_core::models::WorkItem;
+use recap_core::services::excel::{ExcelReportGenerator, ExcelWorkItem, ProjectSummary, ReportMetadata};
 
 use super::AppState;
 

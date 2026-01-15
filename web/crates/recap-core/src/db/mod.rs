@@ -1,6 +1,6 @@
 //! Database module - SQLx with SQLite
 
-use anyhow::Result;
+use crate::error::{Error, Result};
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use std::path::PathBuf;
 
@@ -11,10 +11,14 @@ pub struct Database {
 }
 
 impl Database {
-    /// Create a new database connection
+    /// Create a new database connection with default path
     pub async fn new() -> Result<Self> {
         let db_path = get_db_path()?;
+        Self::open(db_path).await
+    }
 
+    /// Create a new database connection with a specific path
+    pub async fn open(db_path: PathBuf) -> Result<Self> {
         // Ensure parent directory exists
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -292,15 +296,73 @@ impl Database {
             .await
             .ok();
 
+        // Add start_time and end_time columns for session timing (Timeline support)
+        sqlx::query("ALTER TABLE work_items ADD COLUMN start_time TEXT")
+            .execute(&self.pool)
+            .await
+            .ok(); // ISO 8601 timestamp for session start
+
+        sqlx::query("ALTER TABLE work_items ADD COLUMN end_time TEXT")
+            .execute(&self.pool)
+            .await
+            .ok(); // ISO 8601 timestamp for session end
+
+        // Add project_path column for better filtering
+        sqlx::query("ALTER TABLE work_items ADD COLUMN project_path TEXT")
+            .execute(&self.pool)
+            .await
+            .ok();
+
+        // Create index for timeline queries (source + date + start_time)
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_work_items_timeline ON work_items(user_id, date, start_time) WHERE start_time IS NOT NULL")
+            .execute(&self.pool)
+            .await
+            .ok();
+
         log::info!("Database migrations completed");
         Ok(())
     }
 }
 
 /// Get database file path
-fn get_db_path() -> Result<PathBuf> {
+/// Priority: RECAP_DB_PATH env var > default app data directory
+pub fn get_db_path() -> Result<PathBuf> {
+    // Check for environment variable override
+    if let Ok(path) = std::env::var("RECAP_DB_PATH") {
+        return Ok(PathBuf::from(path));
+    }
+
+    // Default: use app data directory
     let dirs = directories::ProjectDirs::from("com", "recap", "Recap")
-        .ok_or_else(|| anyhow::anyhow!("Could not determine project directories"))?;
+        .ok_or_else(|| Error::config("Could not determine project directories"))?;
 
     Ok(dirs.data_dir().join("recap.db"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    // Mutex to ensure env var tests don't run in parallel
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn test_get_db_path_default() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        // Without env var, should return default path
+        std::env::remove_var("RECAP_DB_PATH");
+        let path = get_db_path().unwrap();
+        assert!(path.to_string_lossy().contains("recap.db"));
+    }
+
+    #[test]
+    fn test_get_db_path_env_override() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        let test_path = "/tmp/test_recap.db";
+        std::env::set_var("RECAP_DB_PATH", test_path);
+        let path = get_db_path().unwrap();
+        assert_eq!(path.to_string_lossy(), test_path);
+        std::env::remove_var("RECAP_DB_PATH");
+    }
 }

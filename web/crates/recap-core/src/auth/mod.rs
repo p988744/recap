@@ -76,3 +76,24 @@ pub fn hash_password(password: &str) -> Result<String, bcrypt::BcryptError> {
 pub fn verify_password(password: &str, hash: &str) -> Result<bool, bcrypt::BcryptError> {
     bcrypt::verify(password, hash)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hash_password() {
+        let password = "test_password";
+        let hash = hash_password(password).unwrap();
+        assert!(!hash.is_empty());
+        assert_ne!(hash, password);
+    }
+
+    #[test]
+    fn test_verify_password() {
+        let password = "test_password";
+        let hash = hash_password(password).unwrap();
+        assert!(verify_password(password, &hash).unwrap());
+        assert!(!verify_password("wrong_password", &hash).unwrap());
+    }
+}
