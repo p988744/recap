@@ -3,6 +3,7 @@
 //! Contains all CLI command implementations.
 
 pub mod config;
+pub mod dashboard;
 pub mod report;
 pub mod source;
 pub mod sync;

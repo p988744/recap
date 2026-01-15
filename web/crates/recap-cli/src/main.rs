@@ -67,6 +67,12 @@ enum Commands {
         #[command(subcommand)]
         action: commands::tempo_report::TempoReportAction,
     },
+
+    /// Dashboard statistics and visualizations
+    Dashboard {
+        #[command(subcommand)]
+        action: commands::dashboard::DashboardAction,
+    },
 }
 
 #[tokio::main]
@@ -96,5 +102,6 @@ async fn main() -> Result<()> {
         Commands::Report { action } => commands::report::execute(&ctx, action).await,
         Commands::Config { action } => commands::config::execute(&ctx, action).await,
         Commands::Tempo { action } => commands::tempo_report::execute(&ctx, action).await,
+        Commands::Dashboard { action } => commands::dashboard::execute(&ctx, action).await,
     }
 }
