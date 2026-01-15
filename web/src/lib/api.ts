@@ -1020,6 +1020,15 @@ export const api = {
     })
   },
 
+  // Tempo Report - Use Tauri API when available
+  generateTempoReport: async (period: tauriApi.TempoReportPeriod, date?: string) => {
+    if (isTauri) {
+      return tauriApi.generateTempoReport(getRequiredToken(), { period, date })
+    }
+    // HTTP fallback not implemented - Tauri only feature
+    throw new Error('Tempo report is only available in the desktop app')
+  },
+
   // Reports - Excel Export - Use Tauri API when available
   exportExcel: async (startDate: string, endDate: string) => {
     if (isTauri) {
@@ -1079,3 +1088,6 @@ export interface TempoSyncResponse {
   results: TempoWorklogResult[]
   dry_run: boolean
 }
+
+// Re-export Tempo Report types from tauri-api
+export type { TempoReportPeriod, TempoReportQuery, TempoProjectSummary, TempoReport } from './tauri-api'

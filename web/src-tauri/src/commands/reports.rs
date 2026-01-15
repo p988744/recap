@@ -330,6 +330,279 @@ pub async fn get_source_report(
     })
 }
 
+// Tempo Report Types
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TempoReportPeriod {
+    Daily,
+    Weekly,
+    Monthly,
+    Quarterly,
+    SemiAnnual,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TempoReportQuery {
+    pub period: TempoReportPeriod,
+    pub date: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TempoProjectSummary {
+    pub project: String,
+    pub hours: f64,
+    pub item_count: i64,
+    pub summaries: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TempoReport {
+    pub period: String,
+    pub start_date: String,
+    pub end_date: String,
+    pub total_hours: f64,
+    pub total_items: i64,
+    pub projects: Vec<TempoProjectSummary>,
+    pub used_llm: bool,
+}
+
+/// Generate smart Tempo report with LLM summaries
+#[tauri::command]
+pub async fn generate_tempo_report(
+    state: State<'_, AppState>,
+    token: String,
+    query: TempoReportQuery,
+) -> Result<TempoReport, String> {
+    use chrono::{Datelike, Duration};
+
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
+
+    let today = chrono::Local::now().date_naive();
+
+    // Resolve period to date range
+    let (start_date, end_date, period_name) = match query.period {
+        TempoReportPeriod::Daily => {
+            let target = match &query.date {
+                Some(d) => NaiveDate::parse_from_str(d, "%Y-%m-%d")
+                    .map_err(|_| "Invalid date format. Use YYYY-MM-DD".to_string())?,
+                None => today,
+            };
+            (target, target, format!("Daily ({})", target))
+        }
+        TempoReportPeriod::Weekly => {
+            let start = match &query.date {
+                Some(d) => NaiveDate::parse_from_str(d, "%Y-%m-%d")
+                    .map_err(|_| "Invalid date format. Use YYYY-MM-DD".to_string())?,
+                None => {
+                    let weekday = today.weekday().num_days_from_monday();
+                    today - Duration::days(weekday as i64)
+                }
+            };
+            let end = start + Duration::days(6);
+            (start, end, format!("Weekly (W{})", start.iso_week().week()))
+        }
+        TempoReportPeriod::Monthly => {
+            let (year, month) = match &query.date {
+                Some(d) => {
+                    let parts: Vec<&str> = d.split('-').collect();
+                    if parts.len() >= 2 {
+                        (parts[0].parse::<i32>().map_err(|_| "Invalid year")?,
+                         parts[1].parse::<u32>().map_err(|_| "Invalid month")?)
+                    } else {
+                        return Err("Invalid month format. Use YYYY-MM".to_string());
+                    }
+                }
+                None => (today.year(), today.month()),
+            };
+            let start = NaiveDate::from_ymd_opt(year, month, 1)
+                .ok_or_else(|| "Invalid month".to_string())?;
+            let end = if month == 12 {
+                NaiveDate::from_ymd_opt(year + 1, 1, 1).unwrap() - Duration::days(1)
+            } else {
+                NaiveDate::from_ymd_opt(year, month + 1, 1).unwrap() - Duration::days(1)
+            };
+            (start, end, format!("Monthly ({}-{:02})", year, month))
+        }
+        TempoReportPeriod::Quarterly => {
+            let (year, quarter) = match &query.date {
+                Some(d) => parse_quarter(d)?,
+                None => {
+                    let q = (today.month() - 1) / 3 + 1;
+                    (today.year(), q)
+                }
+            };
+            let start_month = (quarter - 1) * 3 + 1;
+            let end_month = quarter * 3;
+            let start = NaiveDate::from_ymd_opt(year, start_month, 1)
+                .ok_or_else(|| "Invalid quarter".to_string())?;
+            let end = if end_month == 12 {
+                NaiveDate::from_ymd_opt(year + 1, 1, 1).unwrap() - Duration::days(1)
+            } else {
+                NaiveDate::from_ymd_opt(year, end_month + 1, 1).unwrap() - Duration::days(1)
+            };
+            (start, end, format!("Quarterly ({}-Q{})", year, quarter))
+        }
+        TempoReportPeriod::SemiAnnual => {
+            let (year, half) = match &query.date {
+                Some(d) => parse_half(d)?,
+                None => {
+                    let h = if today.month() <= 6 { 1 } else { 2 };
+                    (today.year(), h)
+                }
+            };
+            let (start_month, end_month) = if half == 1 { (1, 6) } else { (7, 12) };
+            let start = NaiveDate::from_ymd_opt(year, start_month, 1)
+                .ok_or_else(|| "Invalid half".to_string())?;
+            let end = if end_month == 12 {
+                NaiveDate::from_ymd_opt(year + 1, 1, 1).unwrap() - Duration::days(1)
+            } else {
+                NaiveDate::from_ymd_opt(year, end_month + 1, 1).unwrap() - Duration::days(1)
+            };
+            (start, end, format!("Semi-Annual ({}-H{})", year, half))
+        }
+    };
+
+    // Try to create LLM service
+    let llm_service = recap_core::create_llm_service(&db.pool, &claims.sub).await.ok();
+    let use_llm = llm_service.as_ref().map(|s| s.is_configured()).unwrap_or(false);
+
+    // Fetch work items
+    let items: Vec<WorkItem> = sqlx::query_as(
+        "SELECT * FROM work_items WHERE user_id = ? AND date >= ? AND date <= ? ORDER BY date"
+    )
+    .bind(&claims.sub)
+    .bind(start_date.to_string())
+    .bind(end_date.to_string())
+    .fetch_all(&db.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let total_items = items.len() as i64;
+    let total_hours: f64 = items.iter().map(|i| i.hours).sum();
+
+    // Group by project
+    let mut projects_map: HashMap<String, Vec<&WorkItem>> = HashMap::new();
+    for item in &items {
+        let project = extract_project_name(&item.title);
+        projects_map.entry(project).or_default().push(item);
+    }
+
+    // Build report
+    let mut projects: Vec<TempoProjectSummary> = Vec::new();
+
+    for (project, project_items) in &projects_map {
+        let hours: f64 = project_items.iter().map(|i| i.hours).sum();
+        let item_count = project_items.len() as i64;
+
+        // Generate smart summary using LLM if available
+        let summaries = if use_llm {
+            let work_items_text = project_items.iter()
+                .map(|i| {
+                    let title = clean_title(&i.title);
+                    let desc = i.description.as_ref()
+                        .map(|d| format!("\n  詳情: {}", d.chars().take(500).collect::<String>()))
+                        .unwrap_or_default();
+                    format!("- {} ({:.1}h): {}{}", i.date, i.hours, title, desc)
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            match llm_service.as_ref().unwrap().summarize_project_work(project, &work_items_text).await {
+                Ok(s) => s,
+                Err(_) => generate_fallback_summary(project_items),
+            }
+        } else {
+            generate_fallback_summary(project_items)
+        };
+
+        projects.push(TempoProjectSummary {
+            project: project.clone(),
+            hours,
+            item_count,
+            summaries,
+        });
+    }
+
+    // Sort by hours descending
+    projects.sort_by(|a, b| b.hours.partial_cmp(&a.hours).unwrap_or(std::cmp::Ordering::Equal));
+
+    Ok(TempoReport {
+        period: period_name,
+        start_date: start_date.to_string(),
+        end_date: end_date.to_string(),
+        total_hours,
+        total_items,
+        projects,
+        used_llm: use_llm,
+    })
+}
+
+// Helper functions for Tempo report
+
+fn parse_quarter(s: &str) -> Result<(i32, u32), String> {
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.len() != 2 {
+        return Err("Invalid quarter format. Use YYYY-Q1/Q2/Q3/Q4".to_string());
+    }
+    let year = parts[0].parse::<i32>().map_err(|_| "Invalid year")?;
+    let q = parts[1].trim_start_matches('Q').trim_start_matches('q')
+        .parse::<u32>().map_err(|_| "Invalid quarter")?;
+    if q < 1 || q > 4 {
+        return Err("Quarter must be Q1, Q2, Q3, or Q4".to_string());
+    }
+    Ok((year, q))
+}
+
+fn parse_half(s: &str) -> Result<(i32, u32), String> {
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.len() != 2 {
+        return Err("Invalid half format. Use YYYY-H1/H2".to_string());
+    }
+    let year = parts[0].parse::<i32>().map_err(|_| "Invalid year")?;
+    let h = parts[1].trim_start_matches('H').trim_start_matches('h')
+        .parse::<u32>().map_err(|_| "Invalid half")?;
+    if h < 1 || h > 2 {
+        return Err("Half must be H1 or H2".to_string());
+    }
+    Ok((year, h))
+}
+
+fn extract_project_name(title: &str) -> String {
+    if let Some(start) = title.find('[') {
+        if let Some(end) = title.find(']') {
+            if end > start {
+                return title[start + 1..end].to_string();
+            }
+        }
+    }
+    "其他".to_string()
+}
+
+fn clean_title(title: &str) -> String {
+    if let Some(end) = title.find(']') {
+        title[end + 1..].trim().to_string()
+    } else {
+        title.to_string()
+    }
+}
+
+fn generate_fallback_summary(items: &[&WorkItem]) -> Vec<String> {
+    items.iter()
+        .take(5)
+        .map(|i| {
+            let title = clean_title(&i.title);
+            if title.len() > 50 {
+                format!("{}...", title.chars().take(47).collect::<String>())
+            } else {
+                title
+            }
+        })
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
 /// Export work items to Excel file and return the file path
 #[tauri::command]
 pub async fn export_excel_report(

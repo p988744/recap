@@ -63,6 +63,7 @@ pub fn run() {
             commands::reports::get_category_report,
             commands::reports::get_source_report,
             commands::reports::export_excel_report,
+            commands::reports::generate_tempo_report,
             // Sync
             commands::sync::get_sync_status,
             commands::sync::auto_sync,

@@ -618,6 +618,39 @@ export async function exportExcelReport(token: string, query: ReportQuery): Prom
   return invoke<ExportResult>('export_excel_report', { token, query })
 }
 
+// Tempo Report Types
+
+export type TempoReportPeriod = 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'semi_annual'
+
+export interface TempoReportQuery {
+  period: TempoReportPeriod
+  date?: string
+}
+
+export interface TempoProjectSummary {
+  project: string
+  hours: number
+  item_count: number
+  summaries: string[]
+}
+
+export interface TempoReport {
+  period: string
+  start_date: string
+  end_date: string
+  total_hours: number
+  total_items: number
+  projects: TempoProjectSummary[]
+  used_llm: boolean
+}
+
+/**
+ * Generate smart Tempo report with LLM summaries
+ */
+export async function generateTempoReport(token: string, query: TempoReportQuery): Promise<TempoReport> {
+  return invoke<TempoReport>('generate_tempo_report', { token, query })
+}
+
 // Sync Types
 
 export interface SyncStatus {
@@ -1049,6 +1082,7 @@ export const tauriApi = {
   getCategoryReport,
   getSourceReport,
   exportExcelReport,
+  generateTempoReport,
   // Sync
   getSyncStatus,
   autoSync,
