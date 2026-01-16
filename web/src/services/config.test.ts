@@ -93,7 +93,7 @@ describe('config service', () => {
     it('should throw on invalid API key', async () => {
       mockCommandError('update_llm_config', 'Invalid API key format')
 
-      const request = { api_key: 'invalid' }
+      const request = { provider: 'openai', model: 'gpt-4', api_key: 'invalid' }
 
       await expect(config.updateLlmConfig(request)).rejects.toThrow('Invalid API key format')
     })
@@ -134,7 +134,7 @@ describe('config service', () => {
     it('should throw on invalid Jira URL', async () => {
       mockCommandError('update_jira_config', 'Invalid Jira URL')
 
-      const request = { url: 'not-a-url' }
+      const request = { jira_url: 'not-a-url' }
 
       await expect(config.updateJiraConfig(request)).rejects.toThrow('Invalid Jira URL')
     })

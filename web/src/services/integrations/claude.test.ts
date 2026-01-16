@@ -45,22 +45,20 @@ const mockClaudeProjects = [
 ]
 
 const mockImportResult = {
-  imported_count: 2,
-  skipped_count: 0,
-  message: 'Successfully imported 2 sessions',
+  imported: 2,
+  work_items_created: 2,
 }
 
 const mockSummarizeResult = {
-  session_id: 'session-1',
   summary: 'Implemented user authentication feature with JWT tokens',
-  key_points: ['Added login endpoint', 'Implemented JWT validation', 'Added logout functionality'],
+  success: true,
 }
 
 const mockSyncResult = {
-  synced_count: 5,
-  created_count: 3,
-  updated_count: 2,
-  message: 'Synced 5 work items from Claude Code',
+  sessions_processed: 5,
+  sessions_skipped: 0,
+  work_items_created: 3,
+  work_items_updated: 2,
 }
 
 describe('claude service', () => {
@@ -78,7 +76,6 @@ describe('claude service', () => {
       expect(result).toHaveLength(2)
       expect(result[0].name).toBe('test-project')
       expect(result[0].sessions).toHaveLength(2)
-      expect(result[0].total_hours).toBe(6.0)
       expect(mockInvoke).toHaveBeenCalledWith('list_claude_sessions', { token: 'test-token' })
     })
 
@@ -102,13 +99,12 @@ describe('claude service', () => {
       mockCommandValue('import_claude_sessions', mockImportResult)
 
       const request = {
-        project_paths: ['/home/user/.claude/projects/test-project'],
         session_ids: ['session-1', 'session-2'],
       }
       const result = await claude.importSessions(request)
 
-      expect(result.imported_count).toBe(2)
-      expect(result.skipped_count).toBe(0)
+      expect(result.imported).toBe(2)
+      expect(result.work_items_created).toBe(2)
       expect(mockInvoke).toHaveBeenCalledWith('import_claude_sessions', {
         token: 'test-token',
         request,
@@ -117,26 +113,23 @@ describe('claude service', () => {
 
     it('should handle partial import with skipped sessions', async () => {
       mockCommandValue('import_claude_sessions', {
-        imported_count: 1,
-        skipped_count: 1,
-        message: 'Imported 1 session, skipped 1 duplicate',
+        imported: 1,
+        work_items_created: 1,
       })
 
       const request = {
-        project_paths: ['/home/user/.claude/projects/test-project'],
         session_ids: ['session-1', 'session-2'],
       }
       const result = await claude.importSessions(request)
 
-      expect(result.imported_count).toBe(1)
-      expect(result.skipped_count).toBe(1)
+      expect(result.imported).toBe(1)
+      expect(result.work_items_created).toBe(1)
     })
 
     it('should throw on invalid session', async () => {
       mockCommandError('import_claude_sessions', 'Session not found')
 
       const request = {
-        project_paths: ['/invalid/path'],
         session_ids: ['invalid-session'],
       }
 
@@ -149,14 +142,12 @@ describe('claude service', () => {
       mockCommandValue('summarize_claude_session', mockSummarizeResult)
 
       const request = {
-        project_path: '/home/user/.claude/projects/test-project',
-        session_id: 'session-1',
+        session_file_path: '/home/user/.claude/projects/test-project/session-1.jsonl',
       }
       const result = await claude.summarizeSession(request)
 
-      expect(result.session_id).toBe('session-1')
+      expect(result.success).toBe(true)
       expect(result.summary).toContain('authentication')
-      expect(result.key_points).toHaveLength(3)
       expect(mockInvoke).toHaveBeenCalledWith('summarize_claude_session', {
         token: 'test-token',
         request,
@@ -167,8 +158,7 @@ describe('claude service', () => {
       mockCommandError('summarize_claude_session', 'LLM API key not configured')
 
       const request = {
-        project_path: '/home/user/.claude/projects/test-project',
-        session_id: 'session-1',
+        session_file_path: '/home/user/.claude/projects/test-project/session-1.jsonl',
       }
 
       await expect(claude.summarizeSession(request)).rejects.toThrow('LLM API key not configured')
@@ -184,9 +174,9 @@ describe('claude service', () => {
       }
       const result = await claude.syncProjects(request)
 
-      expect(result.synced_count).toBe(5)
-      expect(result.created_count).toBe(3)
-      expect(result.updated_count).toBe(2)
+      expect(result.sessions_processed).toBe(5)
+      expect(result.work_items_created).toBe(3)
+      expect(result.work_items_updated).toBe(2)
       expect(mockInvoke).toHaveBeenCalledWith('sync_claude_projects', {
         token: 'test-token',
         request,
@@ -198,12 +188,10 @@ describe('claude service', () => {
 
       const request = {
         project_paths: ['/home/user/.claude/projects/test-project'],
-        start_date: '2024-01-01',
-        end_date: '2024-01-31',
       }
       const result = await claude.syncProjects(request)
 
-      expect(result.synced_count).toBe(5)
+      expect(result.sessions_processed).toBe(5)
     })
 
     it('should throw on invalid project path', async () => {

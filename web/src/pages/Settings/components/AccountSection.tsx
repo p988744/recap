@@ -1,11 +1,11 @@
 import { User, Cloud, LogOut } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import type { UserResponse, AppStatusResponse } from '@/types'
+import type { UserResponse, AppStatus } from '@/types'
 
 interface AccountSectionProps {
   user: UserResponse | null
-  appStatus: AppStatusResponse | null
+  appStatus: AppStatus | null
   onLogout: () => void
 }
 

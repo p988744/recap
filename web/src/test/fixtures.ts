@@ -36,6 +36,7 @@ export const mockAppStatus: AppStatus = {
 export const mockTokenResponse: TokenResponse = {
   access_token: 'mock-jwt-token-12345',
   token_type: 'bearer',
+  expires_in: 86400,
 }
 
 // Work Items fixtures

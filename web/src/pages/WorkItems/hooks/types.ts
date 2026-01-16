@@ -22,7 +22,7 @@ export interface TimelineSession {
 export interface ProjectGroupLog {
   id: string
   title: string
-  description?: string | null
+  description?: string
   hours: number
   date: string
   source: string

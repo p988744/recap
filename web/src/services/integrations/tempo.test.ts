@@ -16,23 +16,27 @@ const mockTempoSuccess = {
 const mockValidateIssueResponse = {
   valid: true,
   issue_key: 'PROJ-123',
-  issue_title: 'Implement feature X',
-  project_key: 'PROJ',
+  summary: 'Implement feature X',
+  message: 'Issue found',
 }
 
 const mockSyncWorklogsResponse = {
-  synced_count: 5,
-  failed_count: 0,
-  total_hours: 20.5,
-  message: 'Successfully synced 5 worklogs to Tempo',
+  success: true,
+  total_entries: 5,
+  successful: 5,
+  failed: 0,
+  results: [],
+  dry_run: false,
 }
 
 const mockWorklogEntryResponse = {
   id: 'worklog-1',
   issue_key: 'PROJ-123',
-  hours: 4.0,
   date: '2024-01-15',
-  tempo_id: 'tempo-abc123',
+  minutes: 240,
+  hours: 4.0,
+  description: 'Feature development',
+  status: 'success',
 }
 
 const mockWorklogs = [
@@ -96,7 +100,7 @@ describe('tempo service', () => {
 
       expect(result.valid).toBe(true)
       expect(result.issue_key).toBe('PROJ-123')
-      expect(result.issue_title).toBe('Implement feature X')
+      expect(result.summary).toBe('Implement feature X')
       expect(mockInvoke).toHaveBeenCalledWith('validate_jira_issue', {
         token: 'test-token',
         issue_key: 'PROJ-123',
@@ -127,13 +131,15 @@ describe('tempo service', () => {
       mockCommandValue('sync_worklogs_to_tempo', mockSyncWorklogsResponse)
 
       const request = {
-        work_item_ids: ['item-1', 'item-2', 'item-3'],
+        entries: [
+          { issue_key: 'PROJ-1', date: '2024-01-15', minutes: 240, description: 'Work 1' },
+          { issue_key: 'PROJ-2', date: '2024-01-15', minutes: 180, description: 'Work 2' },
+        ],
       }
       const result = await tempo.syncWorklogs(request)
 
-      expect(result.synced_count).toBe(5)
-      expect(result.failed_count).toBe(0)
-      expect(result.total_hours).toBe(20.5)
+      expect(result.successful).toBe(5)
+      expect(result.failed).toBe(0)
       expect(mockInvoke).toHaveBeenCalledWith('sync_worklogs_to_tempo', {
         token: 'test-token',
         request,
@@ -142,26 +148,31 @@ describe('tempo service', () => {
 
     it('should handle partial sync with failures', async () => {
       mockCommandValue('sync_worklogs_to_tempo', {
-        synced_count: 3,
-        failed_count: 2,
-        total_hours: 12.0,
-        message: 'Synced 3 worklogs, 2 failed',
-        errors: ['Invalid issue key for item-2', 'Missing hours for item-4'],
+        success: true,
+        total_entries: 5,
+        successful: 3,
+        failed: 2,
+        results: [],
+        dry_run: false,
       })
 
       const request = {
-        work_item_ids: ['item-1', 'item-2', 'item-3', 'item-4', 'item-5'],
+        entries: [
+          { issue_key: 'PROJ-1', date: '2024-01-15', minutes: 240, description: 'Work 1' },
+        ],
       }
       const result = await tempo.syncWorklogs(request)
 
-      expect(result.synced_count).toBe(3)
-      expect(result.failed_count).toBe(2)
+      expect(result.successful).toBe(3)
+      expect(result.failed).toBe(2)
     })
 
     it('should throw when Jira is not configured', async () => {
       mockCommandError('sync_worklogs_to_tempo', 'Jira not configured')
 
-      const request = { work_item_ids: ['item-1'] }
+      const request = {
+        entries: [{ issue_key: 'PROJ-1', date: '2024-01-15', minutes: 240, description: 'Work' }],
+      }
 
       await expect(tempo.syncWorklogs(request)).rejects.toThrow('Jira not configured')
     })
@@ -173,15 +184,15 @@ describe('tempo service', () => {
 
       const request = {
         issue_key: 'PROJ-123',
-        hours: 4.0,
         date: '2024-01-15',
+        minutes: 240,
         description: 'Feature development',
       }
       const result = await tempo.uploadWorklog(request)
 
       expect(result.issue_key).toBe('PROJ-123')
       expect(result.hours).toBe(4.0)
-      expect(result.tempo_id).toBe('tempo-abc123')
+      expect(result.status).toBe('success')
       expect(mockInvoke).toHaveBeenCalledWith('upload_single_worklog', {
         token: 'test-token',
         request,
@@ -193,8 +204,9 @@ describe('tempo service', () => {
 
       const request = {
         issue_key: 'INVALID-999',
-        hours: 4.0,
         date: '2024-01-15',
+        minutes: 240,
+        description: 'Work',
       }
 
       await expect(tempo.uploadWorklog(request)).rejects.toThrow('Issue not found')
@@ -205,8 +217,9 @@ describe('tempo service', () => {
 
       const request = {
         issue_key: 'PROJ-123',
-        hours: -1,
         date: '2024-01-15',
+        minutes: -60,
+        description: 'Work',
       }
 
       await expect(tempo.uploadWorklog(request)).rejects.toThrow('Hours must be positive')
@@ -218,8 +231,8 @@ describe('tempo service', () => {
       mockCommandValue('get_tempo_worklogs', mockWorklogs)
 
       const request = {
-        start_date: '2024-01-01',
-        end_date: '2024-01-31',
+        date_from: '2024-01-01',
+        date_to: '2024-01-31',
       }
       const result = await tempo.getWorklogs(request)
 
@@ -234,8 +247,8 @@ describe('tempo service', () => {
       mockCommandValue('get_tempo_worklogs', [])
 
       const request = {
-        start_date: '2024-01-01',
-        end_date: '2024-01-01',
+        date_from: '2024-01-01',
+        date_to: '2024-01-01',
       }
       const result = await tempo.getWorklogs(request)
 

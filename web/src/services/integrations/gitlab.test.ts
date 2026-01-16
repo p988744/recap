@@ -10,26 +10,33 @@ import * as gitlab from './gitlab'
 // Mock fixtures
 const mockGitLabStatus = {
   configured: true,
-  url: 'https://gitlab.example.com',
-  projects_count: 2,
+  gitlab_url: 'https://gitlab.example.com',
 }
 
 const mockGitLabProject = {
   id: 'project-1',
-  gitlab_id: 123,
+  user_id: 'user-1',
+  gitlab_project_id: 123,
   name: 'Test Project',
   path_with_namespace: 'team/test-project',
-  web_url: 'https://gitlab.example.com/team/test-project',
+  gitlab_url: 'https://gitlab.example.com',
+  default_branch: 'main',
+  enabled: true,
+  created_at: '2024-01-01T00:00:00Z',
 }
 
 const mockGitLabProjects = [
   mockGitLabProject,
   {
     id: 'project-2',
-    gitlab_id: 456,
+    user_id: 'user-1',
+    gitlab_project_id: 456,
     name: 'Another Project',
     path_with_namespace: 'team/another-project',
-    web_url: 'https://gitlab.example.com/team/another-project',
+    gitlab_url: 'https://gitlab.example.com',
+    default_branch: 'main',
+    enabled: true,
+    created_at: '2024-01-01T00:00:00Z',
   },
 ]
 
@@ -38,12 +45,12 @@ const mockGitLabProjectInfo = {
   name: 'Search Result',
   path_with_namespace: 'team/search-result',
   web_url: 'https://gitlab.example.com/team/search-result',
-  description: 'A project found by search',
 }
 
 const mockSyncResponse = {
-  synced_count: 5,
-  message: 'Synced 5 items from GitLab',
+  synced_commits: 3,
+  synced_merge_requests: 2,
+  work_items_created: 5,
 }
 
 describe('gitlab service', () => {
@@ -59,8 +66,7 @@ describe('gitlab service', () => {
       const result = await gitlab.getStatus()
 
       expect(result.configured).toBe(true)
-      expect(result.url).toBe('https://gitlab.example.com')
-      expect(result.projects_count).toBe(2)
+      expect(result.gitlab_url).toBe('https://gitlab.example.com')
       expect(mockInvoke).toHaveBeenCalledWith('get_gitlab_status', { token: 'test-token' })
     })
 
@@ -78,8 +84,8 @@ describe('gitlab service', () => {
       mockCommandValue('configure_gitlab', { message: 'GitLab configured successfully' })
 
       const request = {
-        url: 'https://gitlab.example.com',
-        token: 'glpat-xxx',
+        gitlab_url: 'https://gitlab.example.com',
+        gitlab_pat: 'glpat-xxx',
       }
       const result = await gitlab.configure(request)
 
@@ -93,7 +99,7 @@ describe('gitlab service', () => {
     it('should throw on invalid token', async () => {
       mockCommandError('configure_gitlab', 'Invalid GitLab token')
 
-      const request = { url: 'https://gitlab.example.com', token: 'invalid' }
+      const request = { gitlab_url: 'https://gitlab.example.com', gitlab_pat: 'invalid' }
 
       await expect(gitlab.configure(request)).rejects.toThrow('Invalid GitLab token')
     })
@@ -134,10 +140,10 @@ describe('gitlab service', () => {
     it('should add a GitLab project to track', async () => {
       mockCommandValue('add_gitlab_project', mockGitLabProject)
 
-      const request = { project_id: 123 }
+      const request = { gitlab_project_id: 123 }
       const result = await gitlab.addProject(request)
 
-      expect(result.gitlab_id).toBe(123)
+      expect(result.gitlab_project_id).toBe(123)
       expect(result.name).toBe('Test Project')
       expect(mockInvoke).toHaveBeenCalledWith('add_gitlab_project', {
         token: 'test-token',
@@ -148,7 +154,7 @@ describe('gitlab service', () => {
     it('should throw on project not found', async () => {
       mockCommandError('add_gitlab_project', 'Project not found')
 
-      const request = { project_id: 999 }
+      const request = { gitlab_project_id: 999 }
 
       await expect(gitlab.addProject(request)).rejects.toThrow('Project not found')
     })
@@ -156,7 +162,7 @@ describe('gitlab service', () => {
     it('should throw on duplicate project', async () => {
       mockCommandError('add_gitlab_project', 'Project already tracked')
 
-      const request = { project_id: 123 }
+      const request = { gitlab_project_id: 123 }
 
       await expect(gitlab.addProject(request)).rejects.toThrow('Project already tracked')
     })
@@ -188,8 +194,8 @@ describe('gitlab service', () => {
 
       const result = await gitlab.sync()
 
-      expect(result.synced_count).toBe(5)
-      expect(result.message).toBe('Synced 5 items from GitLab')
+      expect(result.work_items_created).toBe(5)
+      expect(result.synced_commits).toBe(3)
       expect(mockInvoke).toHaveBeenCalledWith('sync_gitlab', {
         token: 'test-token',
         request: {},
@@ -202,7 +208,7 @@ describe('gitlab service', () => {
       const request = { start_date: '2024-01-01', end_date: '2024-01-31' }
       const result = await gitlab.sync(request)
 
-      expect(result.synced_count).toBe(5)
+      expect(result.work_items_created).toBe(5)
       expect(mockInvoke).toHaveBeenCalledWith('sync_gitlab', {
         token: 'test-token',
         request,

@@ -9,22 +9,28 @@ import * as sources from './sources'
 
 // Mock fixtures
 const mockSourcesResponse = {
+  mode: 'git',
   git_repos: [
-    { id: 'repo-1', path: '/home/user/project-a', name: 'project-a' },
-    { id: 'repo-2', path: '/home/user/project-b', name: 'project-b' },
+    { id: 'repo-1', path: '/home/user/project-a', name: 'project-a', valid: true },
+    { id: 'repo-2', path: '/home/user/project-b', name: 'project-b', valid: true },
   ],
-  source_mode: 'git',
-  claude_projects_dir: '/home/user/.claude/projects',
+  claude_connected: true,
+  claude_path: '/home/user/.claude/projects',
 }
 
 const mockAddGitRepoResponse = {
-  id: 'repo-3',
-  path: '/home/user/new-project',
-  name: 'new-project',
+  success: true,
+  message: 'Repository added successfully',
+  repo: {
+    id: 'repo-3',
+    path: '/home/user/new-project',
+    name: 'new-project',
+    valid: true,
+  },
 }
 
 const mockSourceModeResponse = {
-  mode: 'claude',
+  success: true,
   message: 'Source mode updated',
 }
 
@@ -42,7 +48,7 @@ describe('sources service', () => {
 
       expect(result).toEqual(mockSourcesResponse)
       expect(result.git_repos).toHaveLength(2)
-      expect(result.source_mode).toBe('git')
+      expect(result.mode).toBe('git')
       expect(mockInvoke).toHaveBeenCalledWith('get_sources', { token: 'test-token' })
     })
 
@@ -59,8 +65,8 @@ describe('sources service', () => {
 
       const result = await sources.addGitRepo('/home/user/new-project')
 
-      expect(result.id).toBe('repo-3')
-      expect(result.name).toBe('new-project')
+      expect(result.success).toBe(true)
+      expect(result.repo?.name).toBe('new-project')
       expect(mockInvoke).toHaveBeenCalledWith('add_git_repo', {
         token: 'test-token',
         path: '/home/user/new-project',
@@ -110,7 +116,7 @@ describe('sources service', () => {
 
       const result = await sources.setSourceMode('claude')
 
-      expect(result.mode).toBe('claude')
+      expect(result.success).toBe(true)
       expect(mockInvoke).toHaveBeenCalledWith('set_source_mode', {
         token: 'test-token',
         mode: 'claude',
@@ -118,11 +124,11 @@ describe('sources service', () => {
     })
 
     it('should set source mode to git', async () => {
-      mockCommandValue('set_source_mode', { mode: 'git', message: 'Source mode updated' })
+      mockCommandValue('set_source_mode', { success: true, message: 'Source mode updated' })
 
       const result = await sources.setSourceMode('git')
 
-      expect(result.mode).toBe('git')
+      expect(result.success).toBe(true)
     })
 
     it('should throw on invalid mode', async () => {

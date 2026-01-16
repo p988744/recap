@@ -13,7 +13,7 @@ import * as reports from './reports'
 
 // Mock fetch for HTTP-based functions
 const mockFetch = vi.fn()
-global.fetch = mockFetch
+;(globalThis as unknown as { fetch: typeof mockFetch }).fetch = mockFetch
 
 describe('reports service', () => {
   beforeEach(() => {
