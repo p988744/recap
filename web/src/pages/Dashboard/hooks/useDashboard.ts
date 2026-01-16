@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { listen } from '@tauri-apps/api/event'
-import { workItems, sync, tempo, backgroundSync } from '@/services'
+import { workItems, sync, tempo, backgroundSync, tray } from '@/services'
 import type { WorkItemStatsResponse, WorkItem, SyncStatus as SyncStatusType } from '@/types'
 import type { TimelineSession } from '@/components/WorkGanttChart'
 
@@ -76,6 +76,9 @@ export function useDashboard(isAuthenticated: boolean, token: string | null) {
     if (!isAuthenticated || !token) return
     setAutoSyncState('syncing')
 
+    // Update tray to show syncing state
+    await tray.setSyncing(true).catch(() => {})
+
     try {
       const result = await sync.autoSync()
       if (result.total_items > 0) {
@@ -86,9 +89,14 @@ export function useDashboard(isAuthenticated: boolean, token: string | null) {
 
       const statuses = await sync.getStatus().catch(() => [])
       setSyncStatusData(statuses)
-      setLastSyncTime(new Date())
+      const now = new Date()
+      setLastSyncTime(now)
+
+      // Update tray with last sync time
+      await tray.updateSyncStatus(now.toISOString(), false).catch(() => {})
     } catch {
-      // Silent fail for sync
+      // Silent fail for sync, but update tray
+      await tray.setSyncing(false).catch(() => {})
     } finally {
       setAutoSyncState('done')
     }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { backgroundSync } from '@/services'
+import { backgroundSync, tray } from '@/services'
 import type { BackgroundSyncConfig, BackgroundSyncStatus } from '@/services/background-sync'
 import type { SettingsMessage } from './types'
 
@@ -58,6 +58,13 @@ export function useSyncForm() {
           status,
           loading: false,
         }))
+
+        // Update tray with current status
+        if (status.is_syncing) {
+          await tray.setSyncing(true).catch(() => {})
+        } else if (status.last_sync_at) {
+          await tray.updateSyncStatus(status.last_sync_at, false).catch(() => {})
+        }
       } catch (err) {
         console.error('Failed to fetch sync config:', err)
         setState((prev) => ({ ...prev, loading: false }))
@@ -74,6 +81,15 @@ export function useSyncForm() {
       try {
         const status = await backgroundSync.getStatus()
         setState((prev) => ({ ...prev, status }))
+
+        // Update tray when sync completes
+        if (!status.is_syncing) {
+          if (status.last_sync_at) {
+            await tray.updateSyncStatus(status.last_sync_at, false).catch(() => {})
+          } else {
+            await tray.setSyncing(false).catch(() => {})
+          }
+        }
       } catch {
         // Ignore errors
       }
@@ -155,11 +171,21 @@ export function useSyncForm() {
           status: prev.status ? { ...prev.status, is_syncing: true } : null,
         }))
 
+        // Update tray to show syncing state
+        await tray.setSyncing(true).catch(() => {})
+
         const result = await backgroundSync.triggerSync()
 
         // Refresh status
         const status = await backgroundSync.getStatus()
         setState((prev) => ({ ...prev, status }))
+
+        // Update tray with last sync time
+        if (status.last_sync_at) {
+          await tray.updateSyncStatus(status.last_sync_at, false).catch(() => {})
+        } else {
+          await tray.setSyncing(false).catch(() => {})
+        }
 
         if (result.total_items > 0) {
           setMessage({
@@ -174,6 +200,14 @@ export function useSyncForm() {
         const status = await backgroundSync.getStatus().catch(() => null)
         if (status) {
           setState((prev) => ({ ...prev, status }))
+          // Update tray
+          if (status.last_sync_at) {
+            await tray.updateSyncStatus(status.last_sync_at, false).catch(() => {})
+          } else {
+            await tray.setSyncing(false).catch(() => {})
+          }
+        } else {
+          await tray.setSyncing(false).catch(() => {})
         }
 
         setMessage({

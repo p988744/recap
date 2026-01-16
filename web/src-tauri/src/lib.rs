@@ -96,6 +96,7 @@ pub fn run() {
             commands::users::update_profile,
             // Tray
             commands::tray::update_tray_sync_status,
+            commands::tray::set_tray_syncing,
             // Background Sync
             commands::background_sync::get_background_sync_config,
             commands::background_sync::update_background_sync_config,
@@ -136,8 +137,8 @@ pub fn run() {
             let quit_item = MenuItem::with_id(app, "quit", "結束 Recap", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &sync_item, &separator, &status_item, &separator2, &quit_item])?;
 
-            // Create tray icon
-            let _tray = TrayIconBuilder::new()
+            // Create tray icon with ID for later access
+            let _tray = TrayIconBuilder::with_id("main-tray")
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
                 .show_menu_on_left_click(false)

@@ -22,6 +22,7 @@ export * as workItems from './work-items'
 export * as reports from './reports'
 export * as sync from './sync'
 export * as backgroundSync from './background-sync'
+export * as tray from './tray'
 
 // Re-export integrations
 export * as gitlab from './integrations/gitlab'
