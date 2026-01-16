@@ -2292,4 +2292,270 @@ mod tests {
         assert_eq!(metadata.last_ts, "2025-01-10T18:00:00+08:00");
         assert_eq!(metadata.cwd, Some("/home/user/project".to_string()));
     }
+
+    // ============================================
+    // SafeQueryBuilder Tests
+    // ============================================
+
+    #[test]
+    fn test_query_builder_empty() {
+        use super::query_builder::SafeQueryBuilder;
+        let builder = SafeQueryBuilder::new();
+        assert_eq!(builder.build_where_clause(), "1=1");
+    }
+
+    #[test]
+    fn test_query_builder_single_string_condition() {
+        use super::query_builder::SafeQueryBuilder;
+        let mut builder = SafeQueryBuilder::new();
+        builder.add_string_condition("source", "=", "gitlab");
+        assert_eq!(builder.build_where_clause(), "source = ?");
+    }
+
+    #[test]
+    fn test_query_builder_single_int_condition() {
+        use super::query_builder::SafeQueryBuilder;
+        let mut builder = SafeQueryBuilder::new();
+        builder.add_int_condition("hours", ">", 5);
+        assert_eq!(builder.build_where_clause(), "hours > ?");
+    }
+
+    #[test]
+    fn test_query_builder_null_condition() {
+        use super::query_builder::SafeQueryBuilder;
+        let mut builder = SafeQueryBuilder::new();
+        builder.add_null_condition("parent_id", true);
+        assert_eq!(builder.build_where_clause(), "parent_id IS NULL");
+    }
+
+    #[test]
+    fn test_query_builder_not_null_condition() {
+        use super::query_builder::SafeQueryBuilder;
+        let mut builder = SafeQueryBuilder::new();
+        builder.add_null_condition("jira_issue_key", false);
+        assert_eq!(builder.build_where_clause(), "jira_issue_key IS NOT NULL");
+    }
+
+    #[test]
+    fn test_query_builder_multiple_conditions() {
+        use super::query_builder::SafeQueryBuilder;
+        let mut builder = SafeQueryBuilder::new();
+        builder.add_string_condition("source", "=", "gitlab");
+        builder.add_string_condition("date", ">=", "2025-01-01");
+        builder.add_null_condition("parent_id", true);
+        assert_eq!(
+            builder.build_where_clause(),
+            "source = ? AND date >= ? AND parent_id IS NULL"
+        );
+    }
+
+    #[test]
+    fn test_query_builder_mixed_types() {
+        use super::query_builder::SafeQueryBuilder;
+        let mut builder = SafeQueryBuilder::new();
+        builder.add_string_condition("category", "LIKE", "%feature%");
+        builder.add_int_condition("hours", "<=", 8);
+        builder.add_string_condition("user_id", "=", "user-123");
+        assert_eq!(
+            builder.build_where_clause(),
+            "category LIKE ? AND hours <= ? AND user_id = ?"
+        );
+    }
+
+    // ============================================
+    // Type Serialization Tests
+    // ============================================
+
+    #[test]
+    fn test_work_item_filters_deserialize_empty() {
+        let json = r#"{}"#;
+        let filters: WorkItemFilters = serde_json::from_str(json).unwrap();
+        assert!(filters.page.is_none());
+        assert!(filters.per_page.is_none());
+        assert!(filters.source.is_none());
+    }
+
+    #[test]
+    fn test_work_item_filters_deserialize_full() {
+        let json = r#"{
+            "page": 1,
+            "per_page": 20,
+            "source": "gitlab",
+            "jira_mapped": true,
+            "synced_to_tempo": false,
+            "start_date": "2025-01-01",
+            "end_date": "2025-01-31"
+        }"#;
+        let filters: WorkItemFilters = serde_json::from_str(json).unwrap();
+        assert_eq!(filters.page, Some(1));
+        assert_eq!(filters.per_page, Some(20));
+        assert_eq!(filters.source, Some("gitlab".to_string()));
+        assert_eq!(filters.jira_mapped, Some(true));
+        assert_eq!(filters.synced_to_tempo, Some(false));
+    }
+
+    #[test]
+    fn test_grouped_query_deserialize() {
+        let json = r#"{
+            "start_date": "2025-01-01",
+            "end_date": "2025-01-31"
+        }"#;
+        let query: GroupedQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(query.start_date, Some("2025-01-01".to_string()));
+        assert_eq!(query.end_date, Some("2025-01-31".to_string()));
+    }
+
+    #[test]
+    fn test_work_log_item_serialize() {
+        let item = WorkLogItem {
+            id: "test-id".to_string(),
+            title: "Test work".to_string(),
+            description: Some("Description".to_string()),
+            hours: 2.5,
+            date: "2025-01-10".to_string(),
+            source: "gitlab".to_string(),
+            synced_to_tempo: false,
+        };
+        let json = serde_json::to_string(&item).unwrap();
+        assert!(json.contains("\"id\":\"test-id\""));
+        assert!(json.contains("\"hours\":2.5"));
+        assert!(json.contains("\"synced_to_tempo\":false"));
+    }
+
+    #[test]
+    fn test_jira_issue_group_serialize() {
+        let group = JiraIssueGroup {
+            jira_key: Some("PROJ-123".to_string()),
+            jira_title: Some("Feature work".to_string()),
+            total_hours: 8.0,
+            logs: vec![],
+        };
+        let json = serde_json::to_string(&group).unwrap();
+        assert!(json.contains("\"jira_key\":\"PROJ-123\""));
+        assert!(json.contains("\"total_hours\":8.0"));
+    }
+
+    #[test]
+    fn test_project_group_serialize() {
+        let group = ProjectGroup {
+            project_name: "recap".to_string(),
+            total_hours: 16.5,
+            issues: vec![],
+        };
+        let json = serde_json::to_string(&group).unwrap();
+        assert!(json.contains("\"project_name\":\"recap\""));
+        assert!(json.contains("\"total_hours\":16.5"));
+    }
+
+    #[test]
+    fn test_stats_summary_serialize() {
+        let stats = WorkItemStatsResponse {
+            total_items: 100,
+            total_hours: 250.5,
+            jira_mapping: JiraMappingStats {
+                mapped: 80,
+                unmapped: 20,
+                percentage: 80.0,
+            },
+            tempo_sync: TempoSyncStats {
+                synced: 60,
+                not_synced: 40,
+                percentage: 60.0,
+            },
+            hours_by_source: HashMap::new(),
+            hours_by_project: HashMap::new(),
+            hours_by_category: HashMap::new(),
+            daily_hours: vec![],
+        };
+        let json = serde_json::to_string(&stats).unwrap();
+        assert!(json.contains("\"total_items\":100"));
+        assert!(json.contains("\"total_hours\":250.5"));
+        assert!(json.contains("\"percentage\":80.0"));
+    }
+
+    // ============================================
+    // Timeline Types Tests
+    // ============================================
+
+    #[test]
+    fn test_timeline_commit_serialize() {
+        let commit = TimelineCommit {
+            hash: "abc123".to_string(),
+            message: "Fix bug".to_string(),
+            time: "2025-01-10T10:30:00+08:00".to_string(),
+            author: "dev@example.com".to_string(),
+        };
+        let json = serde_json::to_string(&commit).unwrap();
+        assert!(json.contains("\"hash\":\"abc123\""));
+        assert!(json.contains("\"message\":\"Fix bug\""));
+    }
+
+    #[test]
+    fn test_timeline_session_serialize() {
+        let session = TimelineSession {
+            id: "session-1".to_string(),
+            project: "recap".to_string(),
+            title: "Feature development".to_string(),
+            start_time: "2025-01-10T09:00:00+08:00".to_string(),
+            end_time: "2025-01-10T12:00:00+08:00".to_string(),
+            hours: 3.0,
+            commits: vec![],
+        };
+        let json = serde_json::to_string(&session).unwrap();
+        assert!(json.contains("\"project\":\"recap\""));
+        assert!(json.contains("\"hours\":3.0"));
+    }
+
+    #[test]
+    fn test_timeline_response_serialize() {
+        let response = TimelineResponse {
+            date: "2025-01-10".to_string(),
+            sessions: vec![],
+            total_hours: 8.0,
+            total_commits: 5,
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"date\":\"2025-01-10\""));
+        assert!(json.contains("\"total_hours\":8.0"));
+        assert!(json.contains("\"total_commits\":5"));
+    }
+
+    // ============================================
+    // Aggregate Types Tests
+    // ============================================
+
+    #[test]
+    fn test_aggregate_request_deserialize() {
+        let json = r#"{"source": "claude_code"}"#;
+        let query: AggregateRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(query.source, Some("claude_code".to_string()));
+    }
+
+    #[test]
+    fn test_aggregate_response_serialize() {
+        let result = AggregateResponse {
+            original_count: 50,
+            aggregated_count: 10,
+            deleted_count: 40,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"original_count\":50"));
+        assert!(json.contains("\"aggregated_count\":10"));
+        assert!(json.contains("\"deleted_count\":40"));
+    }
+
+    // ============================================
+    // CommitCentric Types Tests
+    // ============================================
+
+    #[test]
+    fn test_commit_centric_query_deserialize() {
+        let json = r#"{
+            "date": "2025-01-10",
+            "project_path": "/home/user/project"
+        }"#;
+        let query: CommitCentricQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(query.date, "2025-01-10");
+        assert_eq!(query.project_path, Some("/home/user/project".to_string()));
+    }
 }
