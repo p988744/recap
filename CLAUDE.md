@@ -278,6 +278,55 @@ main (穩定版，保護分支)
    - 每個 PR 需要另一位成員 review
    - Core 的 PR 需要 Desktop 和 CLI 開發者都確認
 
+### PR 提交與合併流程
+
+**角色分工：**
+- **開發者**：完成開發後提交 PR 至 `develop`
+- **PM**：負責 review 和協調合併順序
+
+**PR 提交流程：**
+
+```
+1. 開發者在自己的 worktree 完成工作
+2. 確保測試通過：cargo test / npm test
+3. 提交 PR 至 develop 分支
+4. 在 PR 描述中說明：
+   - 完成了什麼功能/修復
+   - 測試覆蓋情況
+   - 是否有 breaking changes
+5. 通知 PM 進行 review
+```
+
+**PR 提交指令：**
+```bash
+# 在 worktree 目錄下
+git push -u origin <branch-name>
+
+# 建立 PR（以 Core 為例）
+gh pr create --base develop --title "feat(core): Add unit tests for recap-core" --body "## Summary
+- Add comprehensive unit tests for recap-core modules
+- Coverage > 70%
+
+## Test Plan
+- [x] cargo test --package recap-core"
+```
+
+**Review 優先順序：**
+
+| 順序 | 分支 | 原因 |
+|------|------|------|
+| 1 | `refactor/core-v2` → `develop` | Desktop/CLI 依賴 Core |
+| 2 | `refactor/desktop-v2` → `develop` | 需先 rebase develop |
+| 3 | `refactor/cli-v2` → `develop` | 需先 rebase develop |
+| 4 | `develop` → `main` | 所有功能整合測試通過後 |
+
+**合併後通知：**
+- Core 合併後，PM 通知 Desktop/CLI 開發者執行：
+  ```bash
+  git fetch origin
+  git rebase origin/develop
+  ```
+
 ---
 
 ## Code Organization Principles
