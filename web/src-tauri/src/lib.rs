@@ -61,13 +61,14 @@ pub fn run() {
             commands::claude::import_claude_sessions,
             commands::claude::summarize_claude_session,
             commands::claude::sync_claude_projects,
-            // Reports
-            commands::reports::get_personal_report,
-            commands::reports::get_summary_report,
-            commands::reports::get_category_report,
-            commands::reports::get_source_report,
-            commands::reports::export_excel_report,
-            commands::reports::generate_tempo_report,
+            // Reports - queries
+            commands::reports::queries::get_personal_report,
+            commands::reports::queries::get_summary_report,
+            commands::reports::queries::get_category_report,
+            commands::reports::queries::get_source_report,
+            // Reports - export
+            commands::reports::export::export_excel_report,
+            commands::reports::export::generate_tempo_report,
             // Sync
             commands::sync::get_sync_status,
             commands::sync::auto_sync,
