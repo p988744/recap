@@ -24,11 +24,11 @@ pub fn run() {
         // Register Tauri commands
         .invoke_handler(tauri::generate_handler![
             // Auth
-            commands::auth::get_app_status,
-            commands::auth::register_user,
-            commands::auth::login,
-            commands::auth::auto_login,
-            commands::auth::get_current_user,
+            commands::auth::commands::get_app_status,
+            commands::auth::commands::register_user,
+            commands::auth::commands::login,
+            commands::auth::commands::auto_login,
+            commands::auth::commands::get_current_user,
             // Config
             commands::config::get_config,
             commands::config::update_config,
