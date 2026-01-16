@@ -24,59 +24,66 @@ pub fn run() {
         // Register Tauri commands
         .invoke_handler(tauri::generate_handler![
             // Auth
-            commands::auth::get_app_status,
-            commands::auth::register_user,
-            commands::auth::login,
-            commands::auth::auto_login,
-            commands::auth::get_current_user,
+            commands::auth::commands::get_app_status,
+            commands::auth::commands::register_user,
+            commands::auth::commands::login,
+            commands::auth::commands::auto_login,
+            commands::auth::commands::get_current_user,
             // Config
             commands::config::get_config,
             commands::config::update_config,
             commands::config::update_llm_config,
             commands::config::update_jira_config,
-            // Work Items
-            commands::work_items::list_work_items,
-            commands::work_items::create_work_item,
-            commands::work_items::get_work_item,
-            commands::work_items::update_work_item,
-            commands::work_items::delete_work_item,
-            commands::work_items::map_work_item_jira,
-            commands::work_items::get_stats_summary,
-            commands::work_items::get_grouped_work_items,
-            commands::work_items::get_timeline_data,
-            commands::work_items::batch_sync_tempo,
-            commands::work_items::aggregate_work_items,
-            commands::work_items::get_commit_centric_worklog,
+            // Work Items - queries
+            commands::work_items::queries::list_work_items,
+            commands::work_items::queries::get_stats_summary,
+            commands::work_items::queries::get_timeline_data,
+            // Work Items - mutations
+            commands::work_items::mutations::create_work_item,
+            commands::work_items::mutations::get_work_item,
+            commands::work_items::mutations::update_work_item,
+            commands::work_items::mutations::delete_work_item,
+            commands::work_items::mutations::map_work_item_jira,
+            // Work Items - grouped
+            commands::work_items::grouped::get_grouped_work_items,
+            // Work Items - sync
+            commands::work_items::sync::batch_sync_tempo,
+            commands::work_items::sync::aggregate_work_items,
+            // Work Items - commit centric
+            commands::work_items::commit_centric::get_commit_centric_worklog,
             // Sources
-            commands::sources::get_sources,
-            commands::sources::add_git_repo,
-            commands::sources::remove_git_repo,
-            commands::sources::set_source_mode,
+            commands::sources::commands::get_sources,
+            commands::sources::commands::add_git_repo,
+            commands::sources::commands::remove_git_repo,
+            commands::sources::commands::set_source_mode,
             // Claude
             commands::claude::list_claude_sessions,
             commands::claude::import_claude_sessions,
             commands::claude::summarize_claude_session,
             commands::claude::sync_claude_projects,
-            // Reports
-            commands::reports::get_personal_report,
-            commands::reports::get_summary_report,
-            commands::reports::get_category_report,
-            commands::reports::get_source_report,
-            commands::reports::export_excel_report,
-            commands::reports::generate_tempo_report,
+            // Reports - queries
+            commands::reports::queries::get_personal_report,
+            commands::reports::queries::get_summary_report,
+            commands::reports::queries::get_category_report,
+            commands::reports::queries::get_source_report,
+            // Reports - export
+            commands::reports::export::export_excel_report,
+            commands::reports::export::generate_tempo_report,
             // Sync
             commands::sync::get_sync_status,
             commands::sync::auto_sync,
             commands::sync::list_available_projects,
-            // GitLab
-            commands::gitlab::get_gitlab_status,
-            commands::gitlab::configure_gitlab,
-            commands::gitlab::remove_gitlab_config,
-            commands::gitlab::list_gitlab_projects,
-            commands::gitlab::add_gitlab_project,
-            commands::gitlab::remove_gitlab_project,
-            commands::gitlab::sync_gitlab,
-            commands::gitlab::search_gitlab_projects,
+            // GitLab - config
+            commands::gitlab::config::get_gitlab_status,
+            commands::gitlab::config::configure_gitlab,
+            commands::gitlab::config::remove_gitlab_config,
+            // GitLab - projects
+            commands::gitlab::projects::list_gitlab_projects,
+            commands::gitlab::projects::add_gitlab_project,
+            commands::gitlab::projects::remove_gitlab_project,
+            commands::gitlab::projects::search_gitlab_projects,
+            // GitLab - sync
+            commands::gitlab::sync::sync_gitlab,
             // Tempo
             commands::tempo::test_tempo_connection,
             commands::tempo::validate_jira_issue,

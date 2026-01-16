@@ -203,10 +203,121 @@ fn find_claude_projects() -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
+    use std::fs;
 
     #[test]
     fn test_find_claude_projects_doesnt_crash() {
         // Just verify it doesn't panic
         let _ = find_claude_projects();
+    }
+
+    #[test]
+    fn test_sync_status_row_serialization() {
+        let row = SyncStatusRow {
+            source: "claude".to_string(),
+            path: "/path/to/project".to_string(),
+            last_sync: "2025-01-15 10:30".to_string(),
+            items: "42".to_string(),
+            status: "success".to_string(),
+        };
+
+        let json = serde_json::to_string(&row).unwrap();
+        assert!(json.contains("claude"));
+        assert!(json.contains("/path/to/project"));
+        assert!(json.contains("2025-01-15"));
+        assert!(json.contains("success"));
+    }
+
+    #[test]
+    fn test_sync_status_row_never_synced() {
+        let row = SyncStatusRow {
+            source: "git".to_string(),
+            path: "-".to_string(),
+            last_sync: "Never".to_string(),
+            items: "0".to_string(),
+            status: "pending".to_string(),
+        };
+
+        assert_eq!(row.last_sync, "Never");
+        assert_eq!(row.items, "0");
+    }
+
+    #[test]
+    fn test_sync_status_row_debug() {
+        let row = SyncStatusRow {
+            source: "gitlab".to_string(),
+            path: "https://gitlab.com/test".to_string(),
+            last_sync: "2025-01-15 12:00".to_string(),
+            items: "100".to_string(),
+            status: "error".to_string(),
+        };
+
+        let debug = format!("{:?}", row);
+        assert!(debug.contains("gitlab"));
+        assert!(debug.contains("error"));
+    }
+
+    #[test]
+    fn test_find_claude_projects_empty_dir() {
+        // Create a temp dir and set HOME to it
+        let temp_dir = TempDir::new().unwrap();
+        let claude_dir = temp_dir.path().join(".claude").join("projects");
+        fs::create_dir_all(&claude_dir).unwrap();
+
+        // Save and set HOME
+        let original_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", temp_dir.path());
+
+        let result = find_claude_projects();
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+
+        // Restore HOME
+        if let Some(home) = original_home {
+            std::env::set_var("HOME", home);
+        }
+    }
+
+    #[test]
+    fn test_find_claude_projects_with_projects() {
+        let temp_dir = TempDir::new().unwrap();
+        let claude_dir = temp_dir.path().join(".claude").join("projects");
+        fs::create_dir_all(&claude_dir).unwrap();
+
+        // Create some mock project directories
+        fs::create_dir(claude_dir.join("Users-test-project1")).unwrap();
+        fs::create_dir(claude_dir.join("Users-test-project2")).unwrap();
+
+        let original_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", temp_dir.path());
+
+        let result = find_claude_projects();
+        assert!(result.is_ok());
+        let projects = result.unwrap();
+        assert_eq!(projects.len(), 2);
+        // The paths should have dashes converted to slashes
+        assert!(projects.iter().any(|p| p.contains("/")));
+
+        if let Some(home) = original_home {
+            std::env::set_var("HOME", home);
+        }
+    }
+
+    #[test]
+    fn test_find_claude_projects_no_claude_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        // Don't create .claude directory
+
+        let original_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", temp_dir.path());
+
+        let result = find_claude_projects();
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+
+        if let Some(home) = original_home {
+            std::env::set_var("HOME", home);
+        }
     }
 }
