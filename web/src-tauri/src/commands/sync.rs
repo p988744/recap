@@ -1,19 +1,24 @@
 //! Sync commands
 //!
 //! Tauri commands for sync operations.
+//! Uses trait-based dependency injection for testability.
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use tauri::State;
 
 use recap_core::auth::verify_token;
 use recap_core::models::SyncResult;
-use recap_core::services::{sync_claude_projects, SyncService};
+use recap_core::services::SyncService;
 
 use super::AppState;
 
-// Types
+// ============================================================================
+// Request/Response types
+// ============================================================================
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct SyncStatus {
     pub id: String,
     pub source: String,
@@ -24,153 +29,218 @@ pub struct SyncStatus {
     pub error_message: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct AutoSyncRequest {
     pub project_paths: Option<Vec<String>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 pub struct AutoSyncResponse {
     pub success: bool,
     pub results: Vec<SyncResult>,
     pub total_items: i32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AvailableProject {
     pub path: String,
     pub name: String,
     pub source: String,
 }
 
-// Commands
+// ============================================================================
+// Core sync status model from recap_core
+// ============================================================================
 
-/// Get sync status for all sources
-#[tauri::command]
-pub async fn get_sync_status(
-    state: State<'_, AppState>,
-    token: String,
-) -> Result<Vec<SyncStatus>, String> {
-    let claims = verify_token(&token).map_err(|e| e.to_string())?;
-    let db = state.db.lock().await;
-
-    let sync_service = SyncService::new(db.pool.clone());
-
-    let statuses = sync_service
-        .get_sync_statuses(&claims.sub)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(statuses
-        .into_iter()
-        .map(|s| SyncStatus {
-            id: s.id,
-            source: s.source,
-            source_path: s.source_path,
-            last_sync_at: s.last_sync_at.map(|d| d.to_string()),
-            last_item_count: s.last_item_count,
-            status: s.status,
-            error_message: s.error_message,
-        })
-        .collect())
+#[derive(Debug, Clone, Default)]
+pub struct CoreSyncStatus {
+    pub id: String,
+    pub source: String,
+    pub source_path: Option<String>,
+    pub last_sync_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_item_count: i32,
+    pub status: String,
+    pub error_message: Option<String>,
 }
 
-/// Trigger auto-sync for Claude projects
-#[tauri::command]
-pub async fn auto_sync(
-    state: State<'_, AppState>,
-    token: String,
-    request: AutoSyncRequest,
-) -> Result<AutoSyncResponse, String> {
-    let claims = verify_token(&token).map_err(|e| e.to_string())?;
-    let db = state.db.lock().await;
+#[derive(Debug, Clone, Default)]
+pub struct ClaudeSyncResult {
+    pub sessions_processed: i32,
+    pub work_items_created: i32,
+    pub work_items_updated: i32,
+}
 
-    let sync_service = SyncService::new(db.pool.clone());
+// ============================================================================
+// Repository Trait
+// ============================================================================
 
-    // Get projects to sync - use cwd paths (actual project directories)
-    let project_paths: Vec<String> = if let Some(paths) = request.project_paths {
-        paths
-    } else {
-        // Get all available Claude projects (these are the cwd paths from sessions)
-        SyncService::list_claude_projects()
+/// Sync repository trait - abstracts sync operations for testability
+#[async_trait]
+pub trait SyncRepository: Send + Sync {
+    /// Get sync statuses for a user
+    async fn get_sync_statuses(&self, user_id: &str) -> Result<Vec<CoreSyncStatus>, String>;
+
+    /// Get or create sync status
+    async fn get_or_create_status(
+        &self,
+        user_id: &str,
+        source: &str,
+        source_path: Option<&str>,
+    ) -> Result<CoreSyncStatus, String>;
+
+    /// Mark sync as in progress
+    async fn mark_syncing(&self, status_id: &str) -> Result<(), String>;
+
+    /// Mark sync as successful
+    async fn mark_success(&self, status_id: &str, item_count: i32) -> Result<(), String>;
+
+    /// Mark sync as error
+    async fn mark_error(&self, status_id: &str, error: &str) -> Result<(), String>;
+
+    /// Sync Claude projects
+    async fn sync_claude_projects(
+        &self,
+        user_id: &str,
+        project_paths: &[String],
+    ) -> Result<ClaudeSyncResult, String>;
+
+    /// List available Claude projects
+    fn list_claude_projects(&self) -> Vec<PathBuf>;
+}
+
+// ============================================================================
+// SQLite Repository Implementation (Production)
+// ============================================================================
+
+/// SQLite implementation of SyncRepository
+pub struct SqliteSyncRepository {
+    pool: sqlx::SqlitePool,
+}
+
+impl SqliteSyncRepository {
+    pub fn new(pool: sqlx::SqlitePool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl SyncRepository for SqliteSyncRepository {
+    async fn get_sync_statuses(&self, user_id: &str) -> Result<Vec<CoreSyncStatus>, String> {
+        let sync_service = SyncService::new(self.pool.clone());
+        let statuses = sync_service
+            .get_sync_statuses(user_id)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(statuses
             .into_iter()
-            .filter_map(|p| {
-                // Read first session to get actual cwd
-                match std::fs::read_dir(&p) {
-                    Ok(files) => {
-                        for file in files.flatten() {
-                            let path = file.path();
-                            if path.extension().map(|e| e == "jsonl").unwrap_or(false) {
-                                match std::fs::read_to_string(&path) {
-                                    Ok(content) => {
-                                        if let Some(first_line) = content.lines().next() {
-                                            match serde_json::from_str::<serde_json::Value>(first_line) {
-                                                Ok(msg) => {
-                                                    if let Some(cwd) = msg.get("cwd").and_then(|v| v.as_str()) {
-                                                        return Some(cwd.to_string());
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    log::debug!("Failed to parse session JSON in {:?}: {}", path, e);
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        log::debug!("Failed to read session file {:?}: {}", path, e);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        log::debug!("Failed to read directory {:?}: {}", p, e);
-                    }
-                }
-                None
+            .map(|s| CoreSyncStatus {
+                id: s.id,
+                source: s.source,
+                source_path: s.source_path,
+                last_sync_at: s.last_sync_at,
+                last_item_count: s.last_item_count,
+                status: s.status,
+                error_message: s.error_message,
             })
-            .collect()
-    };
-
-    if project_paths.is_empty() {
-        return Ok(AutoSyncResponse {
-            success: true,
-            results: vec![],
-            total_items: 0,
-        });
+            .collect())
     }
 
-    // Get or create sync status for tracking
-    let status = sync_service
-        .get_or_create_status(&claims.sub, "claude", None)
-        .await
-        .map_err(|e| e.to_string())?;
+    async fn get_or_create_status(
+        &self,
+        user_id: &str,
+        source: &str,
+        source_path: Option<&str>,
+    ) -> Result<CoreSyncStatus, String> {
+        let sync_service = SyncService::new(self.pool.clone());
+        let status = sync_service
+            .get_or_create_status(user_id, source, source_path)
+            .await
+            .map_err(|e| e.to_string())?;
 
-    // Mark as syncing
-    sync_service
-        .mark_syncing(&status.id)
-        .await
-        .map_err(|e| e.to_string())?;
+        Ok(CoreSyncStatus {
+            id: status.id,
+            source: status.source,
+            source_path: status.source_path,
+            last_sync_at: status.last_sync_at,
+            last_item_count: status.last_item_count,
+            status: status.status,
+            error_message: status.error_message,
+        })
+    }
 
-    // Call the actual sync logic
-    let sync_result = match sync_claude_projects(&db.pool, &claims.sub, &project_paths).await {
-        Ok(result) => result,
-        Err(e) => {
-            // Mark as error
-            let _ = sync_service.mark_error(&status.id, &e).await;
-            return Err(e);
-        }
-    };
+    async fn mark_syncing(&self, status_id: &str) -> Result<(), String> {
+        let sync_service = SyncService::new(self.pool.clone());
+        sync_service
+            .mark_syncing(status_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
 
-    let item_count = (sync_result.work_items_created + sync_result.work_items_updated) as i32;
+    async fn mark_success(&self, status_id: &str, item_count: i32) -> Result<(), String> {
+        let sync_service = SyncService::new(self.pool.clone());
+        sync_service
+            .mark_success(status_id, item_count)
+            .await
+            .map_err(|e| e.to_string())
+    }
 
-    // Mark as success
-    sync_service
-        .mark_success(&status.id, item_count)
-        .await
-        .map_err(|e| e.to_string())?;
+    async fn mark_error(&self, status_id: &str, error: &str) -> Result<(), String> {
+        let sync_service = SyncService::new(self.pool.clone());
+        sync_service
+            .mark_error(status_id, error)
+            .await
+            .map_err(|e| e.to_string())
+    }
 
-    let results = vec![SyncResult {
+    async fn sync_claude_projects(
+        &self,
+        user_id: &str,
+        project_paths: &[String],
+    ) -> Result<ClaudeSyncResult, String> {
+        let result =
+            recap_core::services::sync_claude_projects(&self.pool, user_id, project_paths).await?;
+        Ok(ClaudeSyncResult {
+            sessions_processed: result.sessions_processed as i32,
+            work_items_created: result.work_items_created as i32,
+            work_items_updated: result.work_items_updated as i32,
+        })
+    }
+
+    fn list_claude_projects(&self) -> Vec<PathBuf> {
+        SyncService::list_claude_projects()
+    }
+}
+
+// ============================================================================
+// Pure Business Logic (Testable without repository)
+// ============================================================================
+
+/// Convert CoreSyncStatus to SyncStatus for frontend
+pub(crate) fn convert_sync_status(status: CoreSyncStatus) -> SyncStatus {
+    SyncStatus {
+        id: status.id,
+        source: status.source,
+        source_path: status.source_path,
+        last_sync_at: status.last_sync_at.map(|d| d.to_string()),
+        last_item_count: status.last_item_count,
+        status: status.status,
+        error_message: status.error_message,
+    }
+}
+
+/// Extract project name from path
+pub(crate) fn extract_project_name(path: &PathBuf) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "Unknown".to_string())
+}
+
+/// Build SyncResult from ClaudeSyncResult
+pub(crate) fn build_sync_result(sync_result: &ClaudeSyncResult) -> SyncResult {
+    let item_count =
+        (sync_result.work_items_created + sync_result.work_items_updated) as i32;
+    SyncResult {
         success: true,
         source: "claude".to_string(),
         items_synced: item_count,
@@ -180,37 +250,614 @@ pub async fn auto_sync(
             sync_result.work_items_created,
             sync_result.work_items_updated
         )),
-    }];
+    }
+}
 
-    Ok(AutoSyncResponse {
+/// Build empty sync response
+pub(crate) fn build_empty_response() -> AutoSyncResponse {
+    AutoSyncResponse {
         success: true,
-        results,
+        results: vec![],
+        total_items: 0,
+    }
+}
+
+/// Build successful sync response
+pub(crate) fn build_success_response(sync_result: &ClaudeSyncResult) -> AutoSyncResponse {
+    let item_count =
+        (sync_result.work_items_created + sync_result.work_items_updated) as i32;
+    AutoSyncResponse {
+        success: true,
+        results: vec![build_sync_result(sync_result)],
         total_items: item_count,
-    })
+    }
+}
+
+/// Extract CWD from JSONL session file content
+pub(crate) fn extract_cwd_from_session(content: &str) -> Option<String> {
+    if let Some(first_line) = content.lines().next() {
+        if let Ok(msg) = serde_json::from_str::<serde_json::Value>(first_line) {
+            return msg.get("cwd").and_then(|v| v.as_str()).map(|s| s.to_string());
+        }
+    }
+    None
+}
+
+// ============================================================================
+// Core Business Logic (Testable, uses trait)
+// ============================================================================
+
+/// Get sync status - testable business logic
+pub async fn get_sync_status_impl<R: SyncRepository>(
+    repo: &R,
+    token: &str,
+) -> Result<Vec<SyncStatus>, String> {
+    let claims = verify_token(token).map_err(|e| e.to_string())?;
+    let statuses = repo.get_sync_statuses(&claims.sub).await?;
+    Ok(statuses.into_iter().map(convert_sync_status).collect())
+}
+
+/// Auto sync - testable business logic
+pub async fn auto_sync_impl<R: SyncRepository>(
+    repo: &R,
+    token: &str,
+    request: AutoSyncRequest,
+) -> Result<AutoSyncResponse, String> {
+    let claims = verify_token(token).map_err(|e| e.to_string())?;
+
+    // Get projects to sync
+    let project_paths: Vec<String> = if let Some(paths) = request.project_paths {
+        paths
+    } else {
+        // Get all available Claude projects
+        extract_project_cwds(repo)
+    };
+
+    if project_paths.is_empty() {
+        return Ok(build_empty_response());
+    }
+
+    // Get or create sync status for tracking
+    let status = repo
+        .get_or_create_status(&claims.sub, "claude", None)
+        .await?;
+
+    // Mark as syncing
+    repo.mark_syncing(&status.id).await?;
+
+    // Call the actual sync logic
+    let sync_result = match repo.sync_claude_projects(&claims.sub, &project_paths).await {
+        Ok(result) => result,
+        Err(e) => {
+            // Mark as error
+            let _ = repo.mark_error(&status.id, &e).await;
+            return Err(e);
+        }
+    };
+
+    let item_count =
+        (sync_result.work_items_created + sync_result.work_items_updated) as i32;
+
+    // Mark as success
+    repo.mark_success(&status.id, item_count).await?;
+
+    Ok(build_success_response(&sync_result))
+}
+
+/// Extract CWDs from project directories (helper)
+fn extract_project_cwds<R: SyncRepository>(repo: &R) -> Vec<String> {
+    repo.list_claude_projects()
+        .into_iter()
+        .filter_map(|p| {
+            match std::fs::read_dir(&p) {
+                Ok(files) => {
+                    for file in files.flatten() {
+                        let path = file.path();
+                        if path.extension().map(|e| e == "jsonl").unwrap_or(false) {
+                            if let Ok(content) = std::fs::read_to_string(&path) {
+                                if let Some(cwd) = extract_cwd_from_session(&content) {
+                                    return Some(cwd);
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::debug!("Failed to read directory {:?}: {}", p, e);
+                }
+            }
+            None
+        })
+        .collect()
+}
+
+/// List available projects - testable business logic
+pub async fn list_available_projects_impl<R: SyncRepository>(
+    repo: &R,
+    token: &str,
+) -> Result<Vec<AvailableProject>, String> {
+    let _claims = verify_token(token).map_err(|e| e.to_string())?;
+
+    let projects = repo
+        .list_claude_projects()
+        .into_iter()
+        .map(|path| AvailableProject {
+            name: extract_project_name(&path),
+            path: path.to_string_lossy().to_string(),
+            source: "claude".to_string(),
+        })
+        .collect();
+
+    Ok(projects)
+}
+
+// ============================================================================
+// Tauri Commands (Thin wrappers)
+// ============================================================================
+
+/// Get sync status for all sources
+#[tauri::command]
+pub async fn get_sync_status(
+    state: State<'_, AppState>,
+    token: String,
+) -> Result<Vec<SyncStatus>, String> {
+    let db = state.db.lock().await;
+    let repo = SqliteSyncRepository::new(db.pool.clone());
+    get_sync_status_impl(&repo, &token).await
+}
+
+/// Trigger auto-sync for Claude projects
+#[tauri::command]
+pub async fn auto_sync(
+    state: State<'_, AppState>,
+    token: String,
+    request: AutoSyncRequest,
+) -> Result<AutoSyncResponse, String> {
+    let db = state.db.lock().await;
+    let repo = SqliteSyncRepository::new(db.pool.clone());
+    auto_sync_impl(&repo, &token, request).await
 }
 
 /// List available projects that can be synced
 #[tauri::command]
 pub async fn list_available_projects(
+    state: State<'_, AppState>,
     token: String,
 ) -> Result<Vec<AvailableProject>, String> {
-    let _claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
+    let repo = SqliteSyncRepository::new(db.pool.clone());
+    list_available_projects_impl(&repo, &token).await
+}
 
-    let mut projects = Vec::new();
+// ============================================================================
+// Tests with Mock Repository
+// ============================================================================
 
-    // List Claude projects
-    for path in SyncService::list_claude_projects() {
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "Unknown".to_string());
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use recap_core::auth::create_token;
+    use std::sync::Mutex;
 
-        projects.push(AvailableProject {
-            path: path.to_string_lossy().to_string(),
-            name,
-            source: "claude".to_string(),
-        });
+    // ========================================================================
+    // Mock Repository
+    // ========================================================================
+
+    pub struct MockSyncRepository {
+        statuses: Mutex<Vec<CoreSyncStatus>>,
+        projects: Vec<PathBuf>,
+        sync_result: Option<ClaudeSyncResult>,
+        should_fail: bool,
     }
 
-    Ok(projects)
+    impl MockSyncRepository {
+        pub fn new() -> Self {
+            Self {
+                statuses: Mutex::new(vec![]),
+                projects: vec![],
+                sync_result: None,
+                should_fail: false,
+            }
+        }
+
+        pub fn with_statuses(self, statuses: Vec<CoreSyncStatus>) -> Self {
+            *self.statuses.lock().unwrap() = statuses;
+            self
+        }
+
+        pub fn with_projects(mut self, projects: Vec<PathBuf>) -> Self {
+            self.projects = projects;
+            self
+        }
+
+        pub fn with_sync_result(mut self, result: ClaudeSyncResult) -> Self {
+            self.sync_result = Some(result);
+            self
+        }
+
+        pub fn with_failure(mut self) -> Self {
+            self.should_fail = true;
+            self
+        }
+
+        fn check_failure(&self) -> Result<(), String> {
+            if self.should_fail {
+                Err("Sync error".to_string())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[async_trait]
+    impl SyncRepository for MockSyncRepository {
+        async fn get_sync_statuses(&self, _user_id: &str) -> Result<Vec<CoreSyncStatus>, String> {
+            self.check_failure()?;
+            Ok(self.statuses.lock().unwrap().clone())
+        }
+
+        async fn get_or_create_status(
+            &self,
+            _user_id: &str,
+            source: &str,
+            source_path: Option<&str>,
+        ) -> Result<CoreSyncStatus, String> {
+            self.check_failure()?;
+            Ok(CoreSyncStatus {
+                id: "status-1".to_string(),
+                source: source.to_string(),
+                source_path: source_path.map(|s| s.to_string()),
+                last_sync_at: None,
+                last_item_count: 0,
+                status: "idle".to_string(),
+                error_message: None,
+            })
+        }
+
+        async fn mark_syncing(&self, _status_id: &str) -> Result<(), String> {
+            self.check_failure()
+        }
+
+        async fn mark_success(&self, _status_id: &str, _item_count: i32) -> Result<(), String> {
+            self.check_failure()
+        }
+
+        async fn mark_error(&self, _status_id: &str, _error: &str) -> Result<(), String> {
+            Ok(()) // Never fail on error marking
+        }
+
+        async fn sync_claude_projects(
+            &self,
+            _user_id: &str,
+            _project_paths: &[String],
+        ) -> Result<ClaudeSyncResult, String> {
+            self.check_failure()?;
+            Ok(self.sync_result.clone().unwrap_or_default())
+        }
+
+        fn list_claude_projects(&self) -> Vec<PathBuf> {
+            self.projects.clone()
+        }
+    }
+
+    // Test user helper
+    fn create_test_user() -> crate::models::User {
+        crate::models::User {
+            id: "user-1".to_string(),
+            email: "test@test.com".to_string(),
+            password_hash: "hash".to_string(),
+            name: "Test User".to_string(),
+            username: Some("testuser".to_string()),
+            employee_id: None,
+            department_id: None,
+            title: None,
+            gitlab_url: None,
+            gitlab_pat: None,
+            jira_url: None,
+            jira_email: None,
+            jira_pat: None,
+            tempo_token: None,
+            is_active: true,
+            is_admin: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    // ========================================================================
+    // Pure Function Tests
+    // ========================================================================
+
+    #[test]
+    fn test_convert_sync_status() {
+        let core = CoreSyncStatus {
+            id: "status-1".to_string(),
+            source: "claude".to_string(),
+            source_path: Some("/path/to/project".to_string()),
+            last_sync_at: Some(Utc::now()),
+            last_item_count: 5,
+            status: "success".to_string(),
+            error_message: None,
+        };
+
+        let result = convert_sync_status(core);
+
+        assert_eq!(result.id, "status-1");
+        assert_eq!(result.source, "claude");
+        assert_eq!(result.source_path, Some("/path/to/project".to_string()));
+        assert_eq!(result.last_item_count, 5);
+        assert_eq!(result.status, "success");
+        assert!(result.last_sync_at.is_some());
+    }
+
+    #[test]
+    fn test_convert_sync_status_minimal() {
+        let core = CoreSyncStatus {
+            id: "status-2".to_string(),
+            source: "gitlab".to_string(),
+            source_path: None,
+            last_sync_at: None,
+            last_item_count: 0,
+            status: "idle".to_string(),
+            error_message: None,
+        };
+
+        let result = convert_sync_status(core);
+
+        assert_eq!(result.id, "status-2");
+        assert!(result.source_path.is_none());
+        assert!(result.last_sync_at.is_none());
+    }
+
+    #[test]
+    fn test_extract_project_name() {
+        let path = PathBuf::from("/Users/test/projects/my-project");
+        assert_eq!(extract_project_name(&path), "my-project");
+    }
+
+    #[test]
+    fn test_extract_project_name_unknown() {
+        let path = PathBuf::from("/");
+        // Root path has no file name
+        let name = extract_project_name(&path);
+        assert_eq!(name, "Unknown");
+    }
+
+    #[test]
+    fn test_build_sync_result() {
+        let sync_result = ClaudeSyncResult {
+            sessions_processed: 10,
+            work_items_created: 5,
+            work_items_updated: 3,
+        };
+
+        let result = build_sync_result(&sync_result);
+
+        assert!(result.success);
+        assert_eq!(result.source, "claude");
+        assert_eq!(result.items_synced, 8); // 5 + 3
+        assert!(result.message.is_some());
+        assert!(result.message.unwrap().contains("10 sessions"));
+    }
+
+    #[test]
+    fn test_build_empty_response() {
+        let response = build_empty_response();
+
+        assert!(response.success);
+        assert!(response.results.is_empty());
+        assert_eq!(response.total_items, 0);
+    }
+
+    #[test]
+    fn test_build_success_response() {
+        let sync_result = ClaudeSyncResult {
+            sessions_processed: 5,
+            work_items_created: 2,
+            work_items_updated: 1,
+        };
+
+        let response = build_success_response(&sync_result);
+
+        assert!(response.success);
+        assert_eq!(response.results.len(), 1);
+        assert_eq!(response.total_items, 3);
+    }
+
+    #[test]
+    fn test_extract_cwd_from_session_valid() {
+        let content = r#"{"cwd": "/Users/test/project", "type": "init"}"#;
+        let result = extract_cwd_from_session(content);
+        assert_eq!(result, Some("/Users/test/project".to_string()));
+    }
+
+    #[test]
+    fn test_extract_cwd_from_session_no_cwd() {
+        let content = r#"{"type": "init"}"#;
+        let result = extract_cwd_from_session(content);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_cwd_from_session_invalid_json() {
+        let content = "not json";
+        let result = extract_cwd_from_session(content);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_cwd_from_session_empty() {
+        let content = "";
+        let result = extract_cwd_from_session(content);
+        assert!(result.is_none());
+    }
+
+    // ========================================================================
+    // get_sync_status Tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_get_sync_status_success() {
+        let user = create_test_user();
+        let token = create_token(&user).unwrap();
+        let statuses = vec![
+            CoreSyncStatus {
+                id: "status-1".to_string(),
+                source: "claude".to_string(),
+                source_path: None,
+                last_sync_at: Some(Utc::now()),
+                last_item_count: 10,
+                status: "success".to_string(),
+                error_message: None,
+            },
+            CoreSyncStatus {
+                id: "status-2".to_string(),
+                source: "gitlab".to_string(),
+                source_path: None,
+                last_sync_at: None,
+                last_item_count: 0,
+                status: "idle".to_string(),
+                error_message: None,
+            },
+        ];
+        let repo = MockSyncRepository::new().with_statuses(statuses);
+
+        let result = get_sync_status_impl(&repo, &token).await.unwrap();
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].source, "claude");
+        assert_eq!(result[1].source, "gitlab");
+    }
+
+    #[tokio::test]
+    async fn test_get_sync_status_empty() {
+        let user = create_test_user();
+        let token = create_token(&user).unwrap();
+        let repo = MockSyncRepository::new();
+
+        let result = get_sync_status_impl(&repo, &token).await.unwrap();
+
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_sync_status_invalid_token() {
+        let repo = MockSyncRepository::new();
+
+        let result = get_sync_status_impl(&repo, "invalid-token").await;
+
+        assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // auto_sync Tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_auto_sync_with_paths() {
+        let user = create_test_user();
+        let token = create_token(&user).unwrap();
+        let sync_result = ClaudeSyncResult {
+            sessions_processed: 5,
+            work_items_created: 3,
+            work_items_updated: 2,
+        };
+        let repo = MockSyncRepository::new().with_sync_result(sync_result);
+
+        let request = AutoSyncRequest {
+            project_paths: Some(vec!["/path/to/project".to_string()]),
+        };
+
+        let result = auto_sync_impl(&repo, &token, request).await.unwrap();
+
+        assert!(result.success);
+        assert_eq!(result.total_items, 5);
+        assert_eq!(result.results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_auto_sync_empty_paths() {
+        let user = create_test_user();
+        let token = create_token(&user).unwrap();
+        let repo = MockSyncRepository::new(); // No projects
+
+        let request = AutoSyncRequest {
+            project_paths: Some(vec![]), // Empty paths
+        };
+
+        let result = auto_sync_impl(&repo, &token, request).await.unwrap();
+
+        assert!(result.success);
+        assert_eq!(result.total_items, 0);
+        assert!(result.results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_auto_sync_invalid_token() {
+        let repo = MockSyncRepository::new();
+        let request = AutoSyncRequest::default();
+
+        let result = auto_sync_impl(&repo, "invalid-token", request).await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_auto_sync_sync_failure() {
+        let user = create_test_user();
+        let token = create_token(&user).unwrap();
+        let repo = MockSyncRepository::new().with_failure();
+
+        let request = AutoSyncRequest {
+            project_paths: Some(vec!["/path/to/project".to_string()]),
+        };
+
+        let result = auto_sync_impl(&repo, &token, request).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Sync error"));
+    }
+
+    // ========================================================================
+    // list_available_projects Tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_list_available_projects_success() {
+        let user = create_test_user();
+        let token = create_token(&user).unwrap();
+        let projects = vec![
+            PathBuf::from("/Users/test/.claude/projects/project-a"),
+            PathBuf::from("/Users/test/.claude/projects/project-b"),
+        ];
+        let repo = MockSyncRepository::new().with_projects(projects);
+
+        let result = list_available_projects_impl(&repo, &token).await.unwrap();
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].name, "project-a");
+        assert_eq!(result[0].source, "claude");
+        assert_eq!(result[1].name, "project-b");
+    }
+
+    #[tokio::test]
+    async fn test_list_available_projects_empty() {
+        let user = create_test_user();
+        let token = create_token(&user).unwrap();
+        let repo = MockSyncRepository::new();
+
+        let result = list_available_projects_impl(&repo, &token).await.unwrap();
+
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_available_projects_invalid_token() {
+        let repo = MockSyncRepository::new();
+
+        let result = list_available_projects_impl(&repo, "invalid-token").await;
+
+        assert!(result.is_err());
+    }
 }

@@ -4182,6 +4182,7 @@ name = "recap"
 version = "2.0.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "base64 0.22.1",
  "chrono",
  "criterion",
