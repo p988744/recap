@@ -21,7 +21,8 @@ import { Separator } from '@/components/ui/separator'
 import { Progress } from '@/components/ui/progress'
 import { ContributionHeatmap } from '@/components/ContributionHeatmap'
 import { WorkGanttChart, TimelineSession } from '@/components/WorkGanttChart'
-import { api, WorkItemStats, WorkItem, SyncStatus as SyncStatusType } from '@/lib/api'
+import { workItems, sync, tempo } from '@/services'
+import type { WorkItemStatsResponse, WorkItem, SyncStatus as SyncStatusType } from '@/types'
 import { getGreeting, formatDate, getWeekProgress, cn } from '@/lib/utils'
 import { useAuth } from '@/lib/auth'
 
@@ -70,8 +71,8 @@ function getHeatmapRange(weeks: number = 53) {
 
 export function Dashboard() {
   const { token, isAuthenticated } = useAuth()
-  const [stats, setStats] = useState<WorkItemStats | null>(null)
-  const [heatmapStats, setHeatmapStats] = useState<WorkItemStats | null>(null)
+  const [stats, setStats] = useState<WorkItemStatsResponse | null>(null)
+  const [heatmapStats, setHeatmapStats] = useState<WorkItemStatsResponse | null>(null)
   const [recentItems, setRecentItems] = useState<WorkItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -99,7 +100,7 @@ export function Dashboard() {
 
       try {
         // Use the new auto-sync API that syncs all available projects
-        const result = await api.autoSync()
+        const result = await sync.autoSync()
         if (result.total_items > 0) {
           const totalCreatedUpdated = result.results.reduce((sum, r) => sum + r.items_synced, 0)
           setClaudeSyncInfo(`已同步 ${totalCreatedUpdated} 筆工作項目`)
@@ -108,7 +109,7 @@ export function Dashboard() {
         }
 
         // Fetch sync status for display
-        const statuses = await api.getSyncStatus().catch(() => [])
+        const statuses = await sync.getStatus().catch(() => [])
         setSyncStatusData(statuses)
       } catch {
         // Silent fail for auto-sync
@@ -126,9 +127,9 @@ export function Dashboard() {
     async function fetchData() {
       try {
         const [statsResult, heatmapResult, itemsResult] = await Promise.all([
-          api.getWorkItemStats(weekRange.start, weekRange.end).catch(() => null),
-          api.getWorkItemStats(heatmapRange.start, heatmapRange.end).catch(() => null),
-          api.getWorkItems({
+          workItems.getStats({ start_date: weekRange.start, end_date: weekRange.end }).catch(() => null),
+          workItems.getStats({ start_date: heatmapRange.start, end_date: heatmapRange.end }).catch(() => null),
+          workItems.list({
             start_date: weekRange.start,
             end_date: weekRange.end,
             per_page: 20
@@ -154,7 +155,7 @@ export function Dashboard() {
     async function fetchTimeline() {
       setGanttLoading(true)
       try {
-        const result = await api.getTimeline(ganttDate)
+        const result = await workItems.getTimeline(ganttDate)
         // Convert API response to component format
         const sessions: TimelineSession[] = result.sessions.map(s => ({
           id: s.id,
@@ -188,7 +189,7 @@ export function Dashboard() {
 
     try {
       // 1. Fetch work items that are mapped to Jira but not synced to Tempo
-      const response = await api.getWorkItems({
+      const response = await workItems.list({
         jira_mapped: true,
         synced_to_tempo: false,
         per_page: 100,
@@ -211,7 +212,7 @@ export function Dashboard() {
       }))
 
       // 3. Sync to Tempo
-      const result = await api.syncWorklogs(entries, false)
+      const result = await tempo.syncWorklogs({ entries, dry_run: false })
 
       // 4. Update work items with sync status and worklog IDs
       // Match results back to work items by issue_key + date
@@ -222,7 +223,7 @@ export function Dashboard() {
 
           if (syncResult && syncResult.status === 'success') {
             try {
-              await api.updateWorkItem(item.id, {
+              await workItems.update(item.id, {
                 synced_to_tempo: true,
                 tempo_worklog_id: syncResult.id || undefined,
               })
@@ -234,7 +235,7 @@ export function Dashboard() {
       }
 
       // 5. Refresh stats
-      const newStats = await api.getWorkItemStats(weekRange.start, weekRange.end).catch(() => null)
+      const newStats = await workItems.getStats({ start_date: weekRange.start, end_date: weekRange.end }).catch(() => null)
       if (newStats) setStats(newStats)
 
       setSyncStatus('success')

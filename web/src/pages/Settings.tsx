@@ -27,7 +27,8 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { api, ConfigResponse, SourcesResponse, ClaudeProject } from '@/lib/api'
+import { config as configService, sources as sourcesService, auth, gitlab, tempo, claude } from '@/services'
+import type { ConfigResponse, SourcesResponse, ClaudeProject, GitLabProject, GitLabProjectInfo } from '@/types'
 import { useAuth } from '@/lib/auth'
 
 type SettingsSection = 'profile' | 'account' | 'integrations' | 'preferences' | 'about'
@@ -69,18 +70,8 @@ export function SettingsPage() {
   const [showGitlabToken, setShowGitlabToken] = useState(false)
   const [savingGitlab, setSavingGitlab] = useState(false)
   const [testingGitlab, setTestingGitlab] = useState(false)
-  const [gitlabProjects, setGitlabProjects] = useState<Array<{
-    id: string
-    gitlab_project_id: number
-    name: string
-    path_with_namespace: string
-    last_synced: string | null
-  }>>([])
-  const [gitlabSearchResults, setGitlabSearchResults] = useState<Array<{
-    id: number
-    name: string
-    path_with_namespace: string
-  }>>([])
+  const [gitlabProjects, setGitlabProjects] = useState<GitLabProject[]>([])
+  const [gitlabSearchResults, setGitlabSearchResults] = useState<GitLabProjectInfo[]>([])
   const [gitlabSearch, setGitlabSearch] = useState('')
   const [searchingGitlab, setSearchingGitlab] = useState(false)
   const [syncingGitlab, setSyncingGitlab] = useState(false)
@@ -117,8 +108,8 @@ export function SettingsPage() {
     async function fetchData() {
       try {
         const [configData, sourcesData] = await Promise.all([
-          api.getConfig(),
-          api.getSources(),
+          configService.getConfig(),
+          sourcesService.getSources(),
         ])
         setConfig(configData)
         setSources(sourcesData)
@@ -175,7 +166,7 @@ export function SettingsPage() {
     setSavingProfile(true)
     setMessage(null)
     try {
-      await api.updateProfile({
+      await auth.updateProfile({
         name: profileName,
         email: profileEmail || undefined,
         title: profileTitle,
@@ -194,10 +185,10 @@ export function SettingsPage() {
     setSaving(true)
     setMessage(null)
     try {
-      await api.updateConfig({
+      await configService.updateConfig({
         daily_work_hours: dailyHours,
         normalize_hours: normalizeHours,
-      } as Partial<ConfigResponse>)
+      })
       setMessage({ type: 'success', text: '偏好設定已儲存' })
     } catch (err) {
       setMessage({ type: 'error', text: err instanceof Error ? err.message : '儲存失敗' })
@@ -210,13 +201,13 @@ export function SettingsPage() {
     setSavingLlm(true)
     setMessage(null)
     try {
-      await api.updateLlmConfig({
+      await configService.updateLlmConfig({
         provider: llmProvider,
         model: llmModel,
         api_key: llmApiKey || undefined,
         base_url: llmBaseUrl || undefined,
       })
-      const updated = await api.getConfig()
+      const updated = await configService.getConfig()
       setConfig(updated)
       setLlmApiKey('') // Clear the key field after saving
       setMessage({ type: 'success', text: 'LLM 設定已儲存' })
@@ -259,8 +250,8 @@ export function SettingsPage() {
         payload.tempo_api_token = tempoToken
       }
 
-      await api.updateJiraConfig(payload)
-      const updated = await api.getConfig()
+      await configService.updateJiraConfig(payload)
+      const updated = await configService.getConfig()
       setConfig(updated)
       setJiraToken('')
       setTempoToken('')
@@ -276,7 +267,7 @@ export function SettingsPage() {
     setTestingJira(true)
     setMessage(null)
     try {
-      const result = await api.testJira()
+      const result = await tempo.testConnection()
       setMessage({ type: 'success', text: result.message })
     } catch (err) {
       setMessage({ type: 'error', text: err instanceof Error ? err.message : '連線失敗' })
@@ -290,8 +281,8 @@ export function SettingsPage() {
     setSavingGitlab(true)
     setMessage(null)
     try {
-      await api.configureGitLab(gitlabUrl.trim(), gitlabToken)
-      const updated = await api.getConfig()
+      await gitlab.configure({ gitlab_url: gitlabUrl.trim(), gitlab_pat: gitlabToken })
+      const updated = await configService.getConfig()
       setConfig(updated)
       setGitlabToken('')
       setMessage({ type: 'success', text: 'GitLab 設定已儲存' })
@@ -309,7 +300,7 @@ export function SettingsPage() {
     setMessage(null)
     try {
       // Try to search projects as a connection test
-      await api.getGitLabRemoteProjects('', 1, 1)
+      await gitlab.searchProjects({ search: '' })
       setMessage({ type: 'success', text: 'GitLab 連線成功' })
     } catch (err) {
       setMessage({ type: 'error', text: err instanceof Error ? err.message : '連線失敗' })
@@ -320,7 +311,7 @@ export function SettingsPage() {
 
   const loadGitlabProjects = async () => {
     try {
-      const projects = await api.getGitLabTrackedProjects()
+      const projects = await gitlab.listProjects()
       setGitlabProjects(projects)
     } catch (err) {
       console.error('Failed to load GitLab projects:', err)
@@ -331,7 +322,7 @@ export function SettingsPage() {
     if (!gitlabSearch.trim()) return
     setSearchingGitlab(true)
     try {
-      const results = await api.getGitLabRemoteProjects(gitlabSearch)
+      const results = await gitlab.searchProjects({ search: gitlabSearch })
       setGitlabSearchResults(results)
     } catch (err) {
       setMessage({ type: 'error', text: err instanceof Error ? err.message : '搜尋失敗' })
@@ -342,7 +333,7 @@ export function SettingsPage() {
 
   const handleAddGitlabProject = async (projectId: number) => {
     try {
-      await api.addGitLabProject(projectId)
+      await gitlab.addProject({ gitlab_project_id: projectId })
       setMessage({ type: 'success', text: '已新增 GitLab 專案' })
       loadGitlabProjects()
       // Remove from search results
@@ -354,7 +345,7 @@ export function SettingsPage() {
 
   const handleRemoveGitlabProject = async (id: string) => {
     try {
-      await api.removeGitLabProject(id)
+      await gitlab.removeProject(id)
       setMessage({ type: 'success', text: '已移除 GitLab 專案' })
       loadGitlabProjects()
     } catch (err) {
@@ -366,9 +357,8 @@ export function SettingsPage() {
     setSyncingGitlab(true)
     setMessage(null)
     try {
-      const results = await api.syncAllGitLabProjects()
-      const total = results.reduce((sum, r) => sum + r.work_items_created, 0)
-      setMessage({ type: 'success', text: `已同步 ${total} 個工作項目` })
+      const result = await gitlab.sync()
+      setMessage({ type: 'success', text: `已同步 ${result.work_items_created} 個工作項目` })
       loadGitlabProjects()
     } catch (err) {
       setMessage({ type: 'error', text: err instanceof Error ? err.message : '同步失敗' })
@@ -379,8 +369,8 @@ export function SettingsPage() {
 
   const handleRemoveGitlabConfig = async () => {
     try {
-      await api.removeGitLabConfig()
-      const updated = await api.getConfig()
+      await gitlab.removeConfig()
+      const updated = await configService.getConfig()
       setConfig(updated)
       setGitlabProjects([])
       setGitlabSearchResults([])
@@ -395,8 +385,8 @@ export function SettingsPage() {
     setAddingRepo(true)
     setMessage(null)
     try {
-      await api.addGitRepo(newRepoPath.trim())
-      const updated = await api.getSources()
+      await sourcesService.addGitRepo(newRepoPath.trim())
+      const updated = await sourcesService.getSources()
       setSources(updated)
       setNewRepoPath('')
       setMessage({ type: 'success', text: '已新增 Git 倉庫' })
@@ -410,8 +400,8 @@ export function SettingsPage() {
   const handleRemoveRepo = async (repoId: string) => {
     setMessage(null)
     try {
-      await api.removeGitRepo(repoId)
-      const updated = await api.getSources()
+      await sourcesService.removeGitRepo(repoId)
+      const updated = await sourcesService.getSources()
       setSources(updated)
       setMessage({ type: 'success', text: '已移除 Git 倉庫' })
     } catch (err) {
@@ -423,7 +413,7 @@ export function SettingsPage() {
     setLoadingClaude(true)
     setMessage(null)
     try {
-      const projects = await api.getClaudeSessions()
+      const projects = await claude.listSessions()
       setClaudeProjects(projects)
       // Expand the first project by default
       if (projects.length > 0) {
@@ -438,12 +428,12 @@ export function SettingsPage() {
         if (newProjects.length > 0) {
           // Add all new repos in parallel
           const addPromises = newProjects.map(p =>
-            api.addGitRepo(p.path).catch(() => null) // Ignore individual failures
+            sourcesService.addGitRepo(p.path).catch(() => null) // Ignore individual failures
           )
           await Promise.all(addPromises)
 
           // Refresh sources to show the added repos
-          const updated = await api.getSources()
+          const updated = await sourcesService.getSources()
           setSources(updated)
           setMessage({
             type: 'success',
@@ -505,7 +495,7 @@ export function SettingsPage() {
         .filter(p => selectedProjects.has(p.path))
         .flatMap(p => p.sessions.map(s => s.session_id))
 
-      const result = await api.importClaudeSessions(sessionIds)
+      const result = await claude.importSessions({ session_ids: sessionIds })
       setMessage({
         type: 'success',
         text: `已匯入 ${result.imported} 個 session，建立 ${result.work_items_created} 個工作項目`,
@@ -820,8 +810,8 @@ export function SettingsPage() {
                               onClick={async () => {
                                 setMessage(null)
                                 try {
-                                  await api.addGitRepo(project.path)
-                                  const updated = await api.getSources()
+                                  await sourcesService.addGitRepo(project.path)
+                                  const updated = await sourcesService.getSources()
                                   setSources(updated)
                                   setMessage({ type: 'success', text: `已新增 ${project.name}` })
                                 } catch (err) {

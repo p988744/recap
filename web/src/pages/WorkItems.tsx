@@ -53,7 +53,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { api, WorkItem, WorkItemFilters, WorkItemStats, GroupedWorkItemsResponse } from '@/lib/api'
+import { workItems } from '@/services'
+import type { WorkItem, WorkItemWithChildren, WorkItemFilters, WorkItemStatsResponse, GroupedWorkItemsResponse } from '@/types'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/lib/auth'
 import { ViewModeSwitcher, ViewMode } from '@/components/ViewModeSwitcher'
@@ -62,8 +63,8 @@ import { WorkGanttChart, TimelineSession } from '@/components/WorkGanttChart'
 
 export function WorkItemsPage() {
   const { token, isAuthenticated } = useAuth()
-  const [items, setItems] = useState<WorkItem[]>([])
-  const [stats, setStats] = useState<WorkItemStats | null>(null)
+  const [items, setItems] = useState<WorkItemWithChildren[]>([])
+  const [stats, setStats] = useState<WorkItemStatsResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
@@ -131,7 +132,7 @@ export function WorkItemsPage() {
   async function fetchGroupedData() {
     setLoading(true)
     try {
-      const response = await api.getGroupedWorkItems({
+      const response = await workItems.getGrouped({
         start_date: filters.start_date,
         end_date: filters.end_date,
       })
@@ -146,7 +147,7 @@ export function WorkItemsPage() {
   async function fetchTimelineData() {
     setTimelineLoading(true)
     try {
-      const response = await api.getTimeline(timelineDate)
+      const response = await workItems.getTimeline(timelineDate)
       const sessions: TimelineSession[] = response.sessions.map(s => ({
         id: s.id,
         project: s.project,
@@ -173,7 +174,7 @@ export function WorkItemsPage() {
   async function fetchWorkItems() {
     setLoading(true)
     try {
-      const response = await api.getWorkItems({ ...filters, page })
+      const response = await workItems.list({ ...filters, page })
       setItems(response.items)
       setTotalPages(response.pages)
       setTotal(response.total)
@@ -186,7 +187,7 @@ export function WorkItemsPage() {
 
   async function fetchStats() {
     try {
-      const response = await api.getWorkItemStats()
+      const response = await workItems.getStats()
       setStats(response)
     } catch (err) {
       console.error('Failed to fetch stats:', err)
@@ -202,7 +203,7 @@ export function WorkItemsPage() {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
     try {
-      await api.createWorkItem({
+      await workItems.create({
         title: formData.title,
         description: formData.description || undefined,
         hours: formData.hours,
@@ -223,7 +224,7 @@ export function WorkItemsPage() {
     e.preventDefault()
     if (!selectedItem) return
     try {
-      await api.updateWorkItem(selectedItem.id, {
+      await workItems.update(selectedItem.id, {
         title: formData.title,
         description: formData.description || undefined,
         hours: formData.hours,
@@ -243,7 +244,7 @@ export function WorkItemsPage() {
   async function handleDelete() {
     if (!itemToDelete) return
     try {
-      await api.deleteWorkItem(itemToDelete.id)
+      await workItems.remove(itemToDelete.id)
       setShowDeleteConfirm(false)
       setItemToDelete(null)
       fetchWorkItems()
@@ -262,7 +263,7 @@ export function WorkItemsPage() {
     e.preventDefault()
     if (!selectedItem) return
     try {
-      await api.mapWorkItemJira(selectedItem.id, jiraKey, jiraTitle || undefined)
+      await workItems.mapToJira(selectedItem.id, jiraKey, jiraTitle || undefined)
       setShowJiraModal(false)
       setSelectedItem(null)
       setJiraKey('')
@@ -309,7 +310,7 @@ export function WorkItemsPage() {
     setAggregating(true)
     setAggregateResult(null)
     try {
-      const result = await api.aggregateWorkItems({
+      const result = await workItems.aggregate({
         source: filters.source,
       })
       setAggregateResult(
@@ -343,7 +344,7 @@ export function WorkItemsPage() {
       if (!childrenData[itemId]) {
         setLoadingChildren(prev => new Set(prev).add(itemId))
         try {
-          const response = await api.getWorkItems({ parent_id: itemId, per_page: 100 })
+          const response = await workItems.list({ parent_id: itemId, per_page: 100 })
           setChildrenData(prev => ({ ...prev, [itemId]: response.items }))
         } catch (err) {
           console.error('Failed to fetch children:', err)

@@ -1,0 +1,32 @@
+/**
+ * Services - unified API layer
+ *
+ * This module provides a clean, organized API for all backend operations.
+ * Import from '@/services' instead of directly from individual service files.
+ */
+
+// Re-export client utilities
+export {
+  getAuthToken,
+  setAuthToken,
+  removeAuthToken,
+  getRequiredToken,
+  invokeCommand,
+  invokeAuth,
+} from './client'
+
+// Re-export domain services
+export * as auth from './auth'
+export * as config from './config'
+export * as workItems from './work-items'
+export * as reports from './reports'
+export * as sync from './sync'
+
+// Re-export integrations
+export * as gitlab from './integrations/gitlab'
+export * as tempo from './integrations/tempo'
+export * as claude from './integrations/claude'
+export * as sources from './integrations/sources'
+
+// Namespace exports for grouping
+export * as integrations from './integrations'
