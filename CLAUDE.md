@@ -212,7 +212,7 @@ claude
 ```
 main (穩定版，保護分支)
 │
-└── develop (整合分支)
+└── develop (整合分支) ✅ 已建立
     │
     ├── refactor/core-v2      ← Core 開發者
     │   └── 完成後先合併到 develop
@@ -229,6 +229,29 @@ main (穩定版，保護分支)
 2. CLI / Desktop 各自 rebase develop
 3. CLI / Desktop → develop
 4. develop 穩定測試後 → main
+
+### Branch Progress
+
+| 分支 | 狀態 | Commits | 說明 |
+|------|------|---------|------|
+| `main` | 🟢 穩定 | - | 保護分支 |
+| `develop` | 🟢 已建立 | 0 | 整合分支，等待 Core 合併 |
+| `refactor/core-v2` | 🟡 進行中 | 1 | 完成 recap-core 單元測試 |
+| `refactor/desktop-v2` | 🟢 活躍 | 3 | CI + Settings/work_items 測試 |
+| `refactor/cli-v2` | ⚪ 尚未開始 | 0 | 等待 Core 完成 |
+
+**各分支已完成工作：**
+
+- **Core (`refactor/core-v2`)**
+  - `8ac7f6d` test: Add comprehensive unit tests for recap-core modules
+
+- **Desktop (`refactor/desktop-v2`)**
+  - `4208f00` ci: Add GitHub Actions CI workflow
+  - `e7a6083` test: Add unit tests for Settings-related services
+  - `f559bb7` test: Add comprehensive unit tests for work_items.rs
+
+- **CLI (`refactor/cli-v2`)**
+  - 尚無進度
 
 ### Worktree Best Practices
 
@@ -528,11 +551,16 @@ pages/Settings/
 ### Progress Tracking
 
 ```
-Phase 1: ⬜⬜⬜ 0%
+Phase 1: 🟩🟩⬜ 66%  (1.1 ✅ 1.2 ✅ 1.3 ⏳)
 Phase 2: ⬜⬜⬜ 0%
 Phase 3: ⬜⬜⬜ 0%
 Phase 4: ⬜⬜⬜ 0%
-Overall:  0% complete
+Overall:  ~15% complete
 ```
+
+**Phase 1 細項：**
+- [x] 1.1 補齊 Rust 測試 (`work_items.rs` 單元測試)
+- [x] 1.2 補齊前端測試 (`Settings.tsx` 元件測試)
+- [ ] 1.3 設定 CI (GitHub Actions) - Desktop 分支已完成，待合併
 
 > 更新日期：2025-01-16
