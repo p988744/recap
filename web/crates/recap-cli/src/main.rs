@@ -73,6 +73,12 @@ enum Commands {
         #[command(subcommand)]
         action: commands::dashboard::DashboardAction,
     },
+
+    /// View and manage Claude Code sessions
+    Claude {
+        #[command(subcommand)]
+        action: commands::claude::ClaudeAction,
+    },
 }
 
 #[tokio::main]
@@ -103,5 +109,6 @@ async fn main() -> Result<()> {
         Commands::Config { action } => commands::config::execute(&ctx, action).await,
         Commands::Tempo { action } => commands::tempo_report::execute(&ctx, action).await,
         Commands::Dashboard { action } => commands::dashboard::execute(&ctx, action).await,
+        Commands::Claude { action } => commands::claude::execute(&ctx, action).await,
     }
 }
