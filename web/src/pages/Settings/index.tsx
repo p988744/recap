@@ -1,4 +1,4 @@
-import { User, Link2, Bot, Settings } from 'lucide-react'
+import { User, Link2, Bot, Settings, Sparkles } from 'lucide-react'
 import { Cloud } from 'lucide-react'
 import {
   useSettings,
@@ -9,6 +9,7 @@ import {
 import { ProfileSection } from './components/ProfileSection'
 import { AccountSection } from './components/AccountSection'
 import { IntegrationsSectionV2 } from './components/IntegrationsSection/IntegrationsSectionV2'
+import { AiSection } from './components/AiSection'
 import { PreferencesSection } from './components/PreferencesSection'
 import { AboutSection } from './components/AboutSection'
 import { IntegrationsProvider } from './context'
@@ -17,6 +18,7 @@ const sections = [
   { id: 'profile' as const, label: '個人資料', icon: User },
   { id: 'account' as const, label: '帳號', icon: Cloud },
   { id: 'integrations' as const, label: '整合服務', icon: Link2 },
+  { id: 'ai' as const, label: 'AI 助手', icon: Sparkles },
   { id: 'preferences' as const, label: '偏好設定', icon: Settings },
   { id: 'about' as const, label: '關於', icon: Bot },
 ]
@@ -109,15 +111,9 @@ export function SettingsPage() {
           </IntegrationsProvider>
         )}
 
-        {/* Preferences Section */}
-        {settings.activeSection === 'preferences' && (
-          <PreferencesSection
-            dailyHours={preferencesForm.dailyHours}
-            setDailyHours={preferencesForm.setDailyHours}
-            normalizeHours={preferencesForm.normalizeHours}
-            setNormalizeHours={preferencesForm.setNormalizeHours}
-            savingPreferences={preferencesForm.saving}
-            onSavePreferences={preferencesForm.handleSave}
+        {/* AI Section */}
+        {settings.activeSection === 'ai' && (
+          <AiSection
             config={settings.config}
             llmProvider={llmForm.llmProvider}
             llmModel={llmForm.llmModel}
@@ -133,6 +129,19 @@ export function SettingsPage() {
             onSaveLlm={llmForm.handleSave}
             setMessage={settings.setMessage}
             refreshConfig={settings.refreshConfig}
+          />
+        )}
+
+        {/* Preferences Section */}
+        {settings.activeSection === 'preferences' && (
+          <PreferencesSection
+            dailyHours={preferencesForm.dailyHours}
+            setDailyHours={preferencesForm.setDailyHours}
+            normalizeHours={preferencesForm.normalizeHours}
+            setNormalizeHours={preferencesForm.setNormalizeHours}
+            savingPreferences={preferencesForm.saving}
+            onSavePreferences={preferencesForm.handleSave}
+            setMessage={settings.setMessage}
           />
         )}
 
