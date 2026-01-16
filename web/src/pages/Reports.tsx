@@ -39,7 +39,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { api, AnalyzeResponse, PersonalReport, PEReport, TempoReport, TempoReportPeriod } from '@/lib/api'
+import { reports } from '@/services'
+import type { AnalyzeResponse, LegacyPersonalReport, PEReport, TempoReport, TempoReportPeriod } from '@/types'
 import { formatHours, formatDateFull, cn } from '@/lib/utils'
 import { useAuth } from '@/lib/auth'
 
@@ -49,7 +50,7 @@ type ReportTab = 'work' | 'pe' | 'tempo'
 export function Reports() {
   const { token, isAuthenticated } = useAuth()
   const [data, setData] = useState<AnalyzeResponse | null>(null)
-  const [personalReport, setPersonalReport] = useState<PersonalReport | null>(null)
+  const [personalReport, setPersonalReport] = useState<LegacyPersonalReport | null>(null)
   const [peReport, setPEReport] = useState<PEReport | null>(null)
   const [loading, setLoading] = useState(true)
   const [period, setPeriod] = useState<ReportPeriod>('week')
@@ -66,26 +67,26 @@ export function Reports() {
       let result: AnalyzeResponse
       switch (p) {
         case 'week':
-          result = await api.analyzeWeek()
+          result = await reports.analyzeWeek()
           break
         case 'last-week':
-          result = await api.analyzeLastWeek()
+          result = await reports.analyzeLastWeek()
           break
         case '7days':
-          result = await api.analyzeDays(7)
+          result = await reports.analyzeDays(7)
           break
         case '30days':
-          result = await api.analyzeDays(30)
+          result = await reports.analyzeDays(30)
           break
         default:
-          result = await api.analyzeWeek()
+          result = await reports.analyzeWeek()
       }
       setData(result)
 
       // Also fetch personal report for the same date range
       if (result.start_date && result.end_date) {
         try {
-          const personal = await api.getPersonalReport(result.start_date, result.end_date)
+          const personal = await reports.getLegacyPersonalReport(result.start_date, result.end_date)
           setPersonalReport(personal)
         } catch (err) {
           console.error('Failed to fetch personal report:', err)
@@ -101,7 +102,7 @@ export function Reports() {
   const fetchPEReport = async () => {
     setLoading(true)
     try {
-      const result = await api.getPEReport(peYear, peHalf)
+      const result = await reports.getPEReport(peYear, peHalf)
       setPEReport(result)
     } catch (err) {
       console.error('Failed to fetch PE report:', err)
@@ -113,7 +114,7 @@ export function Reports() {
   const fetchTempoReport = async (p: TempoReportPeriod) => {
     setTempoLoading(true)
     try {
-      const result = await api.generateTempoReport(p)
+      const result = await reports.generateTempoReport({ period: p })
       setTempoReport(result)
     } catch (err) {
       console.error('Failed to fetch tempo report:', err)
@@ -178,7 +179,7 @@ export function Reports() {
   const handleExportMarkdown = async () => {
     if (!data?.start_date || !data?.end_date) return
     try {
-      const markdown = await api.exportMarkdownReport(data.start_date, data.end_date)
+      const markdown = await reports.exportMarkdownReport(data.start_date, data.end_date)
       const blob = new Blob([markdown], { type: 'text/markdown' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')

@@ -10,7 +10,8 @@ import {
 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { api, Team } from '@/lib/api'
+import { teams as teamsService } from '@/services'
+import type { Team } from '@/types'
 import { cn } from '@/lib/utils'
 
 export function TeamPage() {
@@ -21,7 +22,7 @@ export function TeamPage() {
   useEffect(() => {
     async function fetchTeams() {
       try {
-        const response = await api.getTeams()
+        const response = await teamsService.getTeams()
         setTeams(response.teams)
         if (response.teams.length > 0) {
           setSelectedTeam(response.teams[0].name)

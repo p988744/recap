@@ -27,6 +27,7 @@ export * as gitlab from './integrations/gitlab'
 export * as tempo from './integrations/tempo'
 export * as claude from './integrations/claude'
 export * as sources from './integrations/sources'
+export * as teams from './integrations/teams'
 
 // Namespace exports for grouping
 export * as integrations from './integrations'
