@@ -11,6 +11,7 @@ pub mod reports;
 pub mod sources;
 pub mod sync;
 pub mod tempo;
+pub mod tray;
 pub mod users;
 pub mod work_items;
 

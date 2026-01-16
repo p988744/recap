@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useCallback } from 'react'
+import { listen } from '@tauri-apps/api/event'
 import { workItems, sync, tempo } from '@/services'
 import type { WorkItemStatsResponse, WorkItem, SyncStatus as SyncStatusType } from '@/types'
 import type { TimelineSession } from '@/components/WorkGanttChart'
@@ -106,6 +107,18 @@ export function useDashboard(isAuthenticated: boolean, token: string | null) {
     setAutoSyncState('idle') // Reset to allow sync
     await performSync()
   }, [autoSyncState, performSync])
+
+  // Tray "Sync Now" event listener
+  useEffect(() => {
+    const unlisten = listen('tray-sync-now', () => {
+      console.log('Tray sync triggered')
+      handleManualSync()
+    })
+
+    return () => {
+      unlisten.then(fn => fn())
+    }
+  }, [handleManualSync])
 
   // Main data fetch effect
   useEffect(() => {
