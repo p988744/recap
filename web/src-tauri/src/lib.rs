@@ -34,19 +34,23 @@ pub fn run() {
             commands::config::update_config,
             commands::config::update_llm_config,
             commands::config::update_jira_config,
-            // Work Items
-            commands::work_items::list_work_items,
-            commands::work_items::create_work_item,
-            commands::work_items::get_work_item,
-            commands::work_items::update_work_item,
-            commands::work_items::delete_work_item,
-            commands::work_items::map_work_item_jira,
-            commands::work_items::get_stats_summary,
-            commands::work_items::get_grouped_work_items,
-            commands::work_items::get_timeline_data,
-            commands::work_items::batch_sync_tempo,
-            commands::work_items::aggregate_work_items,
-            commands::work_items::get_commit_centric_worklog,
+            // Work Items - queries
+            commands::work_items::queries::list_work_items,
+            commands::work_items::queries::get_stats_summary,
+            commands::work_items::queries::get_timeline_data,
+            // Work Items - mutations
+            commands::work_items::mutations::create_work_item,
+            commands::work_items::mutations::get_work_item,
+            commands::work_items::mutations::update_work_item,
+            commands::work_items::mutations::delete_work_item,
+            commands::work_items::mutations::map_work_item_jira,
+            // Work Items - grouped
+            commands::work_items::grouped::get_grouped_work_items,
+            // Work Items - sync
+            commands::work_items::sync::batch_sync_tempo,
+            commands::work_items::sync::aggregate_work_items,
+            // Work Items - commit centric
+            commands::work_items::commit_centric::get_commit_centric_worklog,
             // Sources
             commands::sources::get_sources,
             commands::sources::add_git_repo,
