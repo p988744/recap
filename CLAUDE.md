@@ -278,6 +278,95 @@ main (穩定版，保護分支)
    - 每個 PR 需要另一位成員 review
    - Core 的 PR 需要 Desktop 和 CLI 開發者都確認
 
+### 分支隔離原則（避免互相污染）
+
+**嚴禁事項：**
+
+| 禁止行為 | 原因 |
+|----------|------|
+| 直接修改其他成員的分支 | 會造成歷史混亂、衝突 |
+| 在 main/develop 上直接開發 | 應在 feature 分支開發 |
+| 跨 worktree 共用 node_modules/target | 會造成編譯錯誤 |
+| 未經 rebase 就合併 | 會產生不必要的 merge commit |
+| Cherry-pick 其他成員未合併的 commit | 會造成重複 commit |
+
+**正確做法：**
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Core Worktree        │  Desktop Worktree   │  CLI     │
+│  (core-dev/)          │  (desktop-dev/)     │ (cli-dev)│
+├───────────────────────┼─────────────────────┼──────────┤
+│  只改 crates/         │  只改 src-tauri/    │ 只改     │
+│  recap-core/          │  和 web/src/        │ recap-cli│
+├───────────────────────┴─────────────────────┴──────────┤
+│              ↓ PR 合併至 develop ↓                      │
+├─────────────────────────────────────────────────────────┤
+│                    develop 分支                         │
+│              (整合點，由 PM 管理)                        │
+└─────────────────────────────────────────────────────────┘
+```
+
+**各角色職責邊界：**
+
+| 角色 | 可修改 | 禁止修改 |
+|------|--------|----------|
+| Core 開發者 | `crates/recap-core/` | `src-tauri/`, `web/src/`, `crates/recap-cli/` |
+| Desktop 開發者 | `web/src-tauri/`, `web/src/` | `crates/recap-core/`, `crates/recap-cli/` |
+| CLI 開發者 | `crates/recap-cli/` | `crates/recap-core/`, `src-tauri/`, `web/src/` |
+| PM | `CLAUDE.md`, GitHub Issues | 程式碼（除非緊急修復） |
+
+**需要跨模組修改時：**
+1. 開 Issue 說明需求
+2. 由負責該模組的開發者處理
+3. 等待其 PR 合併後再 rebase 取得更新
+
+### PR 提交前檢查清單
+
+**必須檢查項目（提交 PR 前）：**
+
+```bash
+# 1. 確認已同步 develop
+git fetch origin
+git rebase origin/develop
+
+# 2. 確認只有自己的 commits
+git log origin/develop..HEAD --oneline
+# 應該只看到自己的 commits，不應有其他成員的
+
+# 3. 確認沒有修改到其他模組
+git diff origin/develop --stat
+# 檢查修改的檔案是否都在自己負責的範圍內
+
+# 4. 測試通過
+cargo test        # Rust
+npm test          # Frontend
+
+# 5. 編譯通過
+cargo build
+npm run build
+```
+
+**PR 描述模板：**
+
+```markdown
+## Summary
+- 簡述完成的功能
+
+## Changed Files
+- 列出修改的檔案（確認都在職責範圍內）
+
+## Checklist
+- [ ] 已 rebase origin/develop
+- [ ] 只包含自己的 commits
+- [ ] 沒有修改其他模組的程式碼
+- [ ] 測試通過
+- [ ] 編譯通過
+
+## Related Issue
+Refs #<issue-number>
+```
+
 ### PR 提交與合併流程
 
 **角色分工：**
