@@ -321,35 +321,51 @@ main (穩定版，保護分支)
 2. 由負責該模組的開發者處理
 3. 等待其 PR 合併後再 rebase 取得更新
 
-### 團隊協作腳本
+### Claude Code 團隊指令
 
-提供自動化腳本簡化協作流程，位於 `scripts/team/`：
+提供 Claude Code slash commands 簡化協作流程，位於 `.claude/commands/`：
 
-| 腳本 | 說明 | 使用時機 |
+| 指令 | 說明 | 使用時機 |
 |------|------|----------|
-| `sync-develop.sh` | 同步 develop 分支 | 每天開始工作前 |
-| `pre-pr-check.sh` | PR 提交前檢查 | 提交 PR 前 |
-| `check-boundaries.sh` | 檢查職責邊界 | 確認沒有越界修改 |
-| `create-pr.sh` | 建立 PR（含檢查） | 準備提交 PR 時 |
-| `status.sh` | 顯示團隊狀態 | 了解整體進度 |
+| `/sync` | 同步 develop 分支 | 每天開始工作前 |
+| `/pre-pr` | PR 提交前檢查 | 提交 PR 前 |
+| `/check-boundary` | 檢查職責邊界 | 確認沒有越界修改 |
+| `/create-pr [issue]` | 建立 PR（含檢查） | 準備提交 PR 時 |
+| `/team-status` | 顯示團隊狀態 | 了解整體進度 |
+| `/update-issues` | 更新 GitHub Issues | 同步進度追蹤 |
 
-**每日工作流程：**
-```bash
+**每日工作流程（在 Claude Code 中執行）：**
+```
 # 1. 開始工作前，同步 develop
-./scripts/team/sync-develop.sh
+/sync
 
 # 2. 進行開發...
 
-# 3. 完成後，檢查並建立 PR
-./scripts/team/create-pr.sh
+# 3. 完成後，檢查 PR 條件
+/pre-pr
+
+# 4. 建立 PR（關聯 Issue #2）
+/create-pr 2
+
+# 5. 更新 GitHub Issues 進度
+/update-issues
 ```
 
-**快速 alias（加入 ~/.bashrc 或 ~/.zshrc）：**
+**查看所有可用指令：**
+```
+/help
+```
+
+### Shell 腳本（備用）
+
+如需在終端機直接執行，也提供 shell 腳本版本，位於 `scripts/team/`：
+
 ```bash
-alias recap-sync="./scripts/team/sync-develop.sh"
-alias recap-check="./scripts/team/pre-pr-check.sh"
-alias recap-pr="./scripts/team/create-pr.sh"
-alias recap-status="./scripts/team/status.sh"
+./scripts/team/sync-develop.sh      # 同步 develop
+./scripts/team/pre-pr-check.sh      # PR 前檢查
+./scripts/team/check-boundaries.sh  # 檢查職責邊界
+./scripts/team/create-pr.sh         # 建立 PR
+./scripts/team/status.sh            # 團隊狀態
 ```
 
 ### PR 提交前檢查清單
