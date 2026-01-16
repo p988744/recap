@@ -160,6 +160,103 @@ cd web && cargo tauri dev
 - **Async/Await**: All database operations are async
 - **Error Messages**: Return user-friendly error messages from commands
 
+## Team Collaboration & Git Worktree Strategy
+
+### Team Roles
+
+| 角色 | 負責範圍 | Worktree 分支 |
+|------|----------|---------------|
+| **Core 開發者** | `crates/recap-core/` | `refactor/core-v2` |
+| **Desktop 開發者** | `src-tauri/` + `src/` | `refactor/desktop-v2` |
+| **CLI 開發者** | `crates/recap-cli/` | `refactor/cli-v2` |
+
+> QA 由三人輪流兼任，每個 PR 需要另一位成員 review。
+
+### Git Worktree Setup
+
+**目錄結構：**
+```
+~/Projects/
+├── recap/                    # 主專案 (main branch)
+├── recap-worktrees/          # Worktree 專用目錄
+│   ├── core-dev/             # Core 開發者
+│   ├── desktop-dev/          # Desktop 開發者
+│   └── cli-dev/              # CLI 開發者
+```
+
+**初始化指令：**
+```bash
+# 建立 worktree 目錄
+mkdir -p ../recap-worktrees
+
+# 建立各角色的 worktree
+git worktree add ../recap-worktrees/core-dev -b refactor/core-v2
+git worktree add ../recap-worktrees/desktop-dev -b refactor/desktop-v2
+git worktree add ../recap-worktrees/cli-dev -b refactor/cli-v2
+
+# 進入 worktree 後執行
+cd ../recap-worktrees/desktop-dev
+npm install        # 安裝前端依賴
+cargo build        # 編譯 Rust
+```
+
+**每個 Worktree 的 Claude Code 初始化：**
+```bash
+# 進入 worktree 後，執行 /init 讓 Claude Code 識別專案
+claude
+> /init
+```
+
+### Branch Strategy
+
+```
+main (穩定版，保護分支)
+│
+└── develop (整合分支)
+    │
+    ├── refactor/core-v2      ← Core 開發者
+    │   └── 完成後先合併到 develop
+    │
+    ├── refactor/desktop-v2   ← Desktop 開發者
+    │   └── 需先 rebase develop 取得 core 更新
+    │
+    └── refactor/cli-v2       ← CLI 開發者
+        └── 需先 rebase develop 取得 core 更新
+```
+
+**合併順序：**
+1. Core → develop（其他分支依賴 core）
+2. CLI / Desktop 各自 rebase develop
+3. CLI / Desktop → develop
+4. develop 穩定測試後 → main
+
+### Worktree Best Practices
+
+參考 [Claude Code Worktree 最佳實踐](https://incident.io/blog/shipping-faster-with-claude-code-and-git-worktrees)：
+
+1. **獨立環境** - 每個 worktree 有獨立的 `node_modules` 和 `target/`
+2. **定期提交** - 小步提交，方便追蹤和 revert
+3. **同步 develop** - 每天開始前 `git fetch && git rebase origin/develop`
+4. **避免同分支** - 不要在多個 worktree checkout 同一分支
+5. **資源管理** - 完成後用 `git worktree remove` 清理
+
+### Collaboration Rules
+
+1. **修改 `recap-core` 時**
+   - 必須通知其他開發者
+   - 更新 CHANGELOG.md
+   - 確保向下相容或協調升級
+
+2. **跨模組依賴**
+   - Desktop/CLI 只「使用」core，不直接修改
+   - 需要 core 新功能時，開 issue 給 Core 開發者
+
+3. **PR Review**
+   - 每個 PR 需要另一位成員 review
+   - Core 的 PR 需要 Desktop 和 CLI 開發者都確認
+
+---
+
 ## Code Organization Principles
 
 ### Refactoring Prerequisites
@@ -336,3 +433,106 @@ services/
 - [ ] 更新 import/export 路徑
 - [ ] 執行完整測試套件
 - [ ] 更新相關文件
+
+---
+
+## Desktop Refactoring Plan (v2)
+
+### Current Status
+
+**需要重構的大型檔案：**
+
+| 檔案 | 行數 | 上限 | 優先級 | 狀態 |
+|------|------|------|--------|------|
+| `work_items.rs` | 2295 | 300 | P0 | 🔴 待處理 |
+| `Settings.tsx` | 1562 | 200 | P0 | 🔴 待處理 |
+| `WorkItems.tsx` | 1263 | 200 | P1 | 🔴 待處理 |
+| `reports.rs` | 942 | 300 | P1 | 🔴 待處理 |
+| `claude.rs` | 855 | 300 | P2 | 🔴 待處理 |
+| `Reports.tsx` | 841 | 200 | P2 | 🔴 待處理 |
+| `auth.rs` | 766 | 300 | P2 | 🔴 待處理 |
+| `Dashboard.tsx` | 655 | 200 | P3 | 🔴 待處理 |
+| `gitlab.rs` | 572 | 300 | P3 | 🔴 待處理 |
+| `sources.rs` | 473 | 300 | P3 | 🔴 待處理 |
+
+### Phase 1: Foundation (Week 1)
+
+**目標：** 建立測試基礎，確保重構安全
+
+| 任務 | 說明 | 驗收標準 |
+|------|------|----------|
+| 1.1 補齊 Rust 測試 | `work_items.rs` 單元測試 | 覆蓋率 > 70% |
+| 1.2 補齊前端測試 | `Settings.tsx` 元件測試 | 主要流程有測試 |
+| 1.3 設定 CI | GitHub Actions 跑測試 | PR 自動測試 |
+
+### Phase 2: Rust Commands 重構 (Week 2-3)
+
+**目標：** 拆分最大的 Rust 模組
+
+```
+# work_items.rs (2295行) 拆分計劃
+commands/work_items/
+├── mod.rs              # 入口，re-export 所有 commands
+├── types.rs            # WorkItemFilters, GroupedQuery, 等型別 (~100行)
+├── queries.rs          # list, get, stats, timeline (~400行)
+├── mutations.rs        # create, update, delete (~200行)
+├── sync.rs             # batch_sync, aggregate (~300行)
+├── grouped.rs          # get_grouped_work_items (~200行)
+└── query_builder.rs    # SafeQueryBuilder 模組 (~150行)
+```
+
+| 任務 | 說明 | 依賴 |
+|------|------|------|
+| 2.1 拆分 `work_items.rs` | 按上述結構拆分 | 1.1 完成 |
+| 2.2 拆分 `reports.rs` | queries / export / types | 2.1 完成 |
+| 2.3 拆分 `claude.rs` | sessions / import / types | 2.1 完成 |
+
+### Phase 3: React Pages 重構 (Week 3-4)
+
+**目標：** 拆分大型頁面元件
+
+```
+# Settings.tsx (1562行) 拆分計劃
+pages/Settings/
+├── index.tsx                 # 主頁面框架 (~150行)
+├── components/
+│   ├── ProfileSection.tsx    # 個人資料 (~120行)
+│   ├── AccountSection.tsx    # 帳號設定 (~80行)
+│   ├── IntegrationsSection/
+│   │   ├── index.tsx         # 整合服務主框架
+│   │   ├── GitRepoCard.tsx   # 本地 Git
+│   │   ├── ClaudeCodeCard.tsx# Claude Code
+│   │   ├── JiraTempoCard.tsx # Jira/Tempo
+│   │   └── GitLabCard.tsx    # GitLab
+│   ├── PreferencesSection.tsx# 偏好設定 (~150行)
+│   └── AboutSection.tsx      # 關於 (~60行)
+└── hooks/
+    └── useSettings.ts        # 狀態管理 (~200行)
+```
+
+| 任務 | 說明 | 依賴 |
+|------|------|------|
+| 3.1 拆分 `Settings.tsx` | 按上述結構拆分 | 1.2 完成 |
+| 3.2 拆分 `WorkItems.tsx` | List/Project/Task/Timeline 視圖 | 3.1 完成 |
+| 3.3 拆分 `Reports.tsx` | ReportList/ReportDetail/ExportModal | 3.1 完成 |
+
+### Phase 4: Polish (Week 5)
+
+| 任務 | 說明 |
+|------|------|
+| 4.1 拆分剩餘模組 | Dashboard, auth.rs, gitlab.rs, sources.rs |
+| 4.2 更新文件 | API docs, 元件文件 |
+| 4.3 效能優化 | 檢查 bundle size, 懶載入 |
+| 4.4 最終測試 | 全功能回歸測試 |
+
+### Progress Tracking
+
+```
+Phase 1: ⬜⬜⬜ 0%
+Phase 2: ⬜⬜⬜ 0%
+Phase 3: ⬜⬜⬜ 0%
+Phase 4: ⬜⬜⬜ 0%
+Overall:  0% complete
+```
+
+> 更新日期：2025-01-16
