@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import { User, Link2, Bot, Settings } from 'lucide-react'
 import { Cloud } from 'lucide-react'
 import {
@@ -6,17 +5,13 @@ import {
   useProfileForm,
   usePreferencesForm,
   useLlmForm,
-  useJiraForm,
-  useGitLabForm,
-  useGitRepoForm,
-  useClaudeCodeForm,
-  type SettingsSection,
 } from './hooks/useSettings'
 import { ProfileSection } from './components/ProfileSection'
 import { AccountSection } from './components/AccountSection'
-import { IntegrationsSection } from './components/IntegrationsSection'
+import { IntegrationsSectionV2 } from './components/IntegrationsSection/IntegrationsSectionV2'
 import { PreferencesSection } from './components/PreferencesSection'
 import { AboutSection } from './components/AboutSection'
+import { IntegrationsProvider } from './context'
 
 const sections = [
   { id: 'profile' as const, label: '個人資料', icon: User },
@@ -31,23 +26,6 @@ export function SettingsPage() {
   const profileForm = useProfileForm(settings.user)
   const preferencesForm = usePreferencesForm(settings.config)
   const llmForm = useLlmForm(settings.config)
-  const jiraForm = useJiraForm(settings.config)
-  const gitlabForm = useGitLabForm(settings.config)
-  const gitRepoForm = useGitRepoForm()
-  const claudeCodeForm = useClaudeCodeForm()
-
-  // Auto-load Claude sessions and GitLab projects when viewing integrations
-  useEffect(() => {
-    if (!settings.isAuthenticated || settings.activeSection !== 'integrations') {
-      return
-    }
-    if (claudeCodeForm.projects.length === 0 && !claudeCodeForm.loading) {
-      claudeCodeForm.loadSessions(settings.sources, settings.setMessage, settings.refreshSources)
-    }
-    if (settings.config?.gitlab_configured && gitlabForm.projects.length === 0) {
-      gitlabForm.loadProjects()
-    }
-  }, [settings.activeSection, settings.config?.gitlab_configured, settings.isAuthenticated])
 
   if (settings.loading) {
     return (
@@ -118,72 +96,17 @@ export function SettingsPage() {
 
         {/* Integrations Section */}
         {settings.activeSection === 'integrations' && (
-          <IntegrationsSection
+          <IntegrationsProvider
             config={settings.config}
             sources={settings.sources}
             setSources={settings.setSources}
             setMessage={settings.setMessage}
             refreshConfig={settings.refreshConfig}
             refreshSources={settings.refreshSources}
-            // Git repos
-            claudeProjects={claudeCodeForm.projects}
-            newRepoPath={gitRepoForm.newRepoPath}
-            setNewRepoPath={gitRepoForm.setNewRepoPath}
-            addingRepo={gitRepoForm.adding}
-            onAddRepo={gitRepoForm.handleAdd}
-            onRemoveRepo={gitRepoForm.handleRemove}
-            // Claude Code
-            claudeLoading={claudeCodeForm.loading}
-            selectedClaudeProjects={claudeCodeForm.selectedProjects}
-            expandedClaudeProjects={claudeCodeForm.expandedProjects}
-            importingClaude={claudeCodeForm.importing}
-            selectedClaudeSessionCount={claudeCodeForm.selectedSessionCount}
-            onLoadClaudeSessions={claudeCodeForm.loadSessions}
-            onToggleExpandClaude={claudeCodeForm.toggleExpandProject}
-            onToggleSelectionClaude={claudeCodeForm.toggleProjectSelection}
-            onSelectAllClaude={claudeCodeForm.selectAllProjects}
-            onClearSelectionClaude={claudeCodeForm.clearSelection}
-            onImportClaude={claudeCodeForm.handleImport}
-            // Jira
-            jiraUrl={jiraForm.jiraUrl}
-            setJiraUrl={jiraForm.setJiraUrl}
-            jiraAuthType={jiraForm.jiraAuthType}
-            setJiraAuthType={jiraForm.setJiraAuthType}
-            jiraToken={jiraForm.jiraToken}
-            setJiraToken={jiraForm.setJiraToken}
-            jiraEmail={jiraForm.jiraEmail}
-            setJiraEmail={jiraForm.setJiraEmail}
-            tempoToken={jiraForm.tempoToken}
-            setTempoToken={jiraForm.setTempoToken}
-            showJiraToken={jiraForm.showToken}
-            setShowJiraToken={jiraForm.setShowToken}
-            savingJira={jiraForm.saving}
-            testingJira={jiraForm.testing}
-            onSaveJira={jiraForm.handleSave}
-            onTestJira={jiraForm.handleTest}
-            // GitLab
-            gitlabUrl={gitlabForm.gitlabUrl}
-            setGitlabUrl={gitlabForm.setGitlabUrl}
-            gitlabToken={gitlabForm.gitlabToken}
-            setGitlabToken={gitlabForm.setGitlabToken}
-            showGitlabToken={gitlabForm.showToken}
-            setShowGitlabToken={gitlabForm.setShowToken}
-            savingGitlab={gitlabForm.saving}
-            testingGitlab={gitlabForm.testing}
-            gitlabProjects={gitlabForm.projects}
-            gitlabSearchResults={gitlabForm.searchResults}
-            gitlabSearch={gitlabForm.search}
-            setGitlabSearch={gitlabForm.setSearch}
-            searchingGitlab={gitlabForm.searching}
-            syncingGitlab={gitlabForm.syncing}
-            onSaveGitlab={gitlabForm.handleSave}
-            onTestGitlab={gitlabForm.handleTest}
-            onSearchGitlab={gitlabForm.handleSearch}
-            onAddGitlabProject={gitlabForm.handleAddProject}
-            onRemoveGitlabProject={gitlabForm.handleRemoveProject}
-            onSyncGitlab={gitlabForm.handleSync}
-            onRemoveGitlabConfig={gitlabForm.handleRemoveConfig}
-          />
+            isAuthenticated={settings.isAuthenticated}
+          >
+            <IntegrationsSectionV2 />
+          </IntegrationsProvider>
         )}
 
         {/* Preferences Section */}
