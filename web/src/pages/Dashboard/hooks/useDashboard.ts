@@ -67,31 +67,45 @@ export function useDashboard(isAuthenticated: boolean, token: string | null) {
   const [autoSyncState, setAutoSyncState] = useState<'idle' | 'syncing' | 'done'>('idle')
   const [syncStatusData, setSyncStatusData] = useState<SyncStatusType[]>([])
 
-  // Auto-sync effect
-  useEffect(() => {
-    async function autoSyncAllSources() {
-      if (!isAuthenticated || !token) return
-      if (autoSyncState !== 'idle') return
-      setAutoSyncState('syncing')
+  // Last sync time (client-side tracking)
+  const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null)
 
-      try {
-        const result = await sync.autoSync()
-        if (result.total_items > 0) {
-          const totalCreatedUpdated = result.results.reduce((sum, r) => sum + r.items_synced, 0)
-          setClaudeSyncInfo(`已同步 ${totalCreatedUpdated} 筆工作項目`)
-          setTimeout(() => setClaudeSyncInfo(''), 4000)
-        }
+  // Sync function (shared between auto and manual)
+  const performSync = useCallback(async () => {
+    if (!isAuthenticated || !token) return
+    setAutoSyncState('syncing')
 
-        const statuses = await sync.getStatus().catch(() => [])
-        setSyncStatusData(statuses)
-      } catch {
-        // Silent fail for auto-sync
-      } finally {
-        setAutoSyncState('done')
+    try {
+      const result = await sync.autoSync()
+      if (result.total_items > 0) {
+        const totalCreatedUpdated = result.results.reduce((sum, r) => sum + r.items_synced, 0)
+        setClaudeSyncInfo(`已同步 ${totalCreatedUpdated} 筆工作項目`)
+        setTimeout(() => setClaudeSyncInfo(''), 4000)
       }
+
+      const statuses = await sync.getStatus().catch(() => [])
+      setSyncStatusData(statuses)
+      setLastSyncTime(new Date())
+    } catch {
+      // Silent fail for sync
+    } finally {
+      setAutoSyncState('done')
     }
-    autoSyncAllSources()
-  }, [autoSyncState, isAuthenticated, token])
+  }, [isAuthenticated, token])
+
+  // Auto-sync effect (only runs once on mount)
+  useEffect(() => {
+    if (autoSyncState === 'idle') {
+      performSync()
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Manual sync handler
+  const handleManualSync = useCallback(async () => {
+    if (autoSyncState === 'syncing') return
+    setAutoSyncState('idle') // Reset to allow sync
+    await performSync()
+  }, [autoSyncState, performSync])
 
   // Main data fetch effect
   useEffect(() => {
@@ -251,6 +265,8 @@ export function useDashboard(isAuthenticated: boolean, token: string | null) {
     autoSyncState,
     syncStatusData,
     claudeSyncInfo,
+    lastSyncTime,
+    handleManualSync,
     // Gantt
     ganttDate,
     setGanttDate,

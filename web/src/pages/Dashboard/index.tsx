@@ -39,21 +39,31 @@ export function Dashboard() {
             </h1>
           </div>
           {/* Sync Status Indicator */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             {dashboardState.autoSyncState === 'syncing' ? (
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <RefreshCw className="w-3 h-3 animate-spin" strokeWidth={1.5} />
                 <span>同步中...</span>
               </div>
-            ) : dashboardState.syncStatusData.length > 0 && (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <CheckCircle2 className="w-3 h-3 text-sage" strokeWidth={1.5} />
-                <span>
-                  {dashboardState.syncStatusData[0]?.last_sync_at
-                    ? `上次同步: ${formatDate(dashboardState.syncStatusData[0].last_sync_at)}`
-                    : '已同步'}
-                </span>
-              </div>
+            ) : (
+              <>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <CheckCircle2 className="w-3 h-3 text-sage" strokeWidth={1.5} />
+                  <span>
+                    {dashboardState.lastSyncTime
+                      ? `上次同步: ${dashboardState.lastSyncTime.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}`
+                      : '已同步'}
+                  </span>
+                </div>
+                <button
+                  onClick={dashboardState.handleManualSync}
+                  className="flex items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors rounded"
+                  title="手動同步"
+                >
+                  <RefreshCw className="w-3 h-3" strokeWidth={1.5} />
+                  <span>同步</span>
+                </button>
+              </>
             )}
           </div>
         </div>

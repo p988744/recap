@@ -21,14 +21,18 @@ export function formatHours(hours: number): string {
 }
 
 // Format date in locale format
-export function formatDate(date: Date | string): string {
+export function formatDate(date: Date | string | null | undefined): string {
+  if (!date) return ''
   const d = typeof date === 'string' ? new Date(date) : date
+  if (isNaN(d.getTime())) return ''
   return d.toLocaleDateString('zh-TW', { month: 'short', day: 'numeric' })
 }
 
 // Format date with full detail
-export function formatDateFull(date: Date | string): string {
+export function formatDateFull(date: Date | string | null | undefined): string {
+  if (!date) return ''
   const d = typeof date === 'string' ? new Date(date) : date
+  if (isNaN(d.getTime())) return ''
   return d.toLocaleDateString('zh-TW', {
     year: 'numeric',
     month: 'long',
