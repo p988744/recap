@@ -413,6 +413,10 @@ pub fn build_rule_based_outcome(
 mod tests {
     use super::*;
 
+    // ========================================================================
+    // estimate_from_diff Tests
+    // ========================================================================
+
     #[test]
     fn test_estimate_from_diff_small_change() {
         // Small change: ~10 lines, 1 file
@@ -440,6 +444,29 @@ mod tests {
         let hours = estimate_from_diff(0, 0, 0);
         assert_eq!(hours, 0.25, "Empty commit should be 0.25h");
     }
+
+    #[test]
+    fn test_estimate_from_diff_only_additions() {
+        let hours = estimate_from_diff(50, 0, 1);
+        assert!(hours >= 0.25 && hours <= 2.0);
+    }
+
+    #[test]
+    fn test_estimate_from_diff_only_deletions() {
+        let hours = estimate_from_diff(0, 50, 1);
+        assert!(hours >= 0.25 && hours <= 2.0);
+    }
+
+    #[test]
+    fn test_estimate_from_diff_many_files() {
+        let hours = estimate_from_diff(10, 5, 10);
+        // Many files should add overhead
+        assert!(hours >= 1.0);
+    }
+
+    // ========================================================================
+    // estimate_commit_hours Tests
+    // ========================================================================
 
     #[test]
     fn test_estimate_commit_hours_user_override() {
@@ -473,12 +500,34 @@ mod tests {
     }
 
     #[test]
+    fn test_estimate_commit_hours_interval_too_short() {
+        // Gap less than 5 minutes should fallback to heuristic
+        let prev_time = DateTime::parse_from_rfc3339("2026-01-11T10:00:00+08:00").unwrap();
+        let time = DateTime::parse_from_rfc3339("2026-01-11T10:03:00+08:00").unwrap();
+        let estimate = estimate_commit_hours(&time, Some(&prev_time), None, 10, 5, 1, None);
+        assert_eq!(estimate.source, HoursSource::Heuristic);
+    }
+
+    #[test]
+    fn test_estimate_commit_hours_interval_too_long() {
+        // Gap more than 4 hours should fallback to heuristic
+        let prev_time = DateTime::parse_from_rfc3339("2026-01-11T08:00:00+08:00").unwrap();
+        let time = DateTime::parse_from_rfc3339("2026-01-11T14:00:00+08:00").unwrap();
+        let estimate = estimate_commit_hours(&time, Some(&prev_time), None, 10, 5, 1, None);
+        assert_eq!(estimate.source, HoursSource::Heuristic);
+    }
+
+    #[test]
     fn test_estimate_commit_hours_heuristic_fallback() {
         let time = DateTime::parse_from_rfc3339("2026-01-11T10:00:00+08:00").unwrap();
         let estimate = estimate_commit_hours(&time, None, None, 100, 10, 2, None);
         assert_eq!(estimate.source, HoursSource::Heuristic);
         assert!(estimate.hours > 0.0);
     }
+
+    // ========================================================================
+    // build_rule_based_outcome Tests
+    // ========================================================================
 
     #[test]
     fn test_build_rule_based_outcome_files() {
@@ -509,7 +558,49 @@ mod tests {
         assert!(outcome.contains("幫我實作登入功能"));
     }
 
-    // Tests for shared functions (used by Timeline and commit-centric worklog)
+    #[test]
+    fn test_build_rule_based_outcome_many_files() {
+        let files = vec![
+            "/path/to/file1.rs".to_string(),
+            "/path/to/file2.rs".to_string(),
+            "/path/to/file3.rs".to_string(),
+            "/path/to/file4.rs".to_string(),
+            "/path/to/file5.rs".to_string(),
+        ];
+        let outcome = build_rule_based_outcome(&files, &HashMap::new(), None);
+        // Should show first 3 files and "(+2)"
+        assert!(outcome.contains("(+2)"));
+    }
+
+    #[test]
+    fn test_build_rule_based_outcome_tool_low_count() {
+        // Tools with count < 3 should be filtered out
+        let mut tools = HashMap::new();
+        tools.insert("Edit".to_string(), 2);
+        let outcome = build_rule_based_outcome(&[], &tools, Some("Some message"));
+        // Should not contain Edit(2) since count < 3
+        assert!(!outcome.contains("Edit(2)"));
+    }
+
+    #[test]
+    fn test_build_rule_based_outcome_no_data() {
+        let outcome = build_rule_based_outcome(&[], &HashMap::new(), None);
+        assert_eq!(outcome, "工作 session");
+    }
+
+    #[test]
+    fn test_build_rule_based_outcome_long_message() {
+        let long_msg = "a".repeat(100);
+        let outcome = build_rule_based_outcome(&[], &HashMap::new(), Some(&long_msg));
+        // Should truncate and add "... (進行中)"
+        assert!(outcome.contains("..."));
+        assert!(outcome.contains("進行中"));
+        assert!(outcome.len() < 100);
+    }
+
+    // ========================================================================
+    // calculate_session_hours Tests
+    // ========================================================================
 
     #[test]
     fn test_calculate_session_hours_valid() {
@@ -548,6 +639,26 @@ mod tests {
     }
 
     #[test]
+    fn test_calculate_session_hours_partial_invalid() {
+        let hours = calculate_session_hours("2026-01-11T09:00:00+08:00", "invalid");
+        assert_eq!(hours, 0.5);
+    }
+
+    #[test]
+    fn test_calculate_session_hours_rounding() {
+        // 47 minutes should round to 0.75 hours
+        let hours = calculate_session_hours(
+            "2026-01-11T09:00:00+08:00",
+            "2026-01-11T09:47:00+08:00",
+        );
+        assert_eq!(hours, 0.75);
+    }
+
+    // ========================================================================
+    // get_commits_in_time_range Tests
+    // ========================================================================
+
+    #[test]
     fn test_get_commits_in_time_range_empty_path() {
         let commits = get_commits_in_time_range("", "2026-01-11T00:00:00+08:00", "2026-01-11T23:59:59+08:00");
         assert!(commits.is_empty(), "Empty path should return no commits");
@@ -557,5 +668,163 @@ mod tests {
     fn test_get_commits_in_time_range_nonexistent_path() {
         let commits = get_commits_in_time_range("/nonexistent/path", "2026-01-11T00:00:00+08:00", "2026-01-11T23:59:59+08:00");
         assert!(commits.is_empty(), "Nonexistent path should return no commits");
+    }
+
+    // ========================================================================
+    // get_commits_for_date Tests
+    // ========================================================================
+
+    #[test]
+    fn test_get_commits_for_date_nonexistent_path() {
+        let date = NaiveDate::from_ymd_opt(2026, 1, 15).unwrap();
+        let commits = get_commits_for_date("/nonexistent/path", &date);
+        assert!(commits.is_empty());
+    }
+
+    #[test]
+    fn test_get_commits_for_date_not_git_repo() {
+        // Using a temp directory that exists but is not a git repo
+        let commits = get_commits_for_date("/tmp", &NaiveDate::from_ymd_opt(2026, 1, 15).unwrap());
+        assert!(commits.is_empty());
+    }
+
+    // ========================================================================
+    // Struct Serialization Tests
+    // ========================================================================
+
+    #[test]
+    fn test_commit_record_serialization() {
+        let record = CommitRecord {
+            hash: "abc123def456".to_string(),
+            short_hash: "abc123d".to_string(),
+            message: "Fix bug".to_string(),
+            author: "John Doe".to_string(),
+            time: "2026-01-15T10:00:00+08:00".to_string(),
+            date: "2026-01-15".to_string(),
+            files_changed: vec![FileChange {
+                path: "src/main.rs".to_string(),
+                additions: 10,
+                deletions: 5,
+            }],
+            total_additions: 10,
+            total_deletions: 5,
+            hours: 1.5,
+            hours_source: "session".to_string(),
+            hours_estimated: 1.5,
+            related_session: None,
+        };
+
+        let json = serde_json::to_string(&record).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["hash"], "abc123def456");
+        assert_eq!(parsed["message"], "Fix bug");
+        assert_eq!(parsed["hours"], 1.5);
+    }
+
+    #[test]
+    fn test_file_change_serialization() {
+        let change = FileChange {
+            path: "src/lib.rs".to_string(),
+            additions: 20,
+            deletions: 10,
+        };
+
+        let json = serde_json::to_string(&change).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["path"], "src/lib.rs");
+        assert_eq!(parsed["additions"], 20);
+        assert_eq!(parsed["deletions"], 10);
+    }
+
+    #[test]
+    fn test_session_brief_serialization() {
+        let mut tools = HashMap::new();
+        tools.insert("Edit".to_string(), 5);
+
+        let session = SessionBrief {
+            session_id: "sess-123".to_string(),
+            hours: 2.0,
+            first_message: Some("Help me fix this".to_string()),
+            tools_used: tools,
+        };
+
+        let json = serde_json::to_string(&session).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["session_id"], "sess-123");
+        assert_eq!(parsed["hours"], 2.0);
+        assert_eq!(parsed["first_message"], "Help me fix this");
+    }
+
+    #[test]
+    fn test_standalone_session_serialization() {
+        let session = StandaloneSession {
+            session_id: "sess-456".to_string(),
+            project: "/home/user/project".to_string(),
+            start_time: "2026-01-15T10:00:00+08:00".to_string(),
+            end_time: "2026-01-15T12:00:00+08:00".to_string(),
+            hours: 2.0,
+            outcome: "修改: main.rs, lib.rs".to_string(),
+            outcome_source: "rule".to_string(),
+            tools_used: HashMap::new(),
+            files_modified: vec!["main.rs".to_string()],
+        };
+
+        let json = serde_json::to_string(&session).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["session_id"], "sess-456");
+        assert_eq!(parsed["project"], "/home/user/project");
+        assert_eq!(parsed["outcome_source"], "rule");
+    }
+
+    #[test]
+    fn test_daily_worklog_serialization() {
+        let worklog = DailyWorklog {
+            date: "2026-01-15".to_string(),
+            commits: vec![],
+            standalone_sessions: vec![],
+            total_commits: 5,
+            total_session_hours: 4.0,
+            total_estimated_hours: 6.0,
+        };
+
+        let json = serde_json::to_string(&worklog).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["date"], "2026-01-15");
+        assert_eq!(parsed["total_commits"], 5);
+        assert_eq!(parsed["total_estimated_hours"], 6.0);
+    }
+
+    #[test]
+    fn test_timeline_commit_serialization() {
+        let commit = TimelineCommit {
+            hash: "abc123".to_string(),
+            author: "Jane".to_string(),
+            time: "2026-01-15T10:00:00Z".to_string(),
+            message: "Add feature".to_string(),
+        };
+
+        let json = serde_json::to_string(&commit).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["hash"], "abc123");
+        assert_eq!(parsed["author"], "Jane");
+    }
+
+    #[test]
+    fn test_hours_estimate_clone() {
+        let estimate = HoursEstimate {
+            hours: 2.5,
+            source: HoursSource::Session,
+        };
+
+        let cloned = estimate.clone();
+
+        assert_eq!(estimate.hours, cloned.hours);
+        assert_eq!(estimate.source, cloned.source);
     }
 }

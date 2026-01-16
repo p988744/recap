@@ -537,11 +537,31 @@ fn format_jira_datetime(date_str: &str) -> String {
 mod tests {
     use super::*;
 
+    // ========================================================================
+    // format_jira_datetime Tests
+    // ========================================================================
+
     #[test]
     fn test_format_jira_datetime() {
         let result = format_jira_datetime("2025-12-31");
         assert_eq!(result, "2025-12-31T09:00:00.000+0800");
     }
+
+    #[test]
+    fn test_format_jira_datetime_different_dates() {
+        assert_eq!(
+            format_jira_datetime("2026-01-15"),
+            "2026-01-15T09:00:00.000+0800"
+        );
+        assert_eq!(
+            format_jira_datetime("2024-06-01"),
+            "2024-06-01T09:00:00.000+0800"
+        );
+    }
+
+    // ========================================================================
+    // JiraAuthType Tests
+    // ========================================================================
 
     #[test]
     fn test_jira_auth_type_from_str() {
@@ -550,5 +570,340 @@ mod tests {
         assert_eq!(JiraAuthType::from("basic"), JiraAuthType::Basic);
         assert_eq!(JiraAuthType::from("BASIC"), JiraAuthType::Basic);
         assert_eq!(JiraAuthType::from("unknown"), JiraAuthType::Pat);
+    }
+
+    #[test]
+    fn test_jira_auth_type_mixed_case() {
+        assert_eq!(JiraAuthType::from("Basic"), JiraAuthType::Basic);
+        assert_eq!(JiraAuthType::from("BASIC"), JiraAuthType::Basic);
+        assert_eq!(JiraAuthType::from("Pat"), JiraAuthType::Pat);
+    }
+
+    #[test]
+    fn test_jira_auth_type_default_to_pat() {
+        // Any unknown value should default to Pat
+        assert_eq!(JiraAuthType::from("token"), JiraAuthType::Pat);
+        assert_eq!(JiraAuthType::from("bearer"), JiraAuthType::Pat);
+        assert_eq!(JiraAuthType::from(""), JiraAuthType::Pat);
+    }
+
+    #[test]
+    fn test_jira_auth_type_equality() {
+        assert_eq!(JiraAuthType::Pat, JiraAuthType::Pat);
+        assert_eq!(JiraAuthType::Basic, JiraAuthType::Basic);
+        assert_ne!(JiraAuthType::Pat, JiraAuthType::Basic);
+    }
+
+    // ========================================================================
+    // JiraUser Tests
+    // ========================================================================
+
+    #[test]
+    fn test_jira_user_get_identifier_account_id() {
+        let user = JiraUser {
+            account_id: Some("123abc".to_string()),
+            name: Some("jdoe".to_string()),
+            key: Some("JIRAUSER123".to_string()),
+            display_name: Some("John Doe".to_string()),
+            email_address: Some("jdoe@example.com".to_string()),
+        };
+
+        // Should prefer accountId
+        assert_eq!(user.get_identifier(), Some("123abc".to_string()));
+    }
+
+    #[test]
+    fn test_jira_user_get_identifier_fallback_name() {
+        let user = JiraUser {
+            account_id: None,
+            name: Some("jdoe".to_string()),
+            key: Some("JIRAUSER123".to_string()),
+            display_name: Some("John Doe".to_string()),
+            email_address: None,
+        };
+
+        // Should fallback to name
+        assert_eq!(user.get_identifier(), Some("jdoe".to_string()));
+    }
+
+    #[test]
+    fn test_jira_user_get_identifier_fallback_key() {
+        let user = JiraUser {
+            account_id: None,
+            name: None,
+            key: Some("JIRAUSER123".to_string()),
+            display_name: Some("John Doe".to_string()),
+            email_address: None,
+        };
+
+        // Should fallback to key
+        assert_eq!(user.get_identifier(), Some("JIRAUSER123".to_string()));
+    }
+
+    #[test]
+    fn test_jira_user_get_identifier_none() {
+        let user = JiraUser {
+            account_id: None,
+            name: None,
+            key: None,
+            display_name: Some("John Doe".to_string()),
+            email_address: Some("jdoe@example.com".to_string()),
+        };
+
+        // Should return None if no identifier available
+        assert_eq!(user.get_identifier(), None);
+    }
+
+    #[test]
+    fn test_jira_user_deserialization() {
+        let json = r#"{
+            "accountId": "123abc",
+            "name": "jdoe",
+            "key": "JIRAUSER123",
+            "displayName": "John Doe",
+            "emailAddress": "jdoe@example.com"
+        }"#;
+
+        let user: JiraUser = serde_json::from_str(json).unwrap();
+
+        assert_eq!(user.account_id, Some("123abc".to_string()));
+        assert_eq!(user.name, Some("jdoe".to_string()));
+        assert_eq!(user.key, Some("JIRAUSER123".to_string()));
+        assert_eq!(user.display_name, Some("John Doe".to_string()));
+        assert_eq!(user.email_address, Some("jdoe@example.com".to_string()));
+    }
+
+    #[test]
+    fn test_jira_user_deserialization_partial() {
+        let json = r#"{"accountId": "123abc"}"#;
+
+        let user: JiraUser = serde_json::from_str(json).unwrap();
+
+        assert_eq!(user.account_id, Some("123abc".to_string()));
+        assert_eq!(user.name, None);
+        assert_eq!(user.key, None);
+    }
+
+    #[test]
+    fn test_jira_user_serialization() {
+        let user = JiraUser {
+            account_id: Some("123abc".to_string()),
+            name: Some("jdoe".to_string()),
+            key: None,
+            display_name: Some("John Doe".to_string()),
+            email_address: None,
+        };
+
+        let json = serde_json::to_string(&user).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["accountId"], "123abc");
+        assert_eq!(parsed["name"], "jdoe");
+        assert_eq!(parsed["displayName"], "John Doe");
+    }
+
+    // ========================================================================
+    // WorklogEntry Tests
+    // ========================================================================
+
+    #[test]
+    fn test_worklog_entry_creation() {
+        let entry = WorklogEntry {
+            issue_key: "PROJ-123".to_string(),
+            date: "2026-01-15".to_string(),
+            time_spent_seconds: 3600,
+            description: "Worked on feature X".to_string(),
+            account_id: Some("user123".to_string()),
+        };
+
+        assert_eq!(entry.issue_key, "PROJ-123");
+        assert_eq!(entry.time_spent_seconds, 3600);
+    }
+
+    #[test]
+    fn test_worklog_entry_serialization() {
+        let entry = WorklogEntry {
+            issue_key: "PROJ-123".to_string(),
+            date: "2026-01-15".to_string(),
+            time_spent_seconds: 7200,
+            description: "Code review".to_string(),
+            account_id: Some("acc123".to_string()),
+        };
+
+        let json = serde_json::to_string(&entry).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["issue_key"], "PROJ-123");
+        assert_eq!(parsed["date"], "2026-01-15");
+        assert_eq!(parsed["time_spent_seconds"], 7200);
+        assert_eq!(parsed["description"], "Code review");
+        assert_eq!(parsed["account_id"], "acc123");
+    }
+
+    #[test]
+    fn test_worklog_entry_deserialization() {
+        let json = r#"{
+            "issue_key": "PROJ-456",
+            "date": "2026-01-20",
+            "time_spent_seconds": 5400,
+            "description": "Bug fix",
+            "account_id": null
+        }"#;
+
+        let entry: WorklogEntry = serde_json::from_str(json).unwrap();
+
+        assert_eq!(entry.issue_key, "PROJ-456");
+        assert_eq!(entry.date, "2026-01-20");
+        assert_eq!(entry.time_spent_seconds, 5400);
+        assert_eq!(entry.description, "Bug fix");
+        assert_eq!(entry.account_id, None);
+    }
+
+    #[test]
+    fn test_worklog_entry_clone() {
+        let entry = WorklogEntry {
+            issue_key: "PROJ-123".to_string(),
+            date: "2026-01-15".to_string(),
+            time_spent_seconds: 3600,
+            description: "Test".to_string(),
+            account_id: None,
+        };
+
+        let cloned = entry.clone();
+
+        assert_eq!(entry.issue_key, cloned.issue_key);
+        assert_eq!(entry.time_spent_seconds, cloned.time_spent_seconds);
+    }
+
+    // ========================================================================
+    // WorklogResponse Tests
+    // ========================================================================
+
+    #[test]
+    fn test_worklog_response_serialization() {
+        let response = WorklogResponse {
+            id: Some("12345".to_string()),
+            tempo_worklog_id: Some(67890),
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["id"], "12345");
+        assert_eq!(parsed["tempoWorklogId"], 67890);
+    }
+
+    #[test]
+    fn test_worklog_response_deserialization() {
+        let json = r#"{"id": "abc123", "tempoWorklogId": 999}"#;
+
+        let response: WorklogResponse = serde_json::from_str(json).unwrap();
+
+        assert_eq!(response.id, Some("abc123".to_string()));
+        assert_eq!(response.tempo_worklog_id, Some(999));
+    }
+
+    #[test]
+    fn test_worklog_response_null_values() {
+        let response = WorklogResponse {
+            id: None,
+            tempo_worklog_id: None,
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert!(parsed["id"].is_null());
+        assert!(parsed["tempoWorklogId"].is_null());
+    }
+
+    // ========================================================================
+    // JiraIssue Tests
+    // ========================================================================
+
+    #[test]
+    fn test_jira_issue_deserialization() {
+        let json = r#"{
+            "key": "PROJ-123",
+            "fields": {
+                "summary": "Fix login bug",
+                "issuetype": {
+                    "name": "Bug"
+                }
+            }
+        }"#;
+
+        let issue: JiraIssue = serde_json::from_str(json).unwrap();
+
+        assert_eq!(issue.key, "PROJ-123");
+        assert_eq!(issue.fields.summary, Some("Fix login bug".to_string()));
+        assert_eq!(
+            issue.fields.issue_type.as_ref().map(|t| &t.name),
+            Some(&"Bug".to_string())
+        );
+    }
+
+    #[test]
+    fn test_jira_issue_serialization() {
+        let issue = JiraIssue {
+            key: "PROJ-456".to_string(),
+            fields: JiraIssueFields {
+                summary: Some("New feature".to_string()),
+                issue_type: Some(JiraIssueType {
+                    name: "Story".to_string(),
+                }),
+            },
+        };
+
+        let json = serde_json::to_string(&issue).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["key"], "PROJ-456");
+        assert_eq!(parsed["fields"]["summary"], "New feature");
+        assert_eq!(parsed["fields"]["issuetype"]["name"], "Story");
+    }
+
+    #[test]
+    fn test_jira_issue_fields_null_values() {
+        let json = r#"{
+            "key": "PROJ-789",
+            "fields": {
+                "summary": null,
+                "issuetype": null
+            }
+        }"#;
+
+        let issue: JiraIssue = serde_json::from_str(json).unwrap();
+
+        assert_eq!(issue.key, "PROJ-789");
+        assert_eq!(issue.fields.summary, None);
+        assert!(issue.fields.issue_type.is_none());
+    }
+
+    // ========================================================================
+    // JiraIssueType Tests
+    // ========================================================================
+
+    #[test]
+    fn test_jira_issue_type_serialization() {
+        let issue_type = JiraIssueType {
+            name: "Task".to_string(),
+        };
+
+        let json = serde_json::to_string(&issue_type).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["name"], "Task");
+    }
+
+    #[test]
+    fn test_jira_issue_type_clone() {
+        let issue_type = JiraIssueType {
+            name: "Epic".to_string(),
+        };
+
+        let cloned = issue_type.clone();
+
+        assert_eq!(issue_type.name, cloned.name);
     }
 }

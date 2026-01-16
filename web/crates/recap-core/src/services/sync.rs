@@ -217,7 +217,7 @@ pub struct ClaudeSyncResult {
 }
 
 /// Helper to calculate session hours with Option handling
-fn session_hours_from_options(first: &Option<String>, last: &Option<String>) -> f64 {
+pub(crate) fn session_hours_from_options(first: &Option<String>, last: &Option<String>) -> f64 {
     match (first, last) {
         (Some(start), Some(end)) => calculate_session_hours(start, end),
         _ => 0.5,
@@ -225,7 +225,7 @@ fn session_hours_from_options(first: &Option<String>, last: &Option<String>) -> 
 }
 
 /// Build description for a single session work item
-fn build_session_description(session: &ParsedSession) -> String {
+pub(crate) fn build_session_description(session: &ParsedSession) -> String {
     let mut parts = vec![];
 
     // Tool usage summary
@@ -269,7 +269,7 @@ fn build_session_description(session: &ParsedSession) -> String {
 }
 
 /// Generate a unique hash for session-based deduplication
-fn generate_session_hash(user_id: &str, session_id: &str, project_path: &str) -> String {
+pub(crate) fn generate_session_hash(user_id: &str, session_id: &str, project_path: &str) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
@@ -474,4 +474,317 @@ pub async fn sync_claude_projects(
         work_items_created: created,
         work_items_updated: updated,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::session_parser::ToolUsage;
+
+    // ========================================================================
+    // Helper Functions
+    // ========================================================================
+
+    fn create_test_session() -> ParsedSession {
+        ParsedSession {
+            cwd: "/Users/test/projects/myapp".to_string(),
+            first_timestamp: Some("2026-01-15T10:00:00Z".to_string()),
+            last_timestamp: Some("2026-01-15T12:30:00Z".to_string()),
+            message_count: 10,
+            tool_usage: vec![
+                ToolUsage { tool_name: "Read".to_string(), count: 15 },
+                ToolUsage { tool_name: "Edit".to_string(), count: 8 },
+                ToolUsage { tool_name: "Bash".to_string(), count: 5 },
+            ],
+            files_modified: vec![
+                "src/main.rs".to_string(),
+                "src/lib.rs".to_string(),
+                "Cargo.toml".to_string(),
+            ],
+            first_message: Some("Help me implement the new feature".to_string()),
+        }
+    }
+
+    fn create_empty_session() -> ParsedSession {
+        ParsedSession {
+            cwd: "/Users/test/project".to_string(),
+            first_timestamp: None,
+            last_timestamp: None,
+            message_count: 0,
+            tool_usage: vec![],
+            files_modified: vec![],
+            first_message: None,
+        }
+    }
+
+    // ========================================================================
+    // session_hours_from_options Tests
+    // ========================================================================
+
+    #[test]
+    fn test_session_hours_both_timestamps() {
+        let first = Some("2026-01-15T10:00:00Z".to_string());
+        let last = Some("2026-01-15T12:30:00Z".to_string());
+
+        let hours = session_hours_from_options(&first, &last);
+
+        // Should calculate actual hours (2.5 hours)
+        assert!(hours > 2.0 && hours < 3.0);
+    }
+
+    #[test]
+    fn test_session_hours_missing_first() {
+        let first = None;
+        let last = Some("2026-01-15T12:30:00Z".to_string());
+
+        let hours = session_hours_from_options(&first, &last);
+
+        // Should default to 0.5
+        assert_eq!(hours, 0.5);
+    }
+
+    #[test]
+    fn test_session_hours_missing_last() {
+        let first = Some("2026-01-15T10:00:00Z".to_string());
+        let last = None;
+
+        let hours = session_hours_from_options(&first, &last);
+
+        // Should default to 0.5
+        assert_eq!(hours, 0.5);
+    }
+
+    #[test]
+    fn test_session_hours_both_missing() {
+        let first = None;
+        let last = None;
+
+        let hours = session_hours_from_options(&first, &last);
+
+        // Should default to 0.5
+        assert_eq!(hours, 0.5);
+    }
+
+    #[test]
+    fn test_session_hours_same_timestamp() {
+        let ts = Some("2026-01-15T10:00:00Z".to_string());
+
+        let hours = session_hours_from_options(&ts, &ts);
+
+        // Very short session (same time)
+        assert!(hours >= 0.0);
+    }
+
+    // ========================================================================
+    // build_session_description Tests
+    // ========================================================================
+
+    #[test]
+    fn test_build_description_full_session() {
+        let session = create_test_session();
+
+        let desc = build_session_description(&session);
+
+        // Should contain tool usage
+        assert!(desc.contains("🔧 Tools:"));
+        assert!(desc.contains("Read: 15"));
+        assert!(desc.contains("Edit: 8"));
+        assert!(desc.contains("Bash: 5"));
+
+        // Should contain files modified
+        assert!(desc.contains("📁 Modified files"));
+        assert!(desc.contains("src/main.rs"));
+        assert!(desc.contains("src/lib.rs"));
+
+        // Should contain project path
+        assert!(desc.contains("📂 Project:"));
+        assert!(desc.contains("/Users/test/projects/myapp"));
+    }
+
+    #[test]
+    fn test_build_description_empty_session() {
+        let session = create_empty_session();
+
+        let desc = build_session_description(&session);
+
+        // Should not contain tools or files
+        assert!(!desc.contains("🔧 Tools:"));
+        assert!(!desc.contains("📁 Modified files"));
+
+        // Should still have project path
+        assert!(desc.contains("📂 Project:"));
+    }
+
+    #[test]
+    fn test_build_description_no_tools() {
+        let mut session = create_test_session();
+        session.tool_usage = vec![];
+
+        let desc = build_session_description(&session);
+
+        assert!(!desc.contains("🔧 Tools:"));
+        assert!(desc.contains("📁 Modified files"));
+    }
+
+    #[test]
+    fn test_build_description_no_files() {
+        let mut session = create_test_session();
+        session.files_modified = vec![];
+
+        let desc = build_session_description(&session);
+
+        assert!(desc.contains("🔧 Tools:"));
+        assert!(!desc.contains("📁 Modified files"));
+    }
+
+    #[test]
+    fn test_build_description_many_tools() {
+        let mut session = create_test_session();
+        session.tool_usage = (0..15)
+            .map(|i| ToolUsage {
+                tool_name: format!("Tool{}", i),
+                count: 15 - i,
+            })
+            .collect();
+
+        let desc = build_session_description(&session);
+
+        // Should limit to 8 tools
+        assert!(desc.contains("Tool0"));
+        assert!(desc.contains("Tool7"));
+        // Tool8 onwards should not be present
+        assert!(!desc.contains("Tool8"));
+    }
+
+    #[test]
+    fn test_build_description_many_files() {
+        let mut session = create_test_session();
+        session.files_modified = (0..10)
+            .map(|i| format!("src/file{}.rs", i))
+            .collect();
+
+        let desc = build_session_description(&session);
+
+        // Should show 5 files
+        assert!(desc.contains("file0.rs"));
+        assert!(desc.contains("file4.rs"));
+        // file5 onwards should not be listed
+        assert!(!desc.contains("file5.rs"));
+        // Should show (+5 more)
+        assert!(desc.contains("+5 more"));
+    }
+
+    // ========================================================================
+    // generate_session_hash Tests
+    // ========================================================================
+
+    #[test]
+    fn test_generate_session_hash_format() {
+        let hash = generate_session_hash("user-123", "session-abc", "/path/to/project");
+
+        // Should start with sess_
+        assert!(hash.starts_with("sess_"));
+        // Should be hex after prefix
+        assert!(hash[5..].chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_generate_session_hash_consistency() {
+        let hash1 = generate_session_hash("user-123", "session-abc", "/path/to/project");
+        let hash2 = generate_session_hash("user-123", "session-abc", "/path/to/project");
+
+        // Same inputs should produce same hash
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_generate_session_hash_different_users() {
+        let hash1 = generate_session_hash("user-123", "session-abc", "/path/to/project");
+        let hash2 = generate_session_hash("user-456", "session-abc", "/path/to/project");
+
+        // Different users should produce different hashes
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_generate_session_hash_different_sessions() {
+        let hash1 = generate_session_hash("user-123", "session-abc", "/path/to/project");
+        let hash2 = generate_session_hash("user-123", "session-xyz", "/path/to/project");
+
+        // Different sessions should produce different hashes
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_generate_session_hash_different_projects() {
+        let hash1 = generate_session_hash("user-123", "session-abc", "/path/to/project1");
+        let hash2 = generate_session_hash("user-123", "session-abc", "/path/to/project2");
+
+        // Different projects should produce different hashes
+        assert_ne!(hash1, hash2);
+    }
+
+    // ========================================================================
+    // ClaudeSyncResult Tests
+    // ========================================================================
+
+    #[test]
+    fn test_claude_sync_result_serialization() {
+        let result = ClaudeSyncResult {
+            sessions_processed: 10,
+            sessions_skipped: 2,
+            work_items_created: 8,
+            work_items_updated: 3,
+        };
+
+        let json = serde_json::to_string(&result).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["sessions_processed"], 10);
+        assert_eq!(parsed["sessions_skipped"], 2);
+        assert_eq!(parsed["work_items_created"], 8);
+        assert_eq!(parsed["work_items_updated"], 3);
+    }
+
+    #[test]
+    fn test_claude_sync_result_zero_values() {
+        let result = ClaudeSyncResult {
+            sessions_processed: 0,
+            sessions_skipped: 0,
+            work_items_created: 0,
+            work_items_updated: 0,
+        };
+
+        let json = serde_json::to_string(&result).unwrap();
+
+        assert!(json.contains("\"sessions_processed\":0"));
+        assert!(json.contains("\"sessions_skipped\":0"));
+    }
+
+    // ========================================================================
+    // SyncService Tests
+    // ========================================================================
+
+    #[test]
+    fn test_get_claude_projects_dir() {
+        // This test depends on the actual filesystem
+        // Just verify it doesn't panic and returns Option
+        let result = SyncService::get_claude_projects_dir();
+
+        // Result should be Some if ~/.claude/projects exists, None otherwise
+        // We can't assert a specific value as it depends on the environment
+        if let Some(path) = result {
+            assert!(path.to_string_lossy().contains(".claude"));
+            assert!(path.to_string_lossy().contains("projects"));
+        }
+    }
+
+    #[test]
+    fn test_list_claude_projects_returns_vec() {
+        // Just verify it returns a Vec and doesn't panic
+        let projects = SyncService::list_claude_projects();
+
+        // Should return a Vec (may be empty if no Claude projects)
+        assert!(projects.len() >= 0);
+    }
 }

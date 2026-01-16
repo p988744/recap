@@ -80,6 +80,38 @@ pub fn verify_password(password: &str, hash: &str) -> Result<bool, bcrypt::Bcryp
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
+
+    // ========================================================================
+    // Helper Functions
+    // ========================================================================
+
+    fn create_test_user() -> User {
+        User {
+            id: "user-123".to_string(),
+            email: "test@example.com".to_string(),
+            password_hash: "hash".to_string(),
+            name: "Test User".to_string(),
+            username: Some("testuser".to_string()),
+            employee_id: None,
+            department_id: None,
+            title: None,
+            gitlab_url: None,
+            gitlab_pat: None,
+            jira_url: None,
+            jira_email: None,
+            jira_pat: None,
+            tempo_token: None,
+            is_active: true,
+            is_admin: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    // ========================================================================
+    // Password Hashing Tests
+    // ========================================================================
 
     #[test]
     fn test_hash_password() {
@@ -95,5 +127,146 @@ mod tests {
         let hash = hash_password(password).unwrap();
         assert!(verify_password(password, &hash).unwrap());
         assert!(!verify_password("wrong_password", &hash).unwrap());
+    }
+
+    #[test]
+    fn test_hash_password_different_hashes() {
+        // Same password should produce different hashes (due to salt)
+        let password = "test_password";
+        let hash1 = hash_password(password).unwrap();
+        let hash2 = hash_password(password).unwrap();
+        assert_ne!(hash1, hash2);
+
+        // But both should verify correctly
+        assert!(verify_password(password, &hash1).unwrap());
+        assert!(verify_password(password, &hash2).unwrap());
+    }
+
+    #[test]
+    fn test_hash_password_empty_password() {
+        let password = "";
+        let hash = hash_password(password).unwrap();
+        assert!(!hash.is_empty());
+        assert!(verify_password(password, &hash).unwrap());
+    }
+
+    #[test]
+    fn test_hash_password_unicode() {
+        let password = "密碼測試🔐";
+        let hash = hash_password(password).unwrap();
+        assert!(verify_password(password, &hash).unwrap());
+        assert!(!verify_password("密碼測試", &hash).unwrap());
+    }
+
+    #[test]
+    fn test_verify_password_invalid_hash() {
+        let result = verify_password("password", "invalid_hash");
+        assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // JWT Token Tests
+    // ========================================================================
+
+    #[test]
+    fn test_create_token_success() {
+        let user = create_test_user();
+        let token = create_token(&user).unwrap();
+
+        // Token should be a non-empty string
+        assert!(!token.is_empty());
+
+        // Token should have three parts separated by dots (header.payload.signature)
+        let parts: Vec<&str> = token.split('.').collect();
+        assert_eq!(parts.len(), 3);
+    }
+
+    #[test]
+    fn test_verify_token_success() {
+        let user = create_test_user();
+        let token = create_token(&user).unwrap();
+
+        let claims = verify_token(&token).unwrap();
+
+        assert_eq!(claims.sub, "user-123");
+        assert_eq!(claims.email, "test@example.com");
+        assert!(claims.exp > Utc::now().timestamp());
+    }
+
+    #[test]
+    fn test_verify_token_roundtrip() {
+        let user = create_test_user();
+        let token = create_token(&user).unwrap();
+        let claims = verify_token(&token).unwrap();
+
+        // Claims should match user data
+        assert_eq!(claims.sub, user.id);
+        assert_eq!(claims.email, user.email);
+    }
+
+    #[test]
+    fn test_verify_token_invalid_token() {
+        let result = verify_token("invalid.token.here");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_verify_token_malformed_token() {
+        let result = verify_token("not-a-jwt");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_verify_token_empty_token() {
+        let result = verify_token("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_token_expiration_in_future() {
+        let user = create_test_user();
+        let token = create_token(&user).unwrap();
+        let claims = verify_token(&token).unwrap();
+
+        // Token should expire 7 days from now
+        let expected_exp = Utc::now()
+            .checked_add_signed(Duration::days(TOKEN_EXPIRY_DAYS))
+            .unwrap()
+            .timestamp();
+
+        // Allow 10 seconds tolerance
+        assert!((claims.exp - expected_exp).abs() < 10);
+    }
+
+    #[test]
+    fn test_create_token_different_users() {
+        let user1 = create_test_user();
+        let mut user2 = create_test_user();
+        user2.id = "user-456".to_string();
+        user2.email = "other@example.com".to_string();
+
+        let token1 = create_token(&user1).unwrap();
+        let token2 = create_token(&user2).unwrap();
+
+        // Different users should produce different tokens
+        assert_ne!(token1, token2);
+
+        // Each token should verify to correct user
+        let claims1 = verify_token(&token1).unwrap();
+        let claims2 = verify_token(&token2).unwrap();
+
+        assert_eq!(claims1.sub, "user-123");
+        assert_eq!(claims2.sub, "user-456");
+    }
+
+    #[test]
+    fn test_create_token_unicode_email() {
+        let mut user = create_test_user();
+        user.email = "用戶@example.com".to_string();
+
+        let token = create_token(&user).unwrap();
+        let claims = verify_token(&token).unwrap();
+
+        assert_eq!(claims.email, "用戶@example.com");
     }
 }

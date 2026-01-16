@@ -301,3 +301,338 @@ pub async fn create_llm_service(pool: &sqlx::SqlitePool, user_id: &str) -> Resul
 
     Ok(LlmService::new(config))
 }
+
+/// Parse LLM response into summary lines (exported for testing)
+pub(crate) fn parse_summary_response(response: &str) -> Vec<String> {
+    response
+        .lines()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty() && s.len() > 3)
+        .map(|s| s.trim_start_matches(|c: char| c.is_numeric() || c == '.' || c == '-' || c == '•' || c == '*').trim().to_string())
+        .filter(|s| !s.is_empty())
+        .take(5)
+        .collect()
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ========================================================================
+    // LlmConfig Tests
+    // ========================================================================
+
+    #[test]
+    fn test_llm_config_creation() {
+        let config = LlmConfig {
+            provider: "openai".to_string(),
+            model: "gpt-4".to_string(),
+            api_key: Some("sk-test".to_string()),
+            base_url: None,
+        };
+
+        assert_eq!(config.provider, "openai");
+        assert_eq!(config.model, "gpt-4");
+        assert_eq!(config.api_key, Some("sk-test".to_string()));
+        assert!(config.base_url.is_none());
+    }
+
+    #[test]
+    fn test_llm_config_with_custom_base_url() {
+        let config = LlmConfig {
+            provider: "openai-compatible".to_string(),
+            model: "custom-model".to_string(),
+            api_key: Some("key".to_string()),
+            base_url: Some("https://custom-api.example.com".to_string()),
+        };
+
+        assert_eq!(config.provider, "openai-compatible");
+        assert_eq!(config.base_url, Some("https://custom-api.example.com".to_string()));
+    }
+
+    // ========================================================================
+    // LlmService Tests
+    // ========================================================================
+
+    #[test]
+    fn test_llm_service_new() {
+        let config = LlmConfig {
+            provider: "openai".to_string(),
+            model: "gpt-4".to_string(),
+            api_key: Some("sk-test".to_string()),
+            base_url: None,
+        };
+
+        let service = LlmService::new(config);
+        assert!(service.is_configured());
+    }
+
+    #[test]
+    fn test_is_configured_openai_with_key() {
+        let config = LlmConfig {
+            provider: "openai".to_string(),
+            model: "gpt-4".to_string(),
+            api_key: Some("sk-test".to_string()),
+            base_url: None,
+        };
+
+        let service = LlmService::new(config);
+        assert!(service.is_configured());
+    }
+
+    #[test]
+    fn test_is_configured_openai_without_key() {
+        let config = LlmConfig {
+            provider: "openai".to_string(),
+            model: "gpt-4".to_string(),
+            api_key: None,
+            base_url: None,
+        };
+
+        let service = LlmService::new(config);
+        assert!(!service.is_configured());
+    }
+
+    #[test]
+    fn test_is_configured_anthropic_with_key() {
+        let config = LlmConfig {
+            provider: "anthropic".to_string(),
+            model: "claude-3".to_string(),
+            api_key: Some("sk-ant-test".to_string()),
+            base_url: None,
+        };
+
+        let service = LlmService::new(config);
+        assert!(service.is_configured());
+    }
+
+    #[test]
+    fn test_is_configured_anthropic_without_key() {
+        let config = LlmConfig {
+            provider: "anthropic".to_string(),
+            model: "claude-3".to_string(),
+            api_key: None,
+            base_url: None,
+        };
+
+        let service = LlmService::new(config);
+        assert!(!service.is_configured());
+    }
+
+    #[test]
+    fn test_is_configured_ollama_no_key_required() {
+        let config = LlmConfig {
+            provider: "ollama".to_string(),
+            model: "llama2".to_string(),
+            api_key: None,
+            base_url: Some("http://localhost:11434".to_string()),
+        };
+
+        let service = LlmService::new(config);
+        // Ollama doesn't require API key
+        assert!(service.is_configured());
+    }
+
+    #[test]
+    fn test_is_configured_openai_compatible_with_key() {
+        let config = LlmConfig {
+            provider: "openai-compatible".to_string(),
+            model: "custom".to_string(),
+            api_key: Some("key".to_string()),
+            base_url: Some("https://api.example.com".to_string()),
+        };
+
+        let service = LlmService::new(config);
+        assert!(service.is_configured());
+    }
+
+    #[test]
+    fn test_is_configured_openai_compatible_without_key() {
+        let config = LlmConfig {
+            provider: "openai-compatible".to_string(),
+            model: "custom".to_string(),
+            api_key: None,
+            base_url: Some("https://api.example.com".to_string()),
+        };
+
+        let service = LlmService::new(config);
+        assert!(!service.is_configured());
+    }
+
+    // ========================================================================
+    // Response Parsing Tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_summary_response_basic() {
+        let response = "實作用戶認證功能\n優化資料庫查詢效能\n修復表單驗證錯誤";
+        let summaries = parse_summary_response(response);
+
+        assert_eq!(summaries.len(), 3);
+        assert_eq!(summaries[0], "實作用戶認證功能");
+        assert_eq!(summaries[1], "優化資料庫查詢效能");
+        assert_eq!(summaries[2], "修復表單驗證錯誤");
+    }
+
+    #[test]
+    fn test_parse_summary_response_with_numbers() {
+        let response = "1. 實作用戶認證功能\n2. 優化資料庫查詢\n3. 修復錯誤";
+        let summaries = parse_summary_response(response);
+
+        assert_eq!(summaries.len(), 3);
+        assert_eq!(summaries[0], "實作用戶認證功能");
+        assert_eq!(summaries[1], "優化資料庫查詢");
+        assert_eq!(summaries[2], "修復錯誤");
+    }
+
+    #[test]
+    fn test_parse_summary_response_with_bullets() {
+        let response = "• 實作功能\n- 優化效能\n* 修復錯誤";
+        let summaries = parse_summary_response(response);
+
+        assert_eq!(summaries.len(), 3);
+        assert_eq!(summaries[0], "實作功能");
+        assert_eq!(summaries[1], "優化效能");
+        assert_eq!(summaries[2], "修復錯誤");
+    }
+
+    #[test]
+    fn test_parse_summary_response_filters_short() {
+        let response = "實作用戶認證功能\nab\nc\n優化資料庫";
+        let summaries = parse_summary_response(response);
+
+        // Should filter out "ab" and "c" (too short)
+        assert_eq!(summaries.len(), 2);
+        assert_eq!(summaries[0], "實作用戶認證功能");
+        assert_eq!(summaries[1], "優化資料庫");
+    }
+
+    #[test]
+    fn test_parse_summary_response_filters_empty_lines() {
+        let response = "實作功能\n\n\n優化效能\n   \n修復錯誤";
+        let summaries = parse_summary_response(response);
+
+        assert_eq!(summaries.len(), 3);
+    }
+
+    #[test]
+    fn test_parse_summary_response_max_five() {
+        let response = "項目1\n項目2\n項目3\n項目4\n項目5\n項目6\n項目7";
+        let summaries = parse_summary_response(response);
+
+        // Should only return first 5
+        assert_eq!(summaries.len(), 5);
+    }
+
+    #[test]
+    fn test_parse_summary_response_trims_whitespace() {
+        let response = "  實作功能  \n\t優化效能\t\n  修復錯誤  ";
+        let summaries = parse_summary_response(response);
+
+        assert_eq!(summaries.len(), 3);
+        assert_eq!(summaries[0], "實作功能");
+        assert_eq!(summaries[1], "優化效能");
+        assert_eq!(summaries[2], "修復錯誤");
+    }
+
+    #[test]
+    fn test_parse_summary_response_empty() {
+        let response = "";
+        let summaries = parse_summary_response(response);
+        assert!(summaries.is_empty());
+    }
+
+    #[test]
+    fn test_parse_summary_response_only_short_lines() {
+        let response = "a\nb\nc\nd";
+        let summaries = parse_summary_response(response);
+        assert!(summaries.is_empty());
+    }
+
+    #[test]
+    fn test_parse_summary_response_mixed_prefixes() {
+        let response = "1. 項目一\n• 項目二\n- 項目三\n* 項目四\n項目五";
+        let summaries = parse_summary_response(response);
+
+        assert_eq!(summaries.len(), 5);
+        // All should have prefixes removed
+        for summary in &summaries {
+            assert!(!summary.starts_with('1'));
+            assert!(!summary.starts_with('.'));
+            assert!(!summary.starts_with('•'));
+            assert!(!summary.starts_with('-'));
+            assert!(!summary.starts_with('*'));
+        }
+    }
+
+    // ========================================================================
+    // Request/Response Struct Tests
+    // ========================================================================
+
+    #[test]
+    fn test_openai_request_serialization() {
+        let request = OpenAIRequest {
+            model: "gpt-4".to_string(),
+            messages: vec![OpenAIMessage {
+                role: "user".to_string(),
+                content: "Hello".to_string(),
+            }],
+            max_tokens: 500,
+            temperature: 0.3,
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains("\"model\":\"gpt-4\""));
+        assert!(json.contains("\"max_tokens\":500"));
+        assert!(json.contains("\"role\":\"user\""));
+    }
+
+    #[test]
+    fn test_openai_response_deserialization() {
+        let json = r#"{
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Hello, how can I help?"
+                }
+            }]
+        }"#;
+
+        let response: OpenAIResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.choices.len(), 1);
+        assert_eq!(response.choices[0].message.content, "Hello, how can I help?");
+    }
+
+    #[test]
+    fn test_anthropic_request_serialization() {
+        let request = AnthropicRequest {
+            model: "claude-3".to_string(),
+            max_tokens: 500,
+            messages: vec![AnthropicMessage {
+                role: "user".to_string(),
+                content: "Hello".to_string(),
+            }],
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains("\"model\":\"claude-3\""));
+        assert!(json.contains("\"max_tokens\":500"));
+    }
+
+    #[test]
+    fn test_anthropic_response_deserialization() {
+        let json = r#"{
+            "content": [{
+                "text": "Hello, I'm Claude."
+            }]
+        }"#;
+
+        let response: AnthropicResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.content.len(), 1);
+        assert_eq!(response.content[0].text, "Hello, I'm Claude.");
+    }
+}

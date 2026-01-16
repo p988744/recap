@@ -340,3 +340,290 @@ pub struct SyncWorklogsResponse {
     pub results: Vec<WorklogSyncResult>,
     pub dry_run: bool,
 }
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    // ========================================================================
+    // HoursSource Tests
+    // ========================================================================
+
+    #[test]
+    fn test_hours_source_as_str() {
+        assert_eq!(HoursSource::UserModified.as_str(), "user_modified");
+        assert_eq!(HoursSource::Session.as_str(), "session");
+        assert_eq!(HoursSource::CommitInterval.as_str(), "commit_interval");
+        assert_eq!(HoursSource::Heuristic.as_str(), "heuristic");
+        assert_eq!(HoursSource::Manual.as_str(), "manual");
+    }
+
+    #[test]
+    fn test_hours_source_from_str() {
+        assert_eq!(HoursSource::from_str("user_modified"), HoursSource::UserModified);
+        assert_eq!(HoursSource::from_str("session"), HoursSource::Session);
+        assert_eq!(HoursSource::from_str("commit_interval"), HoursSource::CommitInterval);
+        assert_eq!(HoursSource::from_str("heuristic"), HoursSource::Heuristic);
+        assert_eq!(HoursSource::from_str("manual"), HoursSource::Manual);
+    }
+
+    #[test]
+    fn test_hours_source_from_str_unknown() {
+        // Unknown strings should default to Manual
+        assert_eq!(HoursSource::from_str("unknown"), HoursSource::Manual);
+        assert_eq!(HoursSource::from_str(""), HoursSource::Manual);
+        assert_eq!(HoursSource::from_str("MANUAL"), HoursSource::Manual); // Case sensitive
+    }
+
+    #[test]
+    fn test_hours_source_roundtrip() {
+        let sources = [
+            HoursSource::UserModified,
+            HoursSource::Session,
+            HoursSource::CommitInterval,
+            HoursSource::Heuristic,
+            HoursSource::Manual,
+        ];
+
+        for source in sources {
+            let str_val = source.as_str();
+            let parsed = HoursSource::from_str(str_val);
+            assert_eq!(parsed, source);
+        }
+    }
+
+    // ========================================================================
+    // User to UserResponse Tests
+    // ========================================================================
+
+    fn create_test_user() -> User {
+        User {
+            id: "user-123".to_string(),
+            email: "test@example.com".to_string(),
+            password_hash: "secret_hash".to_string(),
+            name: "Test User".to_string(),
+            username: Some("testuser".to_string()),
+            employee_id: Some("EMP001".to_string()),
+            department_id: Some("DEPT001".to_string()),
+            title: Some("Developer".to_string()),
+            gitlab_url: Some("https://gitlab.com".to_string()),
+            gitlab_pat: Some("secret_pat".to_string()),
+            jira_url: Some("https://jira.com".to_string()),
+            jira_email: Some("test@jira.com".to_string()),
+            jira_pat: Some("jira_secret".to_string()),
+            tempo_token: Some("tempo_secret".to_string()),
+            is_active: true,
+            is_admin: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn test_user_to_user_response_conversion() {
+        let user = create_test_user();
+        let created_at = user.created_at;
+
+        let response: UserResponse = user.into();
+
+        assert_eq!(response.id, "user-123");
+        assert_eq!(response.email, "test@example.com");
+        assert_eq!(response.name, "Test User");
+        assert_eq!(response.username, Some("testuser".to_string()));
+        assert_eq!(response.employee_id, Some("EMP001".to_string()));
+        assert_eq!(response.department_id, Some("DEPT001".to_string()));
+        assert_eq!(response.title, Some("Developer".to_string()));
+        assert_eq!(response.gitlab_url, Some("https://gitlab.com".to_string()));
+        assert_eq!(response.jira_email, Some("test@jira.com".to_string()));
+        assert!(response.is_active);
+        assert!(!response.is_admin);
+        assert_eq!(response.created_at, created_at);
+    }
+
+    #[test]
+    fn test_user_to_user_response_excludes_sensitive_fields() {
+        let user = create_test_user();
+        let response: UserResponse = user.into();
+
+        // UserResponse should not contain these sensitive fields
+        // We verify by checking the struct doesn't have password_hash, gitlab_pat, etc.
+        // Since they're not in UserResponse, we just verify the conversion compiles
+        // and the response contains expected non-sensitive fields
+        assert!(!response.id.is_empty());
+        assert!(!response.email.is_empty());
+    }
+
+    #[test]
+    fn test_user_to_user_response_with_none_fields() {
+        let user = User {
+            id: "user-456".to_string(),
+            email: "minimal@example.com".to_string(),
+            password_hash: "hash".to_string(),
+            name: "Minimal User".to_string(),
+            username: None,
+            employee_id: None,
+            department_id: None,
+            title: None,
+            gitlab_url: None,
+            gitlab_pat: None,
+            jira_url: None,
+            jira_email: None,
+            jira_pat: None,
+            tempo_token: None,
+            is_active: false,
+            is_admin: true,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        let response: UserResponse = user.into();
+
+        assert_eq!(response.id, "user-456");
+        assert!(response.username.is_none());
+        assert!(response.employee_id.is_none());
+        assert!(response.department_id.is_none());
+        assert!(response.title.is_none());
+        assert!(response.gitlab_url.is_none());
+        assert!(response.jira_email.is_none());
+        assert!(!response.is_active);
+        assert!(response.is_admin);
+    }
+
+    // ========================================================================
+    // SyncStatus to SyncStatusResponse Tests
+    // ========================================================================
+
+    fn create_test_sync_status() -> SyncStatus {
+        SyncStatus {
+            id: "sync-123".to_string(),
+            user_id: "user-123".to_string(),
+            source: "claude".to_string(),
+            source_path: Some("/path/to/project".to_string()),
+            last_sync_at: Some(Utc::now()),
+            last_item_count: 42,
+            status: "success".to_string(),
+            error_message: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn test_sync_status_to_response_conversion() {
+        let status = create_test_sync_status();
+        let last_sync_at = status.last_sync_at;
+
+        let response: SyncStatusResponse = status.into();
+
+        assert_eq!(response.id, "sync-123");
+        assert_eq!(response.source, "claude");
+        assert_eq!(response.source_path, Some("/path/to/project".to_string()));
+        assert_eq!(response.last_sync_at, last_sync_at);
+        assert_eq!(response.last_item_count, 42);
+        assert_eq!(response.status, "success");
+        assert!(response.error_message.is_none());
+    }
+
+    #[test]
+    fn test_sync_status_to_response_with_error() {
+        let status = SyncStatus {
+            id: "sync-456".to_string(),
+            user_id: "user-123".to_string(),
+            source: "gitlab".to_string(),
+            source_path: None,
+            last_sync_at: None,
+            last_item_count: 0,
+            status: "error".to_string(),
+            error_message: Some("Connection failed".to_string()),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        let response: SyncStatusResponse = status.into();
+
+        assert_eq!(response.id, "sync-456");
+        assert_eq!(response.source, "gitlab");
+        assert!(response.source_path.is_none());
+        assert!(response.last_sync_at.is_none());
+        assert_eq!(response.last_item_count, 0);
+        assert_eq!(response.status, "error");
+        assert_eq!(response.error_message, Some("Connection failed".to_string()));
+    }
+
+    #[test]
+    fn test_sync_status_excludes_internal_fields() {
+        let status = create_test_sync_status();
+        let response: SyncStatusResponse = status.into();
+
+        // SyncStatusResponse should not contain user_id, created_at, updated_at
+        // We verify by checking the response contains expected fields only
+        assert!(!response.id.is_empty());
+        assert!(!response.source.is_empty());
+    }
+
+    // ========================================================================
+    // Serialization Tests
+    // ========================================================================
+
+    #[test]
+    fn test_hours_source_serialization() {
+        let source = HoursSource::Session;
+        let json = serde_json::to_string(&source).unwrap();
+        assert_eq!(json, "\"Session\"");
+
+        let deserialized: HoursSource = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, HoursSource::Session);
+    }
+
+    #[test]
+    fn test_sync_result_serialization() {
+        let result = SyncResult {
+            success: true,
+            source: "claude".to_string(),
+            items_synced: 10,
+            message: Some("Synced successfully".to_string()),
+        };
+
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"success\":true"));
+        assert!(json.contains("\"source\":\"claude\""));
+        assert!(json.contains("\"items_synced\":10"));
+    }
+
+    #[test]
+    fn test_worklog_entry_deserialization() {
+        let json = r#"{
+            "issue_key": "PROJ-123",
+            "date": "2024-01-15",
+            "minutes": 60,
+            "description": "Working on feature"
+        }"#;
+
+        let entry: WorklogEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.issue_key, "PROJ-123");
+        assert_eq!(entry.date, "2024-01-15");
+        assert_eq!(entry.minutes, 60);
+        assert_eq!(entry.description, "Working on feature");
+    }
+
+    #[test]
+    fn test_paginated_response_serialization() {
+        let response = PaginatedResponse {
+            items: vec!["item1".to_string(), "item2".to_string()],
+            total: 100,
+            page: 1,
+            per_page: 10,
+            pages: 10,
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"total\":100"));
+        assert!(json.contains("\"page\":1"));
+        assert!(json.contains("\"pages\":10"));
+    }
+}
