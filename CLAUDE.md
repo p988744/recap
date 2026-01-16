@@ -703,20 +703,24 @@ services/
 
 ### Current Status
 
-**需要重構的大型檔案：**
+**重構完成狀態：**
 
-| 檔案 | 行數 | 上限 | 優先級 | 狀態 |
-|------|------|------|--------|------|
-| `work_items.rs` | 2295 | 300 | P0 | 🔴 待處理 |
-| `Settings.tsx` | 1562 | 200 | P0 | 🔴 待處理 |
-| `WorkItems.tsx` | 1263 | 200 | P1 | 🔴 待處理 |
-| `reports.rs` | 942 | 300 | P1 | 🔴 待處理 |
-| `claude.rs` | 855 | 300 | P2 | 🔴 待處理 |
-| `Reports.tsx` | 841 | 200 | P2 | 🔴 待處理 |
-| `auth.rs` | 766 | 300 | P2 | 🔴 待處理 |
-| `Dashboard.tsx` | 655 | 200 | P3 | 🔴 待處理 |
-| `gitlab.rs` | 572 | 300 | P3 | 🔴 待處理 |
-| `sources.rs` | 473 | 300 | P3 | 🔴 待處理 |
+| 檔案 | 原行數 | 拆分後 | 狀態 |
+|------|--------|--------|------|
+| `work_items.rs` | 2295 | 6 個檔案 | ✅ 已完成 |
+| `Settings.tsx` | 1562 | 8 個檔案 | ✅ 已完成 |
+| `WorkItems.tsx` | 1263 | 17 個檔案 | ✅ 已完成 |
+| `reports.rs` | 942 | 5 個檔案 | ✅ 已完成 |
+| `Reports.tsx` | 841 | 8 個檔案 | ✅ 已完成 |
+| `auth.rs` | 766 | 6 個檔案 | ✅ 已完成 |
+| `Dashboard.tsx` | 655 | 10 個檔案 | ✅ 已完成 |
+| `gitlab.rs` | 572 | 5 個檔案 | ✅ 已完成 |
+| `sources.rs` | 473 | 5 個檔案 | ✅ 已完成 |
+
+**測試覆蓋：**
+- Frontend: 98 tests (Vitest)
+- Backend: 167 tests (Rust #[test])
+- CI: GitHub Actions (rust-ci.yml, frontend-ci.yml)
 
 ### Phase 1: Foundation (Week 1)
 
@@ -801,11 +805,11 @@ pages/Settings/
 | [#5](https://github.com/p988744/recap/issues/5) | [Core] recap-core 單元測試 | 🟡 進行中 |
 
 ```
-Phase 1: 🟩🟩⬜ 66%  (1.1 ✅ 1.2 ✅ 1.3 ⏳)
-Phase 2: ⬜⬜⬜ 0%
-Phase 3: ⬜⬜⬜ 0%
-Phase 4: ⬜⬜⬜ 0%
-Overall:  ~15% complete
+Phase 1: ✅✅✅ 100% (測試基礎已建立)
+Phase 2: ✅✅✅ 100% (Rust 模組已重構)
+Phase 3: ✅✅✅ 100% (React 頁面已重構)
+Phase 4: ✅✅✅ 100% (收尾工作已完成)
+Overall: 100% complete
 ```
 
 **PR 關聯 Issue 方式：**
@@ -814,5 +818,4 @@ Overall:  ~15% complete
 Closes #1   # 合併後自動關閉 Issue
 Refs #2     # 僅關聯，不自動關閉
 ```
-
 > 更新日期：2026-01-16
