@@ -114,7 +114,7 @@ pub use recap_core::services::ClaudeSyncResult as SyncResult;
 
 // Helper functions
 
-fn get_claude_home() -> Option<PathBuf> {
+pub(crate) fn get_claude_home() -> Option<PathBuf> {
     std::env::var("HOME")
         .ok()
         .map(|h| PathBuf::from(h).join(".claude"))
@@ -124,7 +124,7 @@ fn get_claude_home() -> Option<PathBuf> {
 // are imported from crate::services
 
 /// Helper to calculate session hours with Option handling
-fn session_hours_from_options(first: &Option<String>, last: &Option<String>) -> f64 {
+pub(crate) fn session_hours_from_options(first: &Option<String>, last: &Option<String>) -> f64 {
     match (first, last) {
         (Some(start), Some(end)) => calculate_session_hours(start, end),
         _ => 0.5,
@@ -277,7 +277,7 @@ fn parse_session_file(path: &PathBuf) -> Option<ClaudeSession> {
     })
 }
 
-fn build_session_description(session: &ClaudeSession, hours: f64) -> String {
+pub(crate) fn build_session_description(session: &ClaudeSession, hours: f64) -> String {
     let mut desc_parts = vec![
         format!("📁 Project: {}", session.cwd),
         format!("🌿 Branch: {}", session.git_branch.as_deref().unwrap_or("N/A")),
@@ -326,7 +326,7 @@ fn build_session_description(session: &ClaudeSession, hours: f64) -> String {
 
 // get_git_commits_for_date and build_daily_description moved to services/sync.rs
 
-fn extract_session_content(path: &PathBuf) -> String {
+pub(crate) fn extract_session_content(path: &PathBuf) -> String {
     let file = match fs::File::open(path) {
         Ok(f) => f,
         Err(_) => return String::new(),
@@ -631,4 +631,225 @@ pub async fn sync_claude_projects(
 
     // Delegate to service layer
     crate::services::sync_claude_projects(&db.pool, &claims.sub, &request.project_paths).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    // ==================== get_claude_home Tests ====================
+
+    #[test]
+    fn test_get_claude_home() {
+        // This test verifies the function works without crashing
+        // Result depends on whether HOME env var is set
+        let result = get_claude_home();
+        if let Some(path) = result {
+            assert!(path.to_string_lossy().contains(".claude"));
+        }
+        // If HOME not set, result will be None
+    }
+
+    // ==================== session_hours_from_options Tests ====================
+
+    #[test]
+    fn test_session_hours_from_options_valid() {
+        let first = Some("2024-01-15T09:00:00+08:00".to_string());
+        let last = Some("2024-01-15T11:00:00+08:00".to_string());
+        let hours = session_hours_from_options(&first, &last);
+        // Should be 2 hours
+        assert!((hours - 2.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_session_hours_from_options_none_first() {
+        let first = None;
+        let last = Some("2024-01-15T11:00:00+08:00".to_string());
+        let hours = session_hours_from_options(&first, &last);
+        assert!((hours - 0.5).abs() < 0.01); // Default 0.5
+    }
+
+    #[test]
+    fn test_session_hours_from_options_none_last() {
+        let first = Some("2024-01-15T09:00:00+08:00".to_string());
+        let last = None;
+        let hours = session_hours_from_options(&first, &last);
+        assert!((hours - 0.5).abs() < 0.01); // Default 0.5
+    }
+
+    #[test]
+    fn test_session_hours_from_options_both_none() {
+        let hours = session_hours_from_options(&None, &None);
+        assert!((hours - 0.5).abs() < 0.01); // Default 0.5
+    }
+
+    // ==================== build_session_description Tests ====================
+
+    fn create_test_session() -> ClaudeSession {
+        ClaudeSession {
+            session_id: "test-session-123".to_string(),
+            agent_id: "agent-1".to_string(),
+            slug: "test-slug".to_string(),
+            file_path: "/tmp/test.jsonl".to_string(),
+            cwd: "/home/user/project".to_string(),
+            git_branch: Some("main".to_string()),
+            first_timestamp: Some("2024-01-15T09:00:00+08:00".to_string()),
+            last_timestamp: Some("2024-01-15T11:00:00+08:00".to_string()),
+            first_message: Some("Help me fix a bug".to_string()),
+            message_count: 10,
+            file_size: 1024,
+            tool_usage: vec![],
+            files_modified: vec![],
+            commands_run: vec![],
+            user_messages: vec!["Help me fix a bug".to_string()],
+        }
+    }
+
+    #[test]
+    fn test_build_session_description_basic() {
+        let session = create_test_session();
+        let desc = build_session_description(&session, 2.0);
+
+        assert!(desc.contains("📁 Project: /home/user/project"));
+        assert!(desc.contains("🌿 Branch: main"));
+        assert!(desc.contains("💬 Messages: 10"));
+        assert!(desc.contains("⏱️ Duration: 2.0h"));
+    }
+
+    #[test]
+    fn test_build_session_description_with_files() {
+        let mut session = create_test_session();
+        session.files_modified = vec![
+            "src/main.rs".to_string(),
+            "src/lib.rs".to_string(),
+        ];
+
+        let desc = build_session_description(&session, 1.5);
+
+        assert!(desc.contains("📝 Files Modified"));
+        assert!(desc.contains("src/main.rs"));
+        assert!(desc.contains("src/lib.rs"));
+    }
+
+    #[test]
+    fn test_build_session_description_with_tools() {
+        let mut session = create_test_session();
+        session.tool_usage = vec![
+            ToolUsage { tool_name: "Edit".to_string(), count: 5, details: vec![] },
+            ToolUsage { tool_name: "Read".to_string(), count: 10, details: vec![] },
+        ];
+
+        let desc = build_session_description(&session, 1.0);
+
+        assert!(desc.contains("🔧 Tools:"));
+        assert!(desc.contains("Edit: 5"));
+        assert!(desc.contains("Read: 10"));
+    }
+
+    #[test]
+    fn test_build_session_description_with_commands() {
+        let mut session = create_test_session();
+        session.commands_run = vec![
+            "cargo test".to_string(),
+            "cargo build".to_string(),
+        ];
+
+        let desc = build_session_description(&session, 1.0);
+
+        assert!(desc.contains("💻 Commands:"));
+        assert!(desc.contains("$ cargo test"));
+        assert!(desc.contains("$ cargo build"));
+    }
+
+    #[test]
+    fn test_build_session_description_with_user_messages() {
+        let mut session = create_test_session();
+        session.user_messages = vec!["Help me implement authentication".to_string()];
+
+        let desc = build_session_description(&session, 1.0);
+
+        assert!(desc.contains("📋 Initial Request:"));
+        assert!(desc.contains("Help me implement authentication"));
+    }
+
+    #[test]
+    fn test_build_session_description_no_branch() {
+        let mut session = create_test_session();
+        session.git_branch = None;
+
+        let desc = build_session_description(&session, 1.0);
+
+        assert!(desc.contains("🌿 Branch: N/A"));
+    }
+
+    // ==================== extract_session_content Tests ====================
+
+    #[test]
+    fn test_extract_session_content_valid_file() {
+        let content = r#"{"timestamp":"2024-01-15T09:00:00+08:00","message":{"role":"user","content":"Help me fix a bug in the authentication module"}}
+{"timestamp":"2024-01-15T09:01:00+08:00","message":{"role":"assistant","content":"Sure, let me help you."}}
+{"timestamp":"2024-01-15T09:02:00+08:00","message":{"role":"user","content":"The token validation is not working correctly"}}"#;
+
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+        let path = file.path().to_path_buf();
+
+        let result = extract_session_content(&path);
+
+        assert!(result.contains("User: Help me fix a bug"));
+        assert!(result.contains("User: The token validation"));
+        // Assistant messages should not be included
+        assert!(!result.contains("Sure, let me help"));
+    }
+
+    #[test]
+    fn test_extract_session_content_nonexistent_file() {
+        let path = PathBuf::from("/nonexistent/path/file.jsonl");
+        let result = extract_session_content(&path);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_extract_session_content_filters_warmup() {
+        let content = r#"{"timestamp":"2024-01-15T09:00:00+08:00","message":{"role":"user","content":"warmup message"}}
+{"timestamp":"2024-01-15T09:01:00+08:00","message":{"role":"user","content":"Real meaningful user message here"}}"#;
+
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+        let path = file.path().to_path_buf();
+
+        let result = extract_session_content(&path);
+
+        // Should filter warmup messages
+        assert!(!result.contains("warmup"));
+        assert!(result.contains("Real meaningful"));
+    }
+
+    #[test]
+    fn test_extract_session_content_filters_short_messages() {
+        let content = r#"{"timestamp":"2024-01-15T09:00:00+08:00","message":{"role":"user","content":"yes"}}
+{"timestamp":"2024-01-15T09:01:00+08:00","message":{"role":"user","content":"This is a longer meaningful message about the project"}}"#;
+
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+        let path = file.path().to_path_buf();
+
+        let result = extract_session_content(&path);
+
+        // Should filter short messages (< 10 chars)
+        assert!(!result.contains("yes"));
+        assert!(result.contains("This is a longer"));
+    }
+
+    #[test]
+    fn test_extract_session_content_empty_file() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"").unwrap();
+        let path = file.path().to_path_buf();
+
+        let result = extract_session_content(&path);
+        assert!(result.is_empty());
+    }
 }
