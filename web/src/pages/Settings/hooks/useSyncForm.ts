@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { backgroundSync, tray } from '@/services'
+import { backgroundSync, tray, notification } from '@/services'
 import type { BackgroundSyncConfig, BackgroundSyncStatus } from '@/services/background-sync'
 import type { SettingsMessage } from './types'
 
@@ -187,7 +187,18 @@ export function useSyncForm() {
           await tray.setSyncing(false).catch(() => {})
         }
 
-        if (result.total_items > 0) {
+        // Check for partial failures
+        const failedResults = result.results.filter((r) => !r.success)
+        if (failedResults.length > 0) {
+          const errorSources = failedResults.map((r) => r.source).join(', ')
+          const errorMessage = `${errorSources} 同步失敗`
+          setMessage({
+            type: 'error',
+            text: errorMessage,
+          })
+          // Send notification for partial failure
+          await notification.sendSyncNotification(false, errorMessage).catch(() => {})
+        } else if (result.total_items > 0) {
           setMessage({
             type: 'success',
             text: `已同步 ${result.total_items} 筆工作項目`,
@@ -210,10 +221,14 @@ export function useSyncForm() {
           await tray.setSyncing(false).catch(() => {})
         }
 
+        const errorMessage = err instanceof Error ? err.message : '同步失敗'
         setMessage({
           type: 'error',
-          text: err instanceof Error ? err.message : '同步失敗',
+          text: errorMessage,
         })
+
+        // Send system notification for sync error
+        await notification.sendSyncNotification(false, errorMessage).catch(() => {})
       }
     },
     []

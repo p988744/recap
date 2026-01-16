@@ -104,6 +104,10 @@ pub fn run() {
             commands::background_sync::start_background_sync,
             commands::background_sync::stop_background_sync,
             commands::background_sync::trigger_background_sync,
+            // Notifications
+            commands::notification::send_sync_notification,
+            commands::notification::send_auth_notification,
+            commands::notification::send_source_error_notification,
         ])
         .setup(|app| {
             // Setup logging

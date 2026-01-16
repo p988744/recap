@@ -8,6 +8,7 @@ pub mod background_sync;
 pub mod claude;
 pub mod config;
 pub mod gitlab;
+pub mod notification;
 pub mod reports;
 pub mod sources;
 pub mod sync;

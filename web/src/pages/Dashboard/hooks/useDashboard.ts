@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { listen } from '@tauri-apps/api/event'
-import { workItems, sync, tempo, backgroundSync, tray } from '@/services'
+import { workItems, sync, tempo, backgroundSync, tray, notification } from '@/services'
 import type { WorkItemStatsResponse, WorkItem, SyncStatus as SyncStatusType } from '@/types'
 import type { TimelineSession } from '@/components/WorkGanttChart'
 
@@ -81,6 +81,15 @@ export function useDashboard(isAuthenticated: boolean, token: string | null) {
 
     try {
       const result = await sync.autoSync()
+
+      // Check for partial failures and notify
+      const failedResults = result.results.filter((r) => !r.success)
+      if (failedResults.length > 0) {
+        const errorSources = failedResults.map((r) => r.source).join(', ')
+        const errorMessage = `${errorSources} 同步失敗`
+        await notification.sendSyncNotification(false, errorMessage).catch(() => {})
+      }
+
       if (result.total_items > 0) {
         const totalCreatedUpdated = result.results.reduce((sum, r) => sum + r.items_synced, 0)
         setClaudeSyncInfo(`已同步 ${totalCreatedUpdated} 筆工作項目`)
@@ -94,8 +103,14 @@ export function useDashboard(isAuthenticated: boolean, token: string | null) {
 
       // Update tray with last sync time
       await tray.updateSyncStatus(now.toISOString(), false).catch(() => {})
-    } catch {
-      // Silent fail for sync, but update tray
+    } catch (err) {
+      // Send notification for sync error (only for non-network errors)
+      const errorMessage = err instanceof Error ? err.message : '同步失敗'
+      // Only notify if it's not a network error (silent fail for network issues)
+      if (!errorMessage.toLowerCase().includes('network')) {
+        await notification.sendSyncNotification(false, errorMessage).catch(() => {})
+      }
+      // Update tray
       await tray.setSyncing(false).catch(() => {})
     } finally {
       setAutoSyncState('done')
