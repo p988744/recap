@@ -3,10 +3,11 @@
 //! A Tauri application for work item management.
 
 mod commands;
+mod services;
 
 // Re-export from recap-core for backwards compatibility
 pub use recap_core::models;
-pub use recap_core::services;
+pub use recap_core::services as core_services;
 
 use tauri::{
     menu::{Menu, MenuItem},
@@ -95,6 +96,13 @@ pub fn run() {
             commands::users::update_profile,
             // Tray
             commands::tray::update_tray_sync_status,
+            // Background Sync
+            commands::background_sync::get_background_sync_config,
+            commands::background_sync::update_background_sync_config,
+            commands::background_sync::get_background_sync_status,
+            commands::background_sync::start_background_sync,
+            commands::background_sync::stop_background_sync,
+            commands::background_sync::trigger_background_sync,
         ])
         .setup(|app| {
             // Setup logging

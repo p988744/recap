@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { listen } from '@tauri-apps/api/event'
-import { workItems, sync, tempo } from '@/services'
+import { workItems, sync, tempo, backgroundSync } from '@/services'
 import type { WorkItemStatsResponse, WorkItem, SyncStatus as SyncStatusType } from '@/types'
 import type { TimelineSession } from '@/components/WorkGanttChart'
 
@@ -100,6 +100,23 @@ export function useDashboard(isAuthenticated: boolean, token: string | null) {
       performSync()
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Start background sync service when authenticated
+  useEffect(() => {
+    if (!isAuthenticated || !token) return
+
+    // Start background sync service
+    backgroundSync.start().catch((err) => {
+      console.warn('Failed to start background sync:', err)
+    })
+
+    // Cleanup: stop service when component unmounts or user logs out
+    return () => {
+      backgroundSync.stop().catch(() => {
+        // Silently ignore stop errors
+      })
+    }
+  }, [isAuthenticated, token])
 
   // Manual sync handler
   const handleManualSync = useCallback(async () => {

@@ -221,7 +221,7 @@ mod hours_source_priority {
 /// Test session hours calculation
 mod session_hours {
     // Import the real function from the library to ensure tests match production
-    pub use recap_lib::services::calculate_session_hours;
+    pub use recap_lib::core_services::calculate_session_hours;
 
     #[test]
     fn test_normal_session_duration() {
