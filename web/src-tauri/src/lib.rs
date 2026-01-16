@@ -52,10 +52,10 @@ pub fn run() {
             // Work Items - commit centric
             commands::work_items::commit_centric::get_commit_centric_worklog,
             // Sources
-            commands::sources::get_sources,
-            commands::sources::add_git_repo,
-            commands::sources::remove_git_repo,
-            commands::sources::set_source_mode,
+            commands::sources::commands::get_sources,
+            commands::sources::commands::add_git_repo,
+            commands::sources::commands::remove_git_repo,
+            commands::sources::commands::set_source_mode,
             // Claude
             commands::claude::list_claude_sessions,
             commands::claude::import_claude_sessions,
