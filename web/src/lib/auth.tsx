@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
-import * as tauriApi from './tauri-api'
+import { auth } from '@/services'
 
 // Types
 export interface User {
@@ -66,14 +66,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async function initialize() {
       try {
         // First, get app status via Tauri command
-        const status = await tauriApi.getAppStatus()
+        const status = await auth.getAppStatus()
         setAppStatus(status)
 
         // 本地模式：如果沒有用戶，自動建立預設用戶
         if (!status.has_users) {
           await createDefaultLocalUser()
           // 重新取得狀態
-          const newStatus = await tauriApi.getAppStatus()
+          const newStatus = await auth.getAppStatus()
           setAppStatus(newStatus)
         }
 
@@ -82,7 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (storedToken) {
           // Validate existing token
           try {
-            const userData = await tauriApi.getCurrentUser(storedToken)
+            const userData = await auth.getCurrentUser(storedToken)
             setUser(userData)
             setToken(storedToken)
           } catch {
@@ -109,7 +109,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // 自動建立本地預設用戶
     async function createDefaultLocalUser() {
       try {
-        await tauriApi.registerUser({
+        await auth.register({
           username: 'local',
           password: 'local',
           name: '本地使用者',
@@ -123,12 +123,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     async function performAutoLogin() {
       try {
-        const data = await tauriApi.autoLogin()
+        const data = await auth.autoLogin()
         setStoredToken(data.access_token)
         setToken(data.access_token)
 
         // Fetch user info
-        const userData = await tauriApi.getCurrentUser(data.access_token)
+        const userData = await auth.getCurrentUser(data.access_token)
         setUser(userData)
       } catch (error) {
         console.error('Auto-login failed:', error)
@@ -140,12 +140,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (username: string, password: string) => {
     try {
-      const data = await tauriApi.login({ username, password })
+      const data = await auth.login({ username, password })
       setStoredToken(data.access_token)
       setToken(data.access_token)
 
       // Fetch user info
-      const userData = await tauriApi.getCurrentUser(data.access_token)
+      const userData = await auth.getCurrentUser(data.access_token)
       setUser(userData)
     } catch (error) {
       throw new Error(error instanceof Error ? error.message : 'Login failed')
@@ -154,7 +154,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const register = async (username: string, password: string, name: string, email?: string, title?: string) => {
     try {
-      await tauriApi.registerUser({ username, password, name, email, title })
+      await auth.register({ username, password, name, email, title })
 
       // Update appStatus to reflect that we now have users
       setAppStatus(prev => prev ? { ...prev, has_users: true, user_count: prev.user_count + 1 } : prev)
@@ -174,12 +174,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const autoLogin = async () => {
     try {
-      const data = await tauriApi.autoLogin()
+      const data = await auth.autoLogin()
       setStoredToken(data.access_token)
       setToken(data.access_token)
 
       // Fetch user info
-      const userData = await tauriApi.getCurrentUser(data.access_token)
+      const userData = await auth.getCurrentUser(data.access_token)
       setUser(userData)
     } catch (error) {
       console.error('Auto-login failed:', error)

@@ -42,8 +42,12 @@ export async function autoLogin(): Promise<TokenResponse> {
 
 /**
  * Get current user by token
+ * @param token - Optional token. If not provided, uses token from localStorage
  */
-export async function getCurrentUser(): Promise<UserResponse> {
+export async function getCurrentUser(token?: string): Promise<UserResponse> {
+  if (token) {
+    return invokeCommand<UserResponse>('get_current_user', { token })
+  }
   return invokeAuth<UserResponse>('get_current_user')
 }
 
