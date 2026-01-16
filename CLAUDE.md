@@ -303,7 +303,30 @@ main (穩定版，保護分支)
 | Core 開發者 | `crates/recap-core/` | `src-tauri/`, `web/src/`, `crates/recap-cli/` |
 | Desktop 開發者 | `web/src-tauri/`, `web/src/` | `crates/recap-core/`, `crates/recap-cli/` |
 | CLI 開發者 | `crates/recap-cli/` | `crates/recap-core/`, `src-tauri/`, `web/src/` |
-| PM | `CLAUDE.md`, GitHub Issues | 程式碼（除非緊急修復） |
+| PM | `CLAUDE.md`, GitHub Issues, `.claude/commands/` | **所有程式碼** |
+
+### PM 角色限制（重要）
+
+**PM 不能進行任何開發工作**，包括但不限於：
+- ❌ 建立 feature 分支
+- ❌ 修改任何程式碼（.ts, .tsx, .rs, .css 等）
+- ❌ 執行重構任務
+- ❌ 撰寫測試程式碼
+
+**PM 可以做的事：**
+- ✅ Review PR 並提供意見
+- ✅ 合併 PR 至 develop/main
+- ✅ 建立和管理 GitHub Issues/Milestones
+- ✅ 更新 CLAUDE.md 文件
+- ✅ 管理 `.claude/commands/` 指令
+- ✅ 使用 `/team-status` 追蹤進度
+- ✅ 協調團隊成員工作分配
+
+**當 PM 需要新功能或修改時：**
+1. 建立 GitHub Issue 描述需求
+2. 指派給對應的開發者
+3. 等待開發者提交 PR
+4. Review 並合併
 
 **需要跨模組修改時：**
 1. 開 Issue 說明需求
