@@ -97,6 +97,14 @@ pub fn print_info(message: &str, quiet: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Serialize;
+    use tabled::Tabled;
+
+    #[derive(Debug, Serialize, Tabled)]
+    struct TestItem {
+        name: String,
+        value: i32,
+    }
 
     #[test]
     fn test_output_format_from_str() {
@@ -108,8 +116,116 @@ mod tests {
     }
 
     #[test]
+    fn test_output_format_from_str_mixed_case() {
+        assert_eq!("Table".parse::<OutputFormat>().unwrap(), OutputFormat::Table);
+        assert_eq!("Json".parse::<OutputFormat>().unwrap(), OutputFormat::Json);
+        assert_eq!("TaBlE".parse::<OutputFormat>().unwrap(), OutputFormat::Table);
+    }
+
+    #[test]
+    fn test_output_format_from_str_error_message() {
+        let err = "xml".parse::<OutputFormat>().unwrap_err();
+        assert!(err.contains("xml"));
+        assert!(err.contains("table"));
+        assert!(err.contains("json"));
+    }
+
+    #[test]
     fn test_output_format_display() {
         assert_eq!(OutputFormat::Table.to_string(), "table");
         assert_eq!(OutputFormat::Json.to_string(), "json");
+    }
+
+    #[test]
+    fn test_output_format_default() {
+        let format: OutputFormat = Default::default();
+        assert_eq!(format, OutputFormat::Table);
+    }
+
+    #[test]
+    fn test_output_format_clone_copy() {
+        let format = OutputFormat::Json;
+        let cloned = format.clone();
+        let copied = format;
+        assert_eq!(format, cloned);
+        assert_eq!(format, copied);
+    }
+
+    #[test]
+    fn test_output_format_debug() {
+        let format = OutputFormat::Table;
+        let debug_str = format!("{:?}", format);
+        assert_eq!(debug_str, "Table");
+    }
+
+    #[test]
+    fn test_print_output_table_empty() {
+        let items: Vec<TestItem> = vec![];
+        // Should not panic
+        let result = print_output(&items, OutputFormat::Table);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_print_output_table_with_data() {
+        let items = vec![
+            TestItem { name: "foo".to_string(), value: 1 },
+            TestItem { name: "bar".to_string(), value: 2 },
+        ];
+        let result = print_output(&items, OutputFormat::Table);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_print_output_json() {
+        let items = vec![
+            TestItem { name: "test".to_string(), value: 42 },
+        ];
+        let result = print_output(&items, OutputFormat::Json);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_print_single_table() {
+        let item = TestItem { name: "single".to_string(), value: 99 };
+        let result = print_single(&item, OutputFormat::Table);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_print_single_json() {
+        let item = TestItem { name: "single".to_string(), value: 99 };
+        let result = print_single(&item, OutputFormat::Json);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_print_success_not_quiet() {
+        // Should not panic
+        print_success("Success message", false);
+    }
+
+    #[test]
+    fn test_print_success_quiet() {
+        // Should not panic and not print
+        print_success("Success message", true);
+    }
+
+    #[test]
+    fn test_print_error() {
+        // Should not panic
+        print_error("Error message");
+    }
+
+    #[test]
+    fn test_print_info_not_quiet() {
+        // Should not panic
+        print_info("Info message", false);
+    }
+
+    #[test]
+    fn test_print_info_quiet() {
+        // Should not panic and not print
+        print_info("Info message", true);
     }
 }
