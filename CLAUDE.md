@@ -599,6 +599,16 @@ pages/Settings/
 
 ### Progress Tracking
 
+**GitHub Issue Tracker:** [Milestone: Desktop Refactoring v2](https://github.com/p988744/recap/milestone/1)
+
+| Issue | 說明 | 狀態 |
+|-------|------|------|
+| [#1](https://github.com/p988744/recap/issues/1) | [Phase 1] 建立測試基礎 | 🟡 66% |
+| [#2](https://github.com/p988744/recap/issues/2) | [Phase 2] Rust Commands 重構 | ⚪ 待開始 |
+| [#3](https://github.com/p988744/recap/issues/3) | [Phase 3] React Pages 重構 | ⚪ 待開始 |
+| [#4](https://github.com/p988744/recap/issues/4) | [Phase 4] Polish & 整合測試 | ⚪ 待開始 |
+| [#5](https://github.com/p988744/recap/issues/5) | [Core] recap-core 單元測試 | 🟡 進行中 |
+
 ```
 Phase 1: 🟩🟩⬜ 66%  (1.1 ✅ 1.2 ✅ 1.3 ⏳)
 Phase 2: ⬜⬜⬜ 0%
@@ -607,9 +617,11 @@ Phase 4: ⬜⬜⬜ 0%
 Overall:  ~15% complete
 ```
 
-**Phase 1 細項：**
-- [x] 1.1 補齊 Rust 測試 (`work_items.rs` 單元測試)
-- [x] 1.2 補齊前端測試 (`Settings.tsx` 元件測試)
-- [ ] 1.3 設定 CI (GitHub Actions) - Desktop 分支已完成，待合併
+**PR 關聯 Issue 方式：**
+```bash
+# 在 PR 描述或 commit message 中使用
+Closes #1   # 合併後自動關閉 Issue
+Refs #2     # 僅關聯，不自動關閉
+```
 
-> 更新日期：2025-01-16
+> 更新日期：2026-01-16
