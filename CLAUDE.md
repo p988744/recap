@@ -321,6 +321,37 @@ main (穩定版，保護分支)
 2. 由負責該模組的開發者處理
 3. 等待其 PR 合併後再 rebase 取得更新
 
+### 團隊協作腳本
+
+提供自動化腳本簡化協作流程，位於 `scripts/team/`：
+
+| 腳本 | 說明 | 使用時機 |
+|------|------|----------|
+| `sync-develop.sh` | 同步 develop 分支 | 每天開始工作前 |
+| `pre-pr-check.sh` | PR 提交前檢查 | 提交 PR 前 |
+| `check-boundaries.sh` | 檢查職責邊界 | 確認沒有越界修改 |
+| `create-pr.sh` | 建立 PR（含檢查） | 準備提交 PR 時 |
+| `status.sh` | 顯示團隊狀態 | 了解整體進度 |
+
+**每日工作流程：**
+```bash
+# 1. 開始工作前，同步 develop
+./scripts/team/sync-develop.sh
+
+# 2. 進行開發...
+
+# 3. 完成後，檢查並建立 PR
+./scripts/team/create-pr.sh
+```
+
+**快速 alias（加入 ~/.bashrc 或 ~/.zshrc）：**
+```bash
+alias recap-sync="./scripts/team/sync-develop.sh"
+alias recap-check="./scripts/team/pre-pr-check.sh"
+alias recap-pr="./scripts/team/create-pr.sh"
+alias recap-status="./scripts/team/status.sh"
+```
+
 ### PR 提交前檢查清單
 
 **必須檢查項目（提交 PR 前）：**
