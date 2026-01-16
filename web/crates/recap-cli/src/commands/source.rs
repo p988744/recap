@@ -213,7 +213,9 @@ async fn remove_git_source(ctx: &Context, path: String) -> Result<()> {
 }
 
 fn is_valid_git_repo(path: &str) -> bool {
-    std::path::Path::new(path).join(".git").is_dir()
+    let git_path = std::path::Path::new(path).join(".git");
+    // Check for regular git repo (.git directory) or worktree (.git file)
+    git_path.is_dir() || git_path.is_file()
 }
 
 fn get_claude_projects_path() -> Option<String> {
@@ -258,20 +260,58 @@ async fn get_or_create_default_user(db: &recap_core::Database) -> Result<String>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
+    use std::fs;
 
     #[test]
-    fn test_is_valid_git_repo() {
-        // Current project should be a git repo
-        let project_path = env!("CARGO_MANIFEST_DIR");
-        let git_root = std::path::Path::new(project_path)
-            .parent() // crates/
-            .and_then(|p| p.parent()) // web/
-            .and_then(|p| p.parent()) // recap/
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
+    fn test_is_valid_git_repo_regular() {
+        // Create a temp directory with .git folder (simulating regular repo)
+        let temp_dir = TempDir::new().unwrap();
+        let git_dir = temp_dir.path().join(".git");
+        fs::create_dir(&git_dir).unwrap();
 
-        assert!(is_valid_git_repo(&git_root));
-        assert!(!is_valid_git_repo("/tmp"));
+        assert!(is_valid_git_repo(temp_dir.path().to_str().unwrap()));
+    }
+
+    #[test]
+    fn test_is_valid_git_repo_worktree() {
+        // Create a temp directory with .git file (simulating worktree)
+        let temp_dir = TempDir::new().unwrap();
+        let git_file = temp_dir.path().join(".git");
+        fs::write(&git_file, "gitdir: /some/path").unwrap();
+
+        assert!(is_valid_git_repo(temp_dir.path().to_str().unwrap()));
+    }
+
+    #[test]
+    fn test_is_valid_git_repo_invalid() {
+        // Create a temp directory without .git
+        let temp_dir = TempDir::new().unwrap();
+        assert!(!is_valid_git_repo(temp_dir.path().to_str().unwrap()));
+    }
+
+    #[test]
+    fn test_is_valid_git_repo_nonexistent() {
+        assert!(!is_valid_git_repo("/nonexistent/path/that/does/not/exist"));
+    }
+
+    #[test]
+    fn test_get_claude_projects_path() {
+        // This test just ensures the function doesn't panic
+        let _ = get_claude_projects_path();
+    }
+
+    #[test]
+    fn test_source_row_serialization() {
+        let row = SourceRow {
+            source_type: "git".to_string(),
+            name: "test-repo".to_string(),
+            path: "/path/to/repo".to_string(),
+            status: "Valid".to_string(),
+        };
+
+        let json = serde_json::to_string(&row).unwrap();
+        assert!(json.contains("git"));
+        assert!(json.contains("test-repo"));
     }
 }

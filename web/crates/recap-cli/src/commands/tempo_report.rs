@@ -515,29 +515,222 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_extract_project_name() {
+    fn test_extract_project_name_with_brackets() {
         assert_eq!(extract_project_name("[recap] some work"), "recap");
         assert_eq!(extract_project_name("[funtime-website] task"), "funtime-website");
+        assert_eq!(extract_project_name("[my-project] description here"), "my-project");
+    }
+
+    #[test]
+    fn test_extract_project_name_no_brackets() {
         assert_eq!(extract_project_name("no project tag"), "其他");
+        assert_eq!(extract_project_name("plain text"), "其他");
     }
 
     #[test]
-    fn test_clean_title() {
+    fn test_extract_project_name_empty() {
+        assert_eq!(extract_project_name(""), "其他");
+    }
+
+    #[test]
+    fn test_extract_project_name_malformed() {
+        assert_eq!(extract_project_name("[unclosed"), "其他");
+        assert_eq!(extract_project_name("no start]"), "其他");
+        assert_eq!(extract_project_name("][backwards"), "其他");
+    }
+
+    #[test]
+    fn test_clean_title_with_tag() {
         assert_eq!(clean_title("[recap] some work"), "some work");
+        assert_eq!(clean_title("[project] task description"), "task description");
+    }
+
+    #[test]
+    fn test_clean_title_no_tag() {
         assert_eq!(clean_title("no tag"), "no tag");
+        assert_eq!(clean_title("plain text"), "plain text");
     }
 
     #[test]
-    fn test_parse_quarter() {
+    fn test_clean_title_truncates_long() {
+        let long_title = "[project] ".to_string() + &"a".repeat(100);
+        let cleaned = clean_title(&long_title);
+        assert!(cleaned.len() <= 63); // 57 chars + "..."
+        assert!(cleaned.ends_with("..."));
+    }
+
+    #[test]
+    fn test_parse_quarter_valid() {
         assert_eq!(parse_quarter("2026-Q1").unwrap(), (2026, 1));
+        assert_eq!(parse_quarter("2026-Q2").unwrap(), (2026, 2));
+        assert_eq!(parse_quarter("2026-Q3").unwrap(), (2026, 3));
         assert_eq!(parse_quarter("2026-Q4").unwrap(), (2026, 4));
-        assert!(parse_quarter("2026-Q5").is_err());
     }
 
     #[test]
-    fn test_parse_half() {
+    fn test_parse_quarter_lowercase() {
+        assert_eq!(parse_quarter("2026-q1").unwrap(), (2026, 1));
+        assert_eq!(parse_quarter("2026-q4").unwrap(), (2026, 4));
+    }
+
+    #[test]
+    fn test_parse_quarter_invalid() {
+        assert!(parse_quarter("2026-Q5").is_err());
+        assert!(parse_quarter("2026-Q0").is_err());
+        assert!(parse_quarter("2026").is_err());
+        assert!(parse_quarter("invalid").is_err());
+    }
+
+    #[test]
+    fn test_parse_half_valid() {
         assert_eq!(parse_half("2026-H1").unwrap(), (2026, 1));
         assert_eq!(parse_half("2026-H2").unwrap(), (2026, 2));
+    }
+
+    #[test]
+    fn test_parse_half_lowercase() {
+        assert_eq!(parse_half("2026-h1").unwrap(), (2026, 1));
+        assert_eq!(parse_half("2026-h2").unwrap(), (2026, 2));
+    }
+
+    #[test]
+    fn test_parse_half_invalid() {
         assert!(parse_half("2026-H3").is_err());
+        assert!(parse_half("2026-H0").is_err());
+        assert!(parse_half("2026").is_err());
+        assert!(parse_half("invalid").is_err());
+    }
+
+    #[test]
+    fn test_resolve_period_daily_default() {
+        let today = chrono::Local::now().date_naive();
+        let (start, end, name) = resolve_period(&Period::Daily, None).unwrap();
+        assert_eq!(start, today);
+        assert_eq!(end, today);
+        assert!(name.contains("Daily"));
+    }
+
+    #[test]
+    fn test_resolve_period_daily_specific() {
+        let (start, end, _) = resolve_period(&Period::Daily, Some("2025-06-15".to_string())).unwrap();
+        assert_eq!(start.to_string(), "2025-06-15");
+        assert_eq!(end.to_string(), "2025-06-15");
+    }
+
+    #[test]
+    fn test_resolve_period_weekly_default() {
+        let (start, end, name) = resolve_period(&Period::Weekly, None).unwrap();
+        // Should be 7 days span
+        let days = (end - start).num_days();
+        assert_eq!(days, 6);
+        assert!(name.contains("Weekly"));
+    }
+
+    #[test]
+    fn test_resolve_period_monthly_default() {
+        let today = chrono::Local::now().date_naive();
+        let (start, end, name) = resolve_period(&Period::Monthly, None).unwrap();
+        assert_eq!(start.day(), 1);
+        assert_eq!(start.month(), today.month());
+        assert!(name.contains("Monthly"));
+        // End should be last day of month
+        assert!(end.day() >= 28);
+    }
+
+    #[test]
+    fn test_resolve_period_monthly_specific() {
+        let (start, end, _) = resolve_period(&Period::Monthly, Some("2025-02".to_string())).unwrap();
+        assert_eq!(start.to_string(), "2025-02-01");
+        assert_eq!(end.to_string(), "2025-02-28");
+    }
+
+    #[test]
+    fn test_resolve_period_quarterly_default() {
+        let (start, end, name) = resolve_period(&Period::Quarterly, None).unwrap();
+        // Quarterly should span 3 months
+        assert_eq!(start.day(), 1);
+        assert!(name.contains("Quarterly"));
+        assert!(name.contains("-Q"));
+    }
+
+    #[test]
+    fn test_resolve_period_quarterly_specific() {
+        let (start, end, _) = resolve_period(&Period::Quarterly, Some("2025-Q1".to_string())).unwrap();
+        assert_eq!(start.to_string(), "2025-01-01");
+        assert_eq!(end.to_string(), "2025-03-31");
+    }
+
+    #[test]
+    fn test_resolve_period_semiannual_default() {
+        let (start, end, name) = resolve_period(&Period::SemiAnnual, None).unwrap();
+        assert_eq!(start.day(), 1);
+        assert!(name.contains("Semi-Annual"));
+        assert!(name.contains("-H"));
+    }
+
+    #[test]
+    fn test_resolve_period_semiannual_h1() {
+        let (start, end, _) = resolve_period(&Period::SemiAnnual, Some("2025-H1".to_string())).unwrap();
+        assert_eq!(start.to_string(), "2025-01-01");
+        assert_eq!(end.to_string(), "2025-06-30");
+    }
+
+    #[test]
+    fn test_resolve_period_semiannual_h2() {
+        let (start, end, _) = resolve_period(&Period::SemiAnnual, Some("2025-H2".to_string())).unwrap();
+        assert_eq!(start.to_string(), "2025-07-01");
+        assert_eq!(end.to_string(), "2025-12-31");
+    }
+
+    #[test]
+    fn test_project_summary_serialization() {
+        let summary = ProjectSummary {
+            project: "test-project".to_string(),
+            hours: 10.5,
+            items: vec![],
+            summary: vec!["Did some work".to_string()],
+        };
+
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("test-project"));
+        assert!(json.contains("10.5"));
+    }
+
+    #[test]
+    fn test_work_item_brief_serialization() {
+        let brief = WorkItemBrief {
+            date: "2025-01-15".to_string(),
+            title: "Test task".to_string(),
+            hours: 2.0,
+        };
+
+        let json = serde_json::to_string(&brief).unwrap();
+        assert!(json.contains("2025-01-15"));
+        assert!(json.contains("Test task"));
+    }
+
+    #[test]
+    fn test_tempo_report_serialization() {
+        let report = TempoReport {
+            period: "Weekly".to_string(),
+            start_date: "2025-01-13".to_string(),
+            end_date: "2025-01-19".to_string(),
+            total_hours: 40.0,
+            total_items: 10,
+            projects: vec![],
+        };
+
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("Weekly"));
+        assert!(json.contains("40"));
+    }
+
+    #[test]
+    fn test_period_enum_debug() {
+        assert_eq!(format!("{:?}", Period::Daily), "Daily");
+        assert_eq!(format!("{:?}", Period::Weekly), "Weekly");
+        assert_eq!(format!("{:?}", Period::Monthly), "Monthly");
+        assert_eq!(format!("{:?}", Period::Quarterly), "Quarterly");
+        assert_eq!(format!("{:?}", Period::SemiAnnual), "SemiAnnual");
     }
 }

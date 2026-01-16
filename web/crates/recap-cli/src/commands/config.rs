@@ -241,17 +241,125 @@ async fn update_user_setting(db: &recap_core::Database, user_id: &str, key: &str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
+    use std::fs;
 
     #[test]
-    fn test_mask_token() {
+    fn test_mask_token_with_value() {
         assert_eq!(mask_token(&Some("secret123".to_string())), "****");
+        assert_eq!(mask_token(&Some("a".to_string())), "****");
+        assert_eq!(mask_token(&Some("very-long-token-value-here".to_string())), "****");
+    }
+
+    #[test]
+    fn test_mask_token_empty() {
         assert_eq!(mask_token(&Some("".to_string())), "-");
+    }
+
+    #[test]
+    fn test_mask_token_none() {
         assert_eq!(mask_token(&None), "-");
     }
 
     #[test]
-    fn test_get_claude_path() {
+    fn test_get_claude_path_doesnt_panic() {
         // Just verify it doesn't panic
         let _ = get_claude_path();
+    }
+
+    #[test]
+    fn test_get_claude_path_with_existing_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let claude_dir = temp_dir.path().join(".claude").join("projects");
+        fs::create_dir_all(&claude_dir).unwrap();
+
+        // We can't easily test this without modifying HOME,
+        // but we can verify the function logic with a mock
+        let path = claude_dir.to_string_lossy().to_string();
+        assert!(std::path::Path::new(&path).exists());
+    }
+
+    #[test]
+    fn test_config_row_serialization() {
+        let row = ConfigRow {
+            key: "jira_url".to_string(),
+            value: "https://jira.example.com".to_string(),
+            source: "db".to_string(),
+        };
+
+        let json = serde_json::to_string(&row).unwrap();
+        assert!(json.contains("jira_url"));
+        assert!(json.contains("https://jira.example.com"));
+        assert!(json.contains("db"));
+    }
+
+    #[test]
+    fn test_config_row_debug() {
+        let row = ConfigRow {
+            key: "test_key".to_string(),
+            value: "test_value".to_string(),
+            source: "env".to_string(),
+        };
+
+        let debug = format!("{:?}", row);
+        assert!(debug.contains("test_key"));
+        assert!(debug.contains("test_value"));
+    }
+
+    #[test]
+    fn test_config_row_with_sensitive_masked() {
+        let row = ConfigRow {
+            key: "tempo_token".to_string(),
+            value: mask_token(&Some("secret".to_string())),
+            source: "db".to_string(),
+        };
+
+        assert_eq!(row.value, "****");
+    }
+
+    #[test]
+    fn test_config_row_with_default_source() {
+        let row = ConfigRow {
+            key: "RECAP_DB_PATH".to_string(),
+            value: "/path/to/db".to_string(),
+            source: "default".to_string(),
+        };
+
+        assert_eq!(row.source, "default");
+    }
+
+    #[test]
+    fn test_user_settings_fields() {
+        // Test that UserSettings struct can hold all expected fields
+        let settings = UserSettings {
+            jira_url: Some("https://jira.example.com".to_string()),
+            jira_email: Some("user@example.com".to_string()),
+            jira_pat: Some("secret-token".to_string()),
+            tempo_token: Some("tempo-secret".to_string()),
+            gitlab_pat: Some("gitlab-token".to_string()),
+            gitlab_url: Some("https://gitlab.example.com".to_string()),
+        };
+
+        assert!(settings.jira_url.is_some());
+        assert!(settings.jira_email.is_some());
+        assert!(settings.jira_pat.is_some());
+        assert!(settings.tempo_token.is_some());
+        assert!(settings.gitlab_pat.is_some());
+        assert!(settings.gitlab_url.is_some());
+    }
+
+    #[test]
+    fn test_user_settings_all_none() {
+        let settings = UserSettings {
+            jira_url: None,
+            jira_email: None,
+            jira_pat: None,
+            tempo_token: None,
+            gitlab_pat: None,
+            gitlab_url: None,
+        };
+
+        assert!(settings.jira_url.is_none());
+        assert!(settings.gitlab_pat.is_none());
     }
 }

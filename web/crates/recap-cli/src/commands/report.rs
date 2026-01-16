@@ -313,15 +313,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_date() {
-        assert!(parse_date("2025-01-15").is_ok());
-        assert!(parse_date("today").is_ok());
-        assert!(parse_date("yesterday").is_ok());
-        assert!(parse_date("invalid").is_err());
+    fn test_parse_date_valid() {
+        let date = parse_date("2025-01-15").unwrap();
+        assert_eq!(date.year(), 2025);
+        assert_eq!(date.month(), 1);
+        assert_eq!(date.day(), 15);
     }
 
     #[test]
-    fn test_resolve_date_range() {
+    fn test_parse_date_today() {
+        let today = chrono::Local::now().date_naive();
+        let parsed = parse_date("today").unwrap();
+        assert_eq!(parsed, today);
+    }
+
+    #[test]
+    fn test_parse_date_yesterday() {
+        let yesterday = chrono::Local::now().date_naive() - chrono::Duration::days(1);
+        let parsed = parse_date("yesterday").unwrap();
+        assert_eq!(parsed, yesterday);
+    }
+
+    #[test]
+    fn test_parse_date_invalid() {
+        assert!(parse_date("invalid").is_err());
+        assert!(parse_date("2025/01/15").is_err());
+        assert!(parse_date("").is_err());
+    }
+
+    #[test]
+    fn test_parse_date_error_message() {
+        let err = parse_date("bad").unwrap_err();
+        assert!(err.to_string().contains("bad"));
+        assert!(err.to_string().contains("YYYY-MM-DD"));
+    }
+
+    #[test]
+    fn test_resolve_date_range_both_specified() {
         let (start, end) = resolve_date_range(
             Some("2025-01-01".to_string()),
             Some("2025-01-31".to_string()),
@@ -332,19 +360,117 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_date_range_only_start() {
+        let today = chrono::Local::now().date_naive();
+        let (start, end) = resolve_date_range(
+            Some("2025-01-01".to_string()),
+            None,
+        ).unwrap();
+
+        assert_eq!(start.to_string(), "2025-01-01");
+        assert_eq!(end, today);
+    }
+
+    #[test]
+    fn test_resolve_date_range_only_end() {
+        let today = chrono::Local::now().date_naive();
+        let (start, end) = resolve_date_range(
+            None,
+            Some("2025-01-31".to_string()),
+        ).unwrap();
+
+        // Start should be first of current month
+        assert_eq!(start.day(), 1);
+        assert_eq!(start.month(), today.month());
+        assert_eq!(end.to_string(), "2025-01-31");
+    }
+
+    #[test]
     fn test_resolve_date_range_defaults() {
-        // With no parameters, should default to current month
         let result = resolve_date_range(None, None);
         assert!(result.is_ok());
 
         let (start, end) = result.unwrap();
         let today = chrono::Local::now().date_naive();
 
-        // End should be today
         assert_eq!(end, today);
-
-        // Start should be first of month
         assert_eq!(start.day(), 1);
         assert_eq!(start.month(), today.month());
+    }
+
+    #[test]
+    fn test_resolve_date_range_with_today_keyword() {
+        let today = chrono::Local::now().date_naive();
+        let (start, end) = resolve_date_range(
+            Some("today".to_string()),
+            Some("today".to_string()),
+        ).unwrap();
+
+        assert_eq!(start, today);
+        assert_eq!(end, today);
+    }
+
+    #[test]
+    fn test_summary_row_serialization() {
+        let row = SummaryRow {
+            group: "Project A".to_string(),
+            hours: "10.5".to_string(),
+            items: "5".to_string(),
+        };
+
+        let json = serde_json::to_string(&row).unwrap();
+        assert!(json.contains("Project A"));
+        assert!(json.contains("10.5"));
+        assert!(json.contains("5"));
+    }
+
+    #[test]
+    fn test_summary_row_debug() {
+        let row = SummaryRow {
+            group: "Test".to_string(),
+            hours: "8.0".to_string(),
+            items: "3".to_string(),
+        };
+
+        let debug = format!("{:?}", row);
+        assert!(debug.contains("Test"));
+        assert!(debug.contains("8.0"));
+    }
+
+    #[test]
+    fn test_date_summary_row_serialization() {
+        let row = DateSummaryRow {
+            date: "2025-01-15".to_string(),
+            hours: "6.5".to_string(),
+            items: "4".to_string(),
+        };
+
+        let json = serde_json::to_string(&row).unwrap();
+        assert!(json.contains("2025-01-15"));
+        assert!(json.contains("6.5"));
+    }
+
+    #[test]
+    fn test_date_summary_row_debug() {
+        let row = DateSummaryRow {
+            date: "2025-01-15".to_string(),
+            hours: "4.0".to_string(),
+            items: "2".to_string(),
+        };
+
+        let debug = format!("{:?}", row);
+        assert!(debug.contains("2025-01-15"));
+    }
+
+    #[test]
+    fn test_hours_formatting() {
+        // Test that hours format to one decimal place
+        let hours = 2.5;
+        let formatted = format!("{:.1}", hours);
+        assert_eq!(formatted, "2.5");
+
+        let hours2 = 10.0;
+        let formatted2 = format!("{:.1}", hours2);
+        assert_eq!(formatted2, "10.0");
     }
 }

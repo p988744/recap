@@ -605,3 +605,160 @@ async fn get_default_user_id(db: &recap_core::Database) -> Result<String> {
         None => Err(anyhow::anyhow!("No user found. Please run the app first to create a user.")),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Datelike;
+
+    #[test]
+    fn test_parse_date_valid() {
+        let date = parse_date("2025-01-15").unwrap();
+        assert_eq!(date.year(), 2025);
+        assert_eq!(date.month(), 1);
+        assert_eq!(date.day(), 15);
+    }
+
+    #[test]
+    fn test_parse_date_today() {
+        let today = chrono::Local::now().date_naive();
+        let parsed = parse_date("today").unwrap();
+        assert_eq!(parsed, today);
+    }
+
+    #[test]
+    fn test_parse_date_yesterday() {
+        let yesterday = chrono::Local::now().date_naive() - Duration::days(1);
+        let parsed = parse_date("yesterday").unwrap();
+        assert_eq!(parsed, yesterday);
+    }
+
+    #[test]
+    fn test_parse_date_invalid() {
+        assert!(parse_date("invalid").is_err());
+        assert!(parse_date("2025/01/15").is_err());
+    }
+
+    #[test]
+    fn test_extract_project_name_with_brackets() {
+        assert_eq!(extract_project_name("[project] task"), "project");
+        assert_eq!(extract_project_name("[my-app] feature"), "my-app");
+    }
+
+    #[test]
+    fn test_extract_project_name_without_brackets() {
+        assert_eq!(extract_project_name("plain task"), "其他");
+        assert_eq!(extract_project_name("no brackets here"), "其他");
+    }
+
+    #[test]
+    fn test_extract_project_name_malformed() {
+        assert_eq!(extract_project_name("[unclosed"), "其他");
+        assert_eq!(extract_project_name("no start]"), "其他");
+    }
+
+    #[test]
+    fn test_clean_title_with_brackets() {
+        assert_eq!(clean_title("[project] task description"), "task description");
+        assert_eq!(clean_title("[app] feature work"), "feature work");
+    }
+
+    #[test]
+    fn test_clean_title_without_brackets() {
+        assert_eq!(clean_title("plain task"), "plain task");
+    }
+
+    #[test]
+    fn test_truncate_short() {
+        assert_eq!(truncate("short", 10), "short");
+        assert_eq!(truncate("exact len!", 10), "exact len!");
+    }
+
+    #[test]
+    fn test_truncate_long() {
+        assert_eq!(truncate("this is very long text", 10), "this is...");
+    }
+
+    #[test]
+    fn test_truncate_unicode() {
+        assert_eq!(truncate("你好世界", 10), "你好世界");
+        // 10 chars limit: 7 chars + "..." (3 chars) = 10
+        assert_eq!(truncate("很長的中文字串需要被截斷", 10), "很長的中文字串...");
+    }
+
+    #[test]
+    fn test_stats_row_serialization() {
+        let row = StatsRow {
+            metric: "總工時".to_string(),
+            value: "40.5".to_string(),
+        };
+        let json = serde_json::to_string(&row).unwrap();
+        assert!(json.contains("總工時"));
+        assert!(json.contains("40.5"));
+    }
+
+    #[test]
+    fn test_source_row_serialization() {
+        let row = SourceRow {
+            source: "git".to_string(),
+            hours: "20.0".to_string(),
+            percentage: "50%".to_string(),
+        };
+        let json = serde_json::to_string(&row).unwrap();
+        assert!(json.contains("git"));
+        assert!(json.contains("50%"));
+    }
+
+    #[test]
+    fn test_project_row_serialization() {
+        let row = ProjectRow {
+            project: "recap".to_string(),
+            hours: "15.5".to_string(),
+            items: "10".to_string(),
+            percentage: "38%".to_string(),
+        };
+        let json = serde_json::to_string(&row).unwrap();
+        assert!(json.contains("recap"));
+        assert!(json.contains("15.5"));
+    }
+
+    #[test]
+    fn test_timeline_row_serialization() {
+        let row = TimelineRow {
+            time: "09:00".to_string(),
+            project: "test".to_string(),
+            hours: "2.0".to_string(),
+            title: "Task".to_string(),
+            commits: "3".to_string(),
+        };
+        let json = serde_json::to_string(&row).unwrap();
+        assert!(json.contains("09:00"));
+        assert!(json.contains("test"));
+        assert!(json.contains("commits"));
+    }
+
+    #[test]
+    fn test_heatmap_row_serialization() {
+        let row = HeatmapRow {
+            date: "2025-01-15".to_string(),
+            weekday: "Wed".to_string(),
+            hours: "8.0".to_string(),
+            items: "5".to_string(),
+            visual: "███".to_string(),
+        };
+        let json = serde_json::to_string(&row).unwrap();
+        assert!(json.contains("2025-01-15"));
+        assert!(json.contains("Wed"));
+        assert!(json.contains("visual"));
+    }
+
+    #[test]
+    fn test_stats_row_debug() {
+        let row = StatsRow {
+            metric: "Test".to_string(),
+            value: "123".to_string(),
+        };
+        let debug = format!("{:?}", row);
+        assert!(debug.contains("Test"));
+    }
+}
