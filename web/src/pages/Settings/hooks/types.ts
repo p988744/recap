@@ -1,4 +1,4 @@
-export type SettingsSection = 'profile' | 'account' | 'integrations' | 'preferences' | 'about'
+export type SettingsSection = 'profile' | 'account' | 'integrations' | 'ai' | 'preferences' | 'about'
 
 export interface SettingsMessage {
   type: 'success' | 'error'
