@@ -73,15 +73,17 @@ pub fn run() {
             commands::sync::get_sync_status,
             commands::sync::auto_sync,
             commands::sync::list_available_projects,
-            // GitLab
-            commands::gitlab::get_gitlab_status,
-            commands::gitlab::configure_gitlab,
-            commands::gitlab::remove_gitlab_config,
-            commands::gitlab::list_gitlab_projects,
-            commands::gitlab::add_gitlab_project,
-            commands::gitlab::remove_gitlab_project,
-            commands::gitlab::sync_gitlab,
-            commands::gitlab::search_gitlab_projects,
+            // GitLab - config
+            commands::gitlab::config::get_gitlab_status,
+            commands::gitlab::config::configure_gitlab,
+            commands::gitlab::config::remove_gitlab_config,
+            // GitLab - projects
+            commands::gitlab::projects::list_gitlab_projects,
+            commands::gitlab::projects::add_gitlab_project,
+            commands::gitlab::projects::remove_gitlab_project,
+            commands::gitlab::projects::search_gitlab_projects,
+            // GitLab - sync
+            commands::gitlab::sync::sync_gitlab,
             // Tempo
             commands::tempo::test_tempo_connection,
             commands::tempo::validate_jira_issue,
