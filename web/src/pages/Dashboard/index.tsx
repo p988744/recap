@@ -49,7 +49,7 @@ export function Dashboard() {
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <CheckCircle2 className="w-3 h-3 text-sage" strokeWidth={1.5} />
                 <span>
-                  {dashboardState.syncStatusData[0]?.last_sync_at
+                  {formatDate(dashboardState.syncStatusData[0]?.last_sync_at)
                     ? `上次同步: ${formatDate(dashboardState.syncStatusData[0].last_sync_at)}`
                     : '已同步'}
                 </span>
