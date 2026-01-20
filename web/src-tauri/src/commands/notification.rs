@@ -51,25 +51,6 @@ pub fn send_notification(
         .map_err(|e| e.to_string())
 }
 
-/// Send a sync error notification with aggregated errors
-pub fn send_sync_error_notification(
-    app: &AppHandle,
-    errors: &[(&str, &str)], // (source, error message)
-) -> Result<(), String> {
-    if errors.is_empty() {
-        return Ok(());
-    }
-
-    let body = if errors.len() == 1 {
-        format!("{}: {}", errors[0].0, errors[0].1)
-    } else {
-        let sources: Vec<&str> = errors.iter().map(|(s, _)| *s).collect();
-        format!("{} 個來源同步失敗", sources.len())
-    };
-
-    send_notification(app, NotificationType::SyncError, &body)
-}
-
 // =============================================================================
 // Commands
 // =============================================================================
