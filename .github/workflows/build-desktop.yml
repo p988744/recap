@@ -58,17 +58,30 @@ jobs:
             filter: windows
 
     runs-on: ${{ matrix.platform }}
-    # 根據 platform input 過濾：schedule/tag 時全部執行，手動觸發時依選擇執行
-    if: |
-      github.event_name != 'workflow_dispatch' ||
-      inputs.platform == 'all' ||
-      inputs.platform == matrix.filter
 
     steps:
+      # 根據 platform input 過濾：schedule/tag 時全部執行，手動觸發時依選擇執行
+      - name: Check if should run
+        id: should_run
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_PLATFORM: ${{ inputs.platform }}
+          MATRIX_FILTER: ${{ matrix.filter }}
+        run: |
+          if [[ "$EVENT_NAME" != "workflow_dispatch" ]] || [[ "$INPUT_PLATFORM" == "all" ]] || [[ "$INPUT_PLATFORM" == "$MATRIX_FILTER" ]]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_run=false" >> $GITHUB_OUTPUT
+            echo "⏭️ Skipping $MATRIX_FILTER build (platform=$INPUT_PLATFORM)"
+          fi
+
       - name: Checkout
+        if: steps.should_run.outputs.should_run == 'true'
         uses: actions/checkout@v4
 
       - name: Setup Node.js
+        if: steps.should_run.outputs.should_run == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -76,25 +89,27 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Setup Rust
+        if: steps.should_run.outputs.should_run == 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
       - name: Rust cache
+        if: steps.should_run.outputs.should_run == 'true'
         uses: swatinem/rust-cache@v2
         with:
           workspaces: web/src-tauri -> target
           key: ${{ matrix.target }}
 
       - name: Install dependencies (Linux)
-        if: matrix.platform == 'ubuntu-22.04'
+        if: steps.should_run.outputs.should_run == 'true' && matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       # macOS: Import Apple certificate for signing
       - name: Import Apple Certificate (macOS)
-        if: startsWith(matrix.platform, 'macos')
+        if: steps.should_run.outputs.should_run == 'true' && startsWith(matrix.platform, 'macos')
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -122,16 +137,18 @@ jobs:
           rm -f $RUNNER_TEMP/certificate.p12
 
       - name: Install frontend dependencies
+        if: steps.should_run.outputs.should_run == 'true'
         working-directory: web
         run: npm ci
 
       - name: Build frontend
+        if: steps.should_run.outputs.should_run == 'true'
         working-directory: web
         run: npm run build
 
       # Build with signing and notarization for macOS
       - name: Build Tauri app (macOS)
-        if: startsWith(matrix.platform, 'macos')
+        if: steps.should_run.outputs.should_run == 'true' && startsWith(matrix.platform, 'macos')
         working-directory: web
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -144,14 +161,14 @@ jobs:
 
       # Build for other platforms
       - name: Build Tauri app (Linux/Windows)
-        if: "!startsWith(matrix.platform, 'macos')"
+        if: steps.should_run.outputs.should_run == 'true' && !startsWith(matrix.platform, 'macos')
         working-directory: web
         run: |
           cargo install tauri-cli --version "^2" --locked
           cargo tauri build --target ${{ matrix.target }}
 
       - name: Upload artifacts (Linux)
-        if: matrix.platform == 'ubuntu-22.04'
+        if: steps.should_run.outputs.should_run == 'true' && matrix.platform == 'ubuntu-22.04'
         uses: actions/upload-artifact@v4
         with:
           name: recap-${{ matrix.name }}
@@ -161,7 +178,7 @@ jobs:
           retention-days: 30
 
       - name: Upload artifacts (macOS)
-        if: startsWith(matrix.platform, 'macos')
+        if: steps.should_run.outputs.should_run == 'true' && startsWith(matrix.platform, 'macos')
         uses: actions/upload-artifact@v4
         with:
           name: recap-${{ matrix.name }}
@@ -170,7 +187,7 @@ jobs:
           retention-days: 30
 
       - name: Upload artifacts (Windows)
-        if: matrix.platform == 'windows-latest'
+        if: steps.should_run.outputs.should_run == 'true' && matrix.platform == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
           name: recap-${{ matrix.name }}
