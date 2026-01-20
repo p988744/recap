@@ -7,7 +7,7 @@ use chrono::{DateTime, FixedOffset, NaiveDate};
 use std::collections::HashMap;
 
 // Import actual app modules
-use recap_lib::services::worklog::{
+use recap_lib::core_services::worklog::{
     estimate_commit_hours, estimate_from_diff, get_commits_for_date,
     build_rule_based_outcome, CommitRecord, HoursEstimate, SessionBrief,
 };

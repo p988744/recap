@@ -2,6 +2,7 @@
 //!
 //! Contains all CLI command implementations.
 
+pub mod claude;
 pub mod config;
 pub mod dashboard;
 pub mod report;

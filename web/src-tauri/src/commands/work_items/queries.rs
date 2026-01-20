@@ -272,7 +272,7 @@ pub async fn get_timeline_data(
 
         // Get commits for this session's time range
         let project_path = item.project_path.clone().unwrap_or_default();
-        let commits = crate::services::get_commits_in_time_range(&project_path, &start_time, &end_time);
+        let commits = crate::core_services::get_commits_in_time_range(&project_path, &start_time, &end_time);
 
         sessions.push(TimelineSession {
             id: item.session_id.unwrap_or_else(|| item.id.clone()),
