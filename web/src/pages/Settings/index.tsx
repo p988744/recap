@@ -1,14 +1,16 @@
-import { User, Link2, Bot, Settings, Sparkles } from 'lucide-react'
+import { User, Link2, Bot, Settings, Sparkles, RefreshCw } from 'lucide-react'
 import { Cloud } from 'lucide-react'
 import {
   useSettings,
   useProfileForm,
   usePreferencesForm,
   useLlmForm,
+  useSyncForm,
 } from './hooks/useSettings'
 import { ProfileSection } from './components/ProfileSection'
 import { AccountSection } from './components/AccountSection'
 import { IntegrationsSectionV2 } from './components/IntegrationsSection/IntegrationsSectionV2'
+import { SyncSection } from './components/SyncSection'
 import { AiSection } from './components/AiSection'
 import { PreferencesSection } from './components/PreferencesSection'
 import { AboutSection } from './components/AboutSection'
@@ -18,6 +20,7 @@ const sections = [
   { id: 'profile' as const, label: '個人資料', icon: User },
   { id: 'account' as const, label: '帳號', icon: Cloud },
   { id: 'integrations' as const, label: '整合服務', icon: Link2 },
+  { id: 'sync' as const, label: '背景同步', icon: RefreshCw },
   { id: 'ai' as const, label: 'AI 助手', icon: Sparkles },
   { id: 'preferences' as const, label: '偏好設定', icon: Settings },
   { id: 'about' as const, label: '關於', icon: Bot },
@@ -28,6 +31,7 @@ export function SettingsPage() {
   const profileForm = useProfileForm(settings.user)
   const preferencesForm = usePreferencesForm(settings.config)
   const llmForm = useLlmForm(settings.config)
+  const syncForm = useSyncForm()
 
   if (settings.loading) {
     return (
@@ -109,6 +113,30 @@ export function SettingsPage() {
           >
             <IntegrationsSectionV2 />
           </IntegrationsProvider>
+        )}
+
+        {/* Sync Section */}
+        {settings.activeSection === 'sync' && (
+          <SyncSection
+            enabled={syncForm.enabled}
+            setEnabled={syncForm.setEnabled}
+            intervalMinutes={syncForm.intervalMinutes}
+            setIntervalMinutes={syncForm.setIntervalMinutes}
+            syncGit={syncForm.syncGit}
+            setSyncGit={syncForm.setSyncGit}
+            syncClaude={syncForm.syncClaude}
+            setSyncClaude={syncForm.setSyncClaude}
+            syncGitlab={syncForm.syncGitlab}
+            setSyncGitlab={syncForm.setSyncGitlab}
+            syncJira={syncForm.syncJira}
+            setSyncJira={syncForm.setSyncJira}
+            status={syncForm.status}
+            loading={syncForm.loading}
+            saving={syncForm.saving}
+            onSave={syncForm.handleSave}
+            onTriggerSync={syncForm.handleTriggerSync}
+            setMessage={settings.setMessage}
+          />
         )}
 
         {/* AI Section */}

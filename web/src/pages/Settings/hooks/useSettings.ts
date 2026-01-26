@@ -78,6 +78,7 @@ export { useJiraForm } from './useJiraForm'
 export { useGitLabForm } from './useGitLabForm'
 export { useGitRepoForm } from './useGitRepoForm'
 export { useClaudeCodeForm } from './useClaudeCodeForm'
+export { useSyncForm } from './useSyncForm'
 
 // Re-export utilities
 export { formatFileSize, formatTimestamp } from './utils'

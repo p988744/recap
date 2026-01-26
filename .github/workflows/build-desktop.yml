@@ -21,6 +21,16 @@ on:
         options:
           - nightly
           - release
+      platform:
+        description: 'Target platform'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - macos
+          - linux
+          - windows
 
 env:
   CARGO_TERM_COLOR: always
@@ -35,22 +45,43 @@ jobs:
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             name: linux-x64
+            filter: linux
           # macOS Apple Silicon
           - platform: macos-14
             target: aarch64-apple-darwin
             name: macos-arm64
+            filter: macos
           # Windows
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
             name: windows-x64
+            filter: windows
 
     runs-on: ${{ matrix.platform }}
 
     steps:
+      # 根據 platform input 過濾：schedule/tag 時全部執行，手動觸發時依選擇執行
+      - name: Check if should run
+        id: should_run
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_PLATFORM: ${{ inputs.platform }}
+          MATRIX_FILTER: ${{ matrix.filter }}
+        run: |
+          if [[ "$EVENT_NAME" != "workflow_dispatch" ]] || [[ "$INPUT_PLATFORM" == "all" ]] || [[ "$INPUT_PLATFORM" == "$MATRIX_FILTER" ]]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_run=false" >> $GITHUB_OUTPUT
+            echo "⏭️ Skipping $MATRIX_FILTER build (platform=$INPUT_PLATFORM)"
+          fi
+
       - name: Checkout
+        if: steps.should_run.outputs.should_run == 'true'
         uses: actions/checkout@v4
 
       - name: Setup Node.js
+        if: steps.should_run.outputs.should_run == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -58,25 +89,27 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Setup Rust
+        if: steps.should_run.outputs.should_run == 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
       - name: Rust cache
+        if: steps.should_run.outputs.should_run == 'true'
         uses: swatinem/rust-cache@v2
         with:
           workspaces: web/src-tauri -> target
           key: ${{ matrix.target }}
 
       - name: Install dependencies (Linux)
-        if: matrix.platform == 'ubuntu-22.04'
+        if: steps.should_run.outputs.should_run == 'true' && matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       # macOS: Import Apple certificate for signing
       - name: Import Apple Certificate (macOS)
-        if: startsWith(matrix.platform, 'macos')
+        if: steps.should_run.outputs.should_run == 'true' && startsWith(matrix.platform, 'macos')
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -104,16 +137,43 @@ jobs:
           rm -f $RUNNER_TEMP/certificate.p12
 
       - name: Install frontend dependencies
+        if: steps.should_run.outputs.should_run == 'true'
         working-directory: web
         run: npm ci
 
       - name: Build frontend
+        if: steps.should_run.outputs.should_run == 'true'
         working-directory: web
         run: npm run build
 
+      # Validate Apple secrets before build
+      - name: Validate Apple secrets (macOS)
+        if: steps.should_run.outputs.should_run == 'true' && startsWith(matrix.platform, 'macos')
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          MISSING=""
+          [ -z "$APPLE_SIGNING_IDENTITY" ] && MISSING="$MISSING APPLE_SIGNING_IDENTITY"
+          [ -z "$APPLE_ID" ] && MISSING="$MISSING APPLE_ID"
+          [ -z "$APPLE_PASSWORD" ] && MISSING="$MISSING APPLE_PASSWORD"
+          [ -z "$APPLE_TEAM_ID" ] && MISSING="$MISSING APPLE_TEAM_ID"
+          if [ -n "$MISSING" ]; then
+            echo "::error::Missing secrets:$MISSING"
+            exit 1
+          fi
+          echo "✅ All Apple secrets are configured"
+          echo "   APPLE_ID: ${APPLE_ID:0:3}***"
+          echo "   APPLE_TEAM_ID: ${APPLE_TEAM_ID:0:3}*** (${#APPLE_TEAM_ID} chars)"
+          echo "   APPLE_SIGNING_IDENTITY: ${APPLE_SIGNING_IDENTITY:0:10}***"
+          echo "   APPLE_PASSWORD: *** (${#APPLE_PASSWORD} chars)"
+
       # Build with signing and notarization for macOS
       - name: Build Tauri app (macOS)
-        if: startsWith(matrix.platform, 'macos')
+        if: steps.should_run.outputs.should_run == 'true' && startsWith(matrix.platform, 'macos')
+        timeout-minutes: 30
         working-directory: web
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -126,14 +186,14 @@ jobs:
 
       # Build for other platforms
       - name: Build Tauri app (Linux/Windows)
-        if: "!startsWith(matrix.platform, 'macos')"
+        if: steps.should_run.outputs.should_run == 'true' && !startsWith(matrix.platform, 'macos')
         working-directory: web
         run: |
           cargo install tauri-cli --version "^2" --locked
           cargo tauri build --target ${{ matrix.target }}
 
       - name: Upload artifacts (Linux)
-        if: matrix.platform == 'ubuntu-22.04'
+        if: steps.should_run.outputs.should_run == 'true' && matrix.platform == 'ubuntu-22.04'
         uses: actions/upload-artifact@v4
         with:
           name: recap-${{ matrix.name }}
@@ -143,7 +203,7 @@ jobs:
           retention-days: 30
 
       - name: Upload artifacts (macOS)
-        if: startsWith(matrix.platform, 'macos')
+        if: steps.should_run.outputs.should_run == 'true' && startsWith(matrix.platform, 'macos')
         uses: actions/upload-artifact@v4
         with:
           name: recap-${{ matrix.name }}
@@ -152,7 +212,7 @@ jobs:
           retention-days: 30
 
       - name: Upload artifacts (Windows)
-        if: matrix.platform == 'windows-latest'
+        if: steps.should_run.outputs.should_run == 'true' && matrix.platform == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
           name: recap-${{ matrix.name }}
@@ -161,10 +221,11 @@ jobs:
             web/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
           retention-days: 30
 
-  # 建立 Release
+  # 建立 Release（只在全平台 build 時執行）
   release:
     needs: build
     runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all'
     permissions:
       contents: write
 

@@ -630,7 +630,7 @@ pub async fn sync_claude_projects(
     let db = state.db.lock().await;
 
     // Delegate to service layer
-    crate::services::sync_claude_projects(&db.pool, &claims.sub, &request.project_paths).await
+    crate::core_services::sync_claude_projects(&db.pool, &claims.sub, &request.project_paths).await
 }
 
 #[cfg(test)]

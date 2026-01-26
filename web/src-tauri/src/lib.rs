@@ -3,15 +3,16 @@
 //! A Tauri application for work item management.
 
 mod commands;
+mod services;
 
 // Re-export from recap-core for backwards compatibility
 pub use recap_core::models;
-pub use recap_core::services;
+pub use recap_core::services as core_services;
 
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, RunEvent, WindowEvent,
+    Emitter, Manager, RunEvent, WindowEvent,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -93,6 +94,20 @@ pub fn run() {
             // Users
             commands::users::get_profile,
             commands::users::update_profile,
+            // Tray
+            commands::tray::update_tray_sync_status,
+            commands::tray::set_tray_syncing,
+            // Background Sync
+            commands::background_sync::get_background_sync_config,
+            commands::background_sync::update_background_sync_config,
+            commands::background_sync::get_background_sync_status,
+            commands::background_sync::start_background_sync,
+            commands::background_sync::stop_background_sync,
+            commands::background_sync::trigger_background_sync,
+            // Notifications
+            commands::notification::send_sync_notification,
+            commands::notification::send_auth_notification,
+            commands::notification::send_source_error_notification,
         ])
         .setup(|app| {
             // Setup logging
@@ -118,12 +133,16 @@ pub fn run() {
             });
 
             // Create tray menu
-            let show_item = MenuItem::with_id(app, "show", "Show Recap", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            let show_item = MenuItem::with_id(app, "show", "開啟 Recap", true, None::<&str>)?;
+            let sync_item = MenuItem::with_id(app, "sync_now", "立即同步", true, None::<&str>)?;
+            let separator = MenuItem::with_id(app, "sep1", "─────────────", false, None::<&str>)?;
+            let status_item = MenuItem::with_id(app, "status", "上次同步: -", false, None::<&str>)?;
+            let separator2 = MenuItem::with_id(app, "sep2", "─────────────", false, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "結束 Recap", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_item, &sync_item, &separator, &status_item, &separator2, &quit_item])?;
 
-            // Create tray icon
-            let _tray = TrayIconBuilder::new()
+            // Create tray icon with ID for later access
+            let _tray = TrayIconBuilder::with_id("main-tray")
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
                 .show_menu_on_left_click(false)
@@ -133,6 +152,13 @@ pub fn run() {
                             let _ = window.show();
                             let _ = window.set_focus();
                         }
+                    }
+                    "sync_now" => {
+                        // Emit event to frontend to trigger sync
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.emit("tray-sync-now", ());
+                        }
+                        log::info!("Tray: Sync now triggered");
                     }
                     "quit" => {
                         app.exit(0);
