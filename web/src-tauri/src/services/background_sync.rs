@@ -353,40 +353,14 @@ impl BackgroundSyncService {
         results
     }
 
-    /// Sync Claude Code sessions
+    /// Sync Claude Code sessions using project discovery with git root resolution
     async fn sync_claude_sessions(db: &recap_core::Database, user_id: &str) -> SyncOperationResult {
         log::info!("Syncing Claude sessions for user: {}", user_id);
 
-        // Get all available Claude projects
-        let project_paths: Vec<String> = recap_core::services::SyncService::list_claude_projects()
-            .into_iter()
-            .filter_map(|p| {
-                match std::fs::read_dir(&p) {
-                    Ok(files) => {
-                        for file in files.flatten() {
-                            let path = file.path();
-                            if path.extension().map(|e| e == "jsonl").unwrap_or(false) {
-                                if let Ok(content) = std::fs::read_to_string(&path) {
-                                    if let Some(first_line) = content.lines().next() {
-                                        if let Ok(msg) = serde_json::from_str::<serde_json::Value>(first_line) {
-                                            if let Some(cwd) = msg.get("cwd").and_then(|v| v.as_str()) {
-                                                return Some(cwd.to_string());
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        log::debug!("Failed to read directory {:?}: {}", p, e);
-                    }
-                }
-                None
-            })
-            .collect();
+        // Discover all projects using multi-strategy discovery + git root grouping
+        let projects = recap_core::services::SyncService::discover_project_paths();
 
-        if project_paths.is_empty() {
+        if projects.is_empty() {
             return SyncOperationResult {
                 source: "claude".to_string(),
                 success: true,
@@ -395,7 +369,17 @@ impl BackgroundSyncService {
             };
         }
 
-        match recap_core::services::sync_claude_projects(&db.pool, user_id, &project_paths).await {
+        log::info!("Discovered {} Claude projects", projects.len());
+        for project in &projects {
+            log::debug!(
+                "  Project: {} ({}) - {} dirs",
+                project.name,
+                project.canonical_path,
+                project.claude_dirs.len()
+            );
+        }
+
+        match recap_core::services::sync_discovered_projects(&db.pool, user_id, &projects).await {
             Ok(result) => {
                 let items_synced = (result.work_items_created + result.work_items_updated) as i32;
                 SyncOperationResult {

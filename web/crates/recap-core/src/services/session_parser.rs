@@ -135,6 +135,28 @@ pub struct ParsedSession {
     pub first_message: Option<String>,
 }
 
+// ============ CWD Extraction ============
+
+/// Lightweight extraction of `cwd` from a JSONL session file.
+/// Scans up to 100 lines to find the first line containing a `cwd` field,
+/// without performing full session parsing.
+pub fn extract_cwd(path: &PathBuf) -> Option<String> {
+    let file = fs::File::open(path).ok()?;
+    let reader = BufReader::new(file);
+
+    for line in reader.lines().take(100).flatten() {
+        if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) {
+            if let Some(cwd) = msg.get("cwd").and_then(|v| v.as_str()) {
+                if !cwd.is_empty() {
+                    return Some(cwd.to_string());
+                }
+            }
+        }
+    }
+
+    None
+}
+
 // ============ Session Parsing Functions ============
 
 /// Fast session parsing - only extracts timestamps and first message
@@ -366,6 +388,65 @@ mod tests {
         });
         let detail = extract_tool_detail("Bash", &input);
         assert_eq!(detail, Some("cargo build --release".to_string()));
+    }
+
+    #[test]
+    fn test_extract_cwd_first_line_has_cwd() {
+        let dir = std::env::temp_dir().join("recap_test_cwd_1");
+        let _ = fs::create_dir_all(&dir);
+        let file_path = dir.join("test.jsonl");
+        fs::write(
+            &file_path,
+            r#"{"cwd":"/Users/foo/project","type":"human","timestamp":"2026-01-01T00:00:00Z"}
+{"type":"assistant","timestamp":"2026-01-01T00:01:00Z"}
+"#,
+        )
+        .unwrap();
+        let result = extract_cwd(&file_path);
+        assert_eq!(result, Some("/Users/foo/project".to_string()));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_extract_cwd_summary_first_line() {
+        let dir = std::env::temp_dir().join("recap_test_cwd_2");
+        let _ = fs::create_dir_all(&dir);
+        let file_path = dir.join("test.jsonl");
+        fs::write(
+            &file_path,
+            r#"{"type":"summary","timestamp":"2026-01-01T00:00:00Z"}
+{"type":"progress","timestamp":"2026-01-01T00:01:00Z"}
+{"cwd":"/Users/bar/deep/project","type":"human","timestamp":"2026-01-01T00:02:00Z"}
+"#,
+        )
+        .unwrap();
+        let result = extract_cwd(&file_path);
+        assert_eq!(result, Some("/Users/bar/deep/project".to_string()));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_extract_cwd_no_cwd_field() {
+        let dir = std::env::temp_dir().join("recap_test_cwd_3");
+        let _ = fs::create_dir_all(&dir);
+        let file_path = dir.join("test.jsonl");
+        fs::write(
+            &file_path,
+            r#"{"type":"summary","timestamp":"2026-01-01T00:00:00Z"}
+{"type":"progress","timestamp":"2026-01-01T00:01:00Z"}
+"#,
+        )
+        .unwrap();
+        let result = extract_cwd(&file_path);
+        assert!(result.is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_extract_cwd_nonexistent_file() {
+        let file_path = PathBuf::from("/nonexistent/path/test.jsonl");
+        let result = extract_cwd(&file_path);
+        assert!(result.is_none());
     }
 
     #[test]

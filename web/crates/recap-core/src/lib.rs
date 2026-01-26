@@ -30,9 +30,10 @@ pub use models::{
 // Re-export commonly used types from services
 pub use services::{
     build_rule_based_outcome, calculate_session_hours, create_llm_service, create_sync_service,
-    estimate_commit_hours, estimate_from_diff, extract_tool_detail, generate_daily_hash,
-    get_commits_for_date, get_commits_in_time_range, is_meaningful_message, parse_session_fast,
-    parse_session_full, sync_claude_projects, ClaudeSyncResult, CommitRecord, DailyWorklog,
+    estimate_commit_hours, estimate_from_diff, extract_cwd, extract_tool_detail,
+    generate_daily_hash, get_commits_for_date, get_commits_in_time_range, is_meaningful_message,
+    parse_session_fast, parse_session_full, resolve_git_root, sync_claude_projects,
+    sync_discovered_projects, ClaudeSyncResult, CommitRecord, DailyWorklog, DiscoveredProject,
     ExcelReportGenerator, ExcelWorkItem, FileChange, HoursEstimate, JiraAuthType, JiraClient,
     ParsedSession, ProjectSummary, ReportMetadata, SessionBrief, SessionMetadata,
     StandaloneSession, SyncService, TempoClient, TimelineCommit, ToolUsage,

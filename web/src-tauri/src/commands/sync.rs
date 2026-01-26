@@ -106,6 +106,16 @@ pub trait SyncRepository: Send + Sync {
 
     /// List available Claude projects
     fn list_claude_projects(&self) -> Vec<PathBuf>;
+
+    /// Discover Claude projects with git root resolution and multi-source discovery
+    fn discover_projects(&self) -> Vec<recap_core::DiscoveredProject>;
+
+    /// Sync Claude projects using discovered projects (with git root grouping)
+    async fn sync_discovered_projects(
+        &self,
+        user_id: &str,
+        projects: &[recap_core::DiscoveredProject],
+    ) -> Result<ClaudeSyncResult, String>;
 }
 
 // ============================================================================
@@ -210,6 +220,24 @@ impl SyncRepository for SqliteSyncRepository {
     fn list_claude_projects(&self) -> Vec<PathBuf> {
         SyncService::list_claude_projects()
     }
+
+    fn discover_projects(&self) -> Vec<recap_core::DiscoveredProject> {
+        SyncService::discover_project_paths()
+    }
+
+    async fn sync_discovered_projects(
+        &self,
+        user_id: &str,
+        projects: &[recap_core::DiscoveredProject],
+    ) -> Result<ClaudeSyncResult, String> {
+        let result =
+            recap_core::services::sync_discovered_projects(&self.pool, user_id, projects).await?;
+        Ok(ClaudeSyncResult {
+            sessions_processed: result.sessions_processed as i32,
+            work_items_created: result.work_items_created as i32,
+            work_items_updated: result.work_items_updated as i32,
+        })
+    }
 }
 
 // ============================================================================
@@ -273,11 +301,18 @@ pub(crate) fn build_success_response(sync_result: &ClaudeSyncResult) -> AutoSync
     }
 }
 
-/// Extract CWD from JSONL session file content
+/// Extract CWD from JSONL session file content.
+/// Scans up to 100 lines to find the first line with a `cwd` field,
+/// since many sessions now start with `type: "summary"` lines that lack `cwd`.
+#[allow(dead_code)]
 pub(crate) fn extract_cwd_from_session(content: &str) -> Option<String> {
-    if let Some(first_line) = content.lines().next() {
-        if let Ok(msg) = serde_json::from_str::<serde_json::Value>(first_line) {
-            return msg.get("cwd").and_then(|v| v.as_str()).map(|s| s.to_string());
+    for line in content.lines().take(100) {
+        if let Ok(msg) = serde_json::from_str::<serde_json::Value>(line) {
+            if let Some(cwd) = msg.get("cwd").and_then(|v| v.as_str()) {
+                if !cwd.is_empty() {
+                    return Some(cwd.to_string());
+                }
+            }
         }
     }
     None
@@ -305,18 +340,6 @@ pub async fn auto_sync_impl<R: SyncRepository>(
 ) -> Result<AutoSyncResponse, String> {
     let claims = verify_token(token).map_err(|e| e.to_string())?;
 
-    // Get projects to sync
-    let project_paths: Vec<String> = if let Some(paths) = request.project_paths {
-        paths
-    } else {
-        // Get all available Claude projects
-        extract_project_cwds(repo)
-    };
-
-    if project_paths.is_empty() {
-        return Ok(build_empty_response());
-    }
-
     // Get or create sync status for tracking
     let status = repo
         .get_or_create_status(&claims.sub, "claude", None)
@@ -325,18 +348,42 @@ pub async fn auto_sync_impl<R: SyncRepository>(
     // Mark as syncing
     repo.mark_syncing(&status.id).await?;
 
-    // Call the actual sync logic
-    let sync_result = match repo.sync_claude_projects(&claims.sub, &project_paths).await {
-        Ok(result) => result,
-        Err(e) => {
-            // Mark as error
-            let _ = repo.mark_error(&status.id, &e).await;
-            return Err(e);
+    // If explicit paths are provided, use legacy flow
+    // Otherwise, use the new discovery-based flow
+    let sync_result = if let Some(paths) = request.project_paths {
+        if paths.is_empty() {
+            let _ = repo.mark_success(&status.id, 0).await;
+            return Ok(build_empty_response());
+        }
+        match repo.sync_claude_projects(&claims.sub, &paths).await {
+            Ok(result) => result,
+            Err(e) => {
+                let _ = repo.mark_error(&status.id, &e).await;
+                return Err(e);
+            }
+        }
+    } else {
+        // Use discovery-based sync with git root resolution
+        let projects = repo.discover_projects();
+
+        if projects.is_empty() {
+            let _ = repo.mark_success(&status.id, 0).await;
+            return Ok(build_empty_response());
+        }
+
+        match repo
+            .sync_discovered_projects(&claims.sub, &projects)
+            .await
+        {
+            Ok(result) => result,
+            Err(e) => {
+                let _ = repo.mark_error(&status.id, &e).await;
+                return Err(e);
+            }
         }
     };
 
-    let item_count =
-        (sync_result.work_items_created + sync_result.work_items_updated) as i32;
+    let item_count = (sync_result.work_items_created + sync_result.work_items_updated) as i32;
 
     // Mark as success
     repo.mark_success(&status.id, item_count).await?;
@@ -344,11 +391,42 @@ pub async fn auto_sync_impl<R: SyncRepository>(
     Ok(build_success_response(&sync_result))
 }
 
-/// Extract CWDs from project directories (helper)
+/// Extract CWDs from project directories (helper).
+/// Uses sessions-index.json first, then extract_cwd() as fallback.
+#[allow(dead_code)]
 fn extract_project_cwds<R: SyncRepository>(repo: &R) -> Vec<String> {
     repo.list_claude_projects()
         .into_iter()
         .filter_map(|p| {
+            // Strategy 1: Read sessions-index.json
+            let index_path = p.join("sessions-index.json");
+            if index_path.exists() {
+                if let Ok(content) = std::fs::read_to_string(&index_path) {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                        if let Some(project_path) = json
+                            .get("entries")
+                            .and_then(|e| e.as_array())
+                            .and_then(|arr| arr.first())
+                            .and_then(|entry| entry.get("projectPath"))
+                            .and_then(|v| v.as_str())
+                        {
+                            if !project_path.is_empty() {
+                                return Some(project_path.to_string());
+                            }
+                        }
+                        if let Some(project_path) = json
+                            .get("projectPath")
+                            .and_then(|v| v.as_str())
+                        {
+                            if !project_path.is_empty() {
+                                return Some(project_path.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Strategy 2: extract_cwd from JSONL files (scans multiple lines)
             match std::fs::read_dir(&p) {
                 Ok(files) => {
                     for file in files.flatten() {
@@ -539,6 +617,30 @@ mod tests {
         fn list_claude_projects(&self) -> Vec<PathBuf> {
             self.projects.clone()
         }
+
+        fn discover_projects(&self) -> Vec<recap_core::DiscoveredProject> {
+            // For mock: convert projects to DiscoveredProject (no git root resolution)
+            self.projects
+                .iter()
+                .map(|p| recap_core::DiscoveredProject {
+                    canonical_path: p.to_string_lossy().to_string(),
+                    claude_dirs: vec![p.clone()],
+                    name: p
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "unknown".to_string()),
+                })
+                .collect()
+        }
+
+        async fn sync_discovered_projects(
+            &self,
+            _user_id: &str,
+            _projects: &[recap_core::DiscoveredProject],
+        ) -> Result<ClaudeSyncResult, String> {
+            self.check_failure()?;
+            Ok(self.sync_result.clone().unwrap_or_default())
+        }
     }
 
     // Test user helper
@@ -691,6 +793,24 @@ mod tests {
         let content = "";
         let result = extract_cwd_from_session(content);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_cwd_from_session_summary_first_line() {
+        // Simulates sessions that start with "type: summary" and no cwd
+        let content = r#"{"type": "summary", "timestamp": "2026-01-01T00:00:00Z"}
+{"type": "progress", "timestamp": "2026-01-01T00:01:00Z"}
+{"cwd": "/Users/test/deep/project", "type": "human", "timestamp": "2026-01-01T00:02:00Z"}"#;
+        let result = extract_cwd_from_session(content);
+        assert_eq!(result, Some("/Users/test/deep/project".to_string()));
+    }
+
+    #[test]
+    fn test_extract_cwd_from_session_empty_cwd_skipped() {
+        let content = r#"{"cwd": "", "type": "init"}
+{"cwd": "/Users/real/path", "type": "human"}"#;
+        let result = extract_cwd_from_session(content);
+        assert_eq!(result, Some("/Users/real/path".to_string()));
     }
 
     // ========================================================================
