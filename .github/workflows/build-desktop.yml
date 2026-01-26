@@ -146,9 +146,34 @@ jobs:
         working-directory: web
         run: npm run build
 
+      # Validate Apple secrets before build
+      - name: Validate Apple secrets (macOS)
+        if: steps.should_run.outputs.should_run == 'true' && startsWith(matrix.platform, 'macos')
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          MISSING=""
+          [ -z "$APPLE_SIGNING_IDENTITY" ] && MISSING="$MISSING APPLE_SIGNING_IDENTITY"
+          [ -z "$APPLE_ID" ] && MISSING="$MISSING APPLE_ID"
+          [ -z "$APPLE_PASSWORD" ] && MISSING="$MISSING APPLE_PASSWORD"
+          [ -z "$APPLE_TEAM_ID" ] && MISSING="$MISSING APPLE_TEAM_ID"
+          if [ -n "$MISSING" ]; then
+            echo "::error::Missing secrets:$MISSING"
+            exit 1
+          fi
+          echo "✅ All Apple secrets are configured"
+          echo "   APPLE_ID: ${APPLE_ID:0:3}***"
+          echo "   APPLE_TEAM_ID: ${APPLE_TEAM_ID:0:3}*** (${#APPLE_TEAM_ID} chars)"
+          echo "   APPLE_SIGNING_IDENTITY: ${APPLE_SIGNING_IDENTITY:0:10}***"
+          echo "   APPLE_PASSWORD: *** (${#APPLE_PASSWORD} chars)"
+
       # Build with signing and notarization for macOS
       - name: Build Tauri app (macOS)
         if: steps.should_run.outputs.should_run == 'true' && startsWith(matrix.platform, 'macos')
+        timeout-minutes: 30
         working-directory: web
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
