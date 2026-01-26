@@ -286,7 +286,14 @@ pub async fn analyze_work_items(
         .map_err(|e| format!("Invalid end_date: {}", e))?;
 
     let work_items: Vec<WorkItem> = sqlx::query_as(
-        "SELECT * FROM work_items WHERE user_id = ? AND date >= ? AND date <= ? ORDER BY date ASC",
+        r#"SELECT * FROM work_items WHERE user_id = ? AND date >= ? AND date <= ?
+           AND NOT EXISTS (
+               SELECT 1 FROM project_preferences pp
+               WHERE pp.user_id = work_items.user_id
+               AND pp.hidden = 1
+               AND work_items.title LIKE '[' || pp.project_name || ']%'
+           )
+           ORDER BY date ASC"#,
     )
     .bind(&claims.sub)
     .bind(&start_date)

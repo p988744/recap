@@ -319,6 +319,51 @@ impl Database {
             .await
             .ok();
 
+        // Create project_preferences table for project visibility management
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS project_preferences (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                project_name TEXT NOT NULL,
+                project_path TEXT,
+                hidden BOOLEAN DEFAULT 0,
+                display_name TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, project_name)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_project_prefs_user ON project_preferences(user_id)")
+            .execute(&self.pool)
+            .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_project_prefs_hidden ON project_preferences(user_id, hidden)")
+            .execute(&self.pool)
+            .await?;
+
+        // Add claude_session_path column to users table (default: ~/.claude)
+        sqlx::query("ALTER TABLE users ADD COLUMN claude_session_path TEXT")
+            .execute(&self.pool)
+            .await
+            .ok();
+
+        // Add git_repo_path column to project_preferences (for manual projects)
+        sqlx::query("ALTER TABLE project_preferences ADD COLUMN git_repo_path TEXT")
+            .execute(&self.pool)
+            .await
+            .ok();
+
+        // Add manual_added flag to project_preferences
+        sqlx::query("ALTER TABLE project_preferences ADD COLUMN manual_added BOOLEAN DEFAULT 0")
+            .execute(&self.pool)
+            .await
+            .ok();
+
         log::info!("Database migrations completed");
         Ok(())
     }

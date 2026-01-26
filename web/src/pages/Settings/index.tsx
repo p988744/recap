@@ -1,4 +1,4 @@
-import { User, Link2, Bot, Settings, Sparkles, RefreshCw } from 'lucide-react'
+import { User, Bot, Settings, Sparkles, RefreshCw, FolderGit2 } from 'lucide-react'
 import { Cloud } from 'lucide-react'
 import {
   useSettings,
@@ -9,17 +9,16 @@ import {
 } from './hooks/useSettings'
 import { ProfileSection } from './components/ProfileSection'
 import { AccountSection } from './components/AccountSection'
-import { IntegrationsSectionV2 } from './components/IntegrationsSection/IntegrationsSectionV2'
+import { ProjectsSection } from './components/ProjectsSection'
 import { SyncSection } from './components/SyncSection'
 import { AiSection } from './components/AiSection'
 import { PreferencesSection } from './components/PreferencesSection'
 import { AboutSection } from './components/AboutSection'
-import { IntegrationsProvider } from './context'
 
 const sections = [
   { id: 'profile' as const, label: '個人資料', icon: User },
   { id: 'account' as const, label: '帳號', icon: Cloud },
-  { id: 'integrations' as const, label: '整合服務', icon: Link2 },
+  { id: 'projects' as const, label: '專案', icon: FolderGit2 },
   { id: 'sync' as const, label: '背景同步', icon: RefreshCw },
   { id: 'ai' as const, label: 'AI 助手', icon: Sparkles },
   { id: 'preferences' as const, label: '偏好設定', icon: Settings },
@@ -100,19 +99,9 @@ export function SettingsPage() {
           />
         )}
 
-        {/* Integrations Section */}
-        {settings.activeSection === 'integrations' && (
-          <IntegrationsProvider
-            config={settings.config}
-            sources={settings.sources}
-            setSources={settings.setSources}
-            setMessage={settings.setMessage}
-            refreshConfig={settings.refreshConfig}
-            refreshSources={settings.refreshSources}
-            isAuthenticated={settings.isAuthenticated}
-          >
-            <IntegrationsSectionV2 />
-          </IntegrationsProvider>
+        {/* Projects Section */}
+        {settings.activeSection === 'projects' && (
+          <ProjectsSection />
         )}
 
         {/* Sync Section */}

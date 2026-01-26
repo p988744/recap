@@ -128,3 +128,17 @@ export type {
   ProjectSummary,
   AnalyzeResponse,
 } from './integrations'
+
+// Project types
+export type {
+  ProjectInfo,
+  ProjectSourceInfo,
+  ProjectWorkItemSummary,
+  ProjectStats,
+  ProjectDetail,
+  SetProjectVisibilityRequest,
+  ClaudeCodeDirEntry,
+  ProjectDirectories,
+  AddManualProjectRequest,
+  ClaudeSessionPathResponse,
+} from './projects'

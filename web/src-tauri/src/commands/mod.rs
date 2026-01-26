@@ -9,6 +9,7 @@ pub mod claude;
 pub mod config;
 pub mod gitlab;
 pub mod notification;
+pub mod projects;
 pub mod reports;
 pub mod sources;
 pub mod sync;

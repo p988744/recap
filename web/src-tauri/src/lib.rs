@@ -109,6 +109,16 @@ pub fn run() {
             commands::notification::send_sync_notification,
             commands::notification::send_auth_notification,
             commands::notification::send_source_error_notification,
+            // Projects
+            commands::projects::queries::list_projects,
+            commands::projects::queries::get_project_detail,
+            commands::projects::queries::set_project_visibility,
+            commands::projects::queries::get_hidden_projects,
+            commands::projects::queries::get_project_directories,
+            commands::projects::queries::get_claude_session_path,
+            commands::projects::queries::update_claude_session_path,
+            commands::projects::queries::add_manual_project,
+            commands::projects::queries::remove_manual_project,
         ])
         .setup(|app| {
             // Setup logging

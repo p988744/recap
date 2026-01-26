@@ -1,4 +1,4 @@
-import { Briefcase } from 'lucide-react'
+import { Briefcase, Info } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { ProjectSummaryCard } from '@/components/ProjectSummaryCard'
@@ -9,9 +9,10 @@ interface ProjectViewProps {
   projectGroups: ProjectGroup[]
   items: WorkItem[]
   onItemClick: (item: WorkItem) => void
+  onProjectDetail?: (projectName: string) => void
 }
 
-export function ProjectView({ projectGroups, items, onItemClick }: ProjectViewProps) {
+export function ProjectView({ projectGroups, items, onItemClick, onProjectDetail }: ProjectViewProps) {
   return (
     <>
       <div className="flex items-center justify-between mb-6">
@@ -47,6 +48,18 @@ export function ProjectView({ projectGroups, items, onItemClick }: ProjectViewPr
                   { id: item.id, title: item.title, description: item.description, hours: item.hours, date: item.date, source: item.source, synced_to_tempo: item.synced_to_tempo } as WorkItem
                 onItemClick(workItem)
               }}
+              headerAction={onProjectDetail ? (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onProjectDetail(project.project_name)
+                  }}
+                  className="p-1.5 rounded hover:bg-foreground/10 transition-colors"
+                  title="查看專案詳情"
+                >
+                  <Info className="w-4 h-4 text-muted-foreground" strokeWidth={1.5} />
+                </button>
+              ) : undefined}
             />
           ))
         )}
