@@ -67,6 +67,7 @@ pub fn run() {
             commands::reports::queries::get_summary_report,
             commands::reports::queries::get_category_report,
             commands::reports::queries::get_source_report,
+            commands::reports::queries::analyze_work_items,
             // Reports - export
             commands::reports::export::export_excel_report,
             commands::reports::export::generate_tempo_report,

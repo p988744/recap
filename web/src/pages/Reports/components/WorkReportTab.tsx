@@ -16,38 +16,32 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { reports } from '@/services'
-import type { AnalyzeResponse, LegacyPersonalReport } from '@/types'
+import type { AnalyzeResponse } from '@/types'
 import { formatHours, formatDateFull, cn } from '@/lib/utils'
 import { generateWorkReport, type ReportPeriod } from '../hooks/useReports'
 
 interface WorkReportTabProps {
   data: AnalyzeResponse | null
-  personalReport: LegacyPersonalReport | null
   period: ReportPeriod
   setPeriod: (period: ReportPeriod) => void
 }
 
-export function WorkReportTab({ data, personalReport, period, setPeriod }: WorkReportTabProps) {
+export function WorkReportTab({ data, period, setPeriod }: WorkReportTabProps) {
   const handleCopy = () => {
     const report = generateWorkReport(data)
     navigator.clipboard.writeText(report)
   }
 
-  const handleExportMarkdown = async () => {
+  const handleExportMarkdown = () => {
     if (!data?.start_date || !data?.end_date) return
-    try {
-      const markdown = await reports.exportMarkdownReport(data.start_date, data.end_date)
-      const blob = new Blob([markdown], { type: 'text/markdown' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `report_${data.start_date}_${data.end_date}.md`
-      a.click()
-      URL.revokeObjectURL(url)
-    } catch (err) {
-      console.error('Export failed:', err)
-    }
+    const markdown = generateWorkReport(data)
+    const blob = new Blob([markdown], { type: 'text/markdown' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `report_${data.start_date}_${data.end_date}.md`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   return (
@@ -103,30 +97,6 @@ export function WorkReportTab({ data, personalReport, period, setPeriod }: WorkR
             </div>
           </CardContent>
         </Card>
-      )}
-
-      {/* Category Breakdown from Personal Report */}
-      {personalReport && Object.keys(personalReport.category_breakdown).length > 0 && (
-        <div>
-          <div className="flex items-center gap-2 mb-4">
-            <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-              類別統計
-            </p>
-          </div>
-          <div className="grid grid-cols-4 gap-3">
-            {Object.entries(personalReport.category_breakdown)
-              .sort((a, b) => b[1] - a[1])
-              .slice(0, 4)
-              .map(([category, hours]) => (
-                <Card key={category}>
-                  <CardContent className="p-4">
-                    <p className="text-xs text-muted-foreground truncate">{category}</p>
-                    <p className="font-display text-xl text-foreground mt-1">{hours.toFixed(1)}h</p>
-                  </CardContent>
-                </Card>
-              ))}
-          </div>
-        </div>
       )}
 
       {/* Project Details */}

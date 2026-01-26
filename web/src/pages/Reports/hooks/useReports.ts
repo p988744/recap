@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { reports } from '@/services'
-import type { AnalyzeResponse, LegacyPersonalReport, PEReport, TempoReport, TempoReportPeriod } from '@/types'
+import type { AnalyzeResponse, PEReport, TempoReport, TempoReportPeriod } from '@/types'
 
 // =============================================================================
 // Types
@@ -10,12 +10,67 @@ export type ReportPeriod = 'week' | 'last-week' | '7days' | '30days'
 export type ReportTab = 'work' | 'pe' | 'tempo'
 
 // =============================================================================
+// Date Range Helpers
+// =============================================================================
+
+function formatDate(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function getDateRange(period: ReportPeriod): { startDate: string; endDate: string } {
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+
+  switch (period) {
+    case 'week': {
+      // Monday to Sunday of current week
+      const dayOfWeek = today.getDay() // 0=Sun, 1=Mon, ...
+      const monday = new Date(today)
+      monday.setDate(today.getDate() - ((dayOfWeek + 6) % 7))
+      const sunday = new Date(monday)
+      sunday.setDate(monday.getDate() + 6)
+      return { startDate: formatDate(monday), endDate: formatDate(sunday) }
+    }
+    case 'last-week': {
+      const dayOfWeek = today.getDay()
+      const thisMonday = new Date(today)
+      thisMonday.setDate(today.getDate() - ((dayOfWeek + 6) % 7))
+      const lastMonday = new Date(thisMonday)
+      lastMonday.setDate(thisMonday.getDate() - 7)
+      const lastSunday = new Date(lastMonday)
+      lastSunday.setDate(lastMonday.getDate() + 6)
+      return { startDate: formatDate(lastMonday), endDate: formatDate(lastSunday) }
+    }
+    case '7days': {
+      const start = new Date(today)
+      start.setDate(today.getDate() - 6)
+      return { startDate: formatDate(start), endDate: formatDate(today) }
+    }
+    case '30days': {
+      const start = new Date(today)
+      start.setDate(today.getDate() - 29)
+      return { startDate: formatDate(start), endDate: formatDate(today) }
+    }
+    default: {
+      const dayOfWeek = today.getDay()
+      const monday = new Date(today)
+      monday.setDate(today.getDate() - ((dayOfWeek + 6) % 7))
+      const sunday = new Date(monday)
+      sunday.setDate(monday.getDate() + 6)
+      return { startDate: formatDate(monday), endDate: formatDate(sunday) }
+    }
+  }
+}
+
+// =============================================================================
 // Main Hook: useReports
 // =============================================================================
 
 export function useReports(isAuthenticated: boolean, token: string | null) {
   const [data, setData] = useState<AnalyzeResponse | null>(null)
-  const [personalReport, setPersonalReport] = useState<LegacyPersonalReport | null>(null)
   const [peReport, setPEReport] = useState<PEReport | null>(null)
   const [loading, setLoading] = useState(true)
   const [period, setPeriod] = useState<ReportPeriod>('week')
@@ -29,34 +84,9 @@ export function useReports(isAuthenticated: boolean, token: string | null) {
   const fetchReport = useCallback(async (p: ReportPeriod) => {
     setLoading(true)
     try {
-      let result: AnalyzeResponse
-      switch (p) {
-        case 'week':
-          result = await reports.analyzeWeek()
-          break
-        case 'last-week':
-          result = await reports.analyzeLastWeek()
-          break
-        case '7days':
-          result = await reports.analyzeDays(7)
-          break
-        case '30days':
-          result = await reports.analyzeDays(30)
-          break
-        default:
-          result = await reports.analyzeWeek()
-      }
+      const { startDate, endDate } = getDateRange(p)
+      const result = await reports.analyzeWorkItems(startDate, endDate)
       setData(result)
-
-      // Also fetch personal report for the same date range
-      if (result.start_date && result.end_date) {
-        try {
-          const personal = await reports.getLegacyPersonalReport(result.start_date, result.end_date)
-          setPersonalReport(personal)
-        } catch (err) {
-          console.error('Failed to fetch personal report:', err)
-        }
-      }
     } catch (err) {
       console.error('Failed to fetch report:', err)
     } finally {
@@ -67,8 +97,9 @@ export function useReports(isAuthenticated: boolean, token: string | null) {
   const fetchPEReport = useCallback(async () => {
     setLoading(true)
     try {
-      const result = await reports.getPEReport(peYear, peHalf)
-      setPEReport(result)
+      // PE report is not yet available via Tauri IPC - show empty state
+      setPEReport(null)
+      console.warn('PE report is not yet available via Tauri IPC')
     } catch (err) {
       console.error('Failed to fetch PE report:', err)
     } finally {
@@ -110,7 +141,7 @@ export function useReports(isAuthenticated: boolean, token: string | null) {
   return {
     // Work report state
     data,
-    personalReport,
+    personalReport: null,
     loading,
     period,
     setPeriod,
