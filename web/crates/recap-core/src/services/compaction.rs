@@ -34,6 +34,32 @@ pub struct CompactionResult {
     pub errors: Vec<String>,
 }
 
+// ============ Helpers (time) ============
+
+/// Check if an hour bucket is in the past (completed).
+/// Hour buckets are naive local times like "2026-01-26T18:00:00".
+fn is_hour_completed(hour_bucket: &str) -> bool {
+    let current = chrono::Local::now().format("%Y-%m-%dT%H:00:00").to_string();
+    hour_bucket < current.as_str()
+}
+
+/// Check if a day is in the past (completed).
+/// Accepts date strings like "2026-01-26" or period_start like "2026-01-26T00:00:00+00:00".
+fn is_day_completed(date: &str) -> bool {
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    // Extract just the date portion (first 10 chars) for comparison
+    let day = &date[..date.len().min(10)];
+    day < today.as_str()
+}
+
+/// Check if a period (weekly/monthly) is in the past (completed).
+/// A period is completed when period_end is before today.
+fn is_period_completed(period_end: &str) -> bool {
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let end_date = &period_end[..period_end.len().min(10)];
+    end_date < today.as_str()
+}
+
 // ============ Hourly Compaction ============
 
 /// Compact raw hourly snapshots into an hourly summary for a specific hour bucket.
@@ -70,8 +96,8 @@ pub async fn compact_hourly(
     .await
     .map_err(|e| format!("Failed to check existing summary: {}", e))?;
 
-    if existing.is_some() {
-        return Ok(()); // Already compacted
+    if existing.is_some() && is_hour_completed(hour_bucket) {
+        return Ok(()); // Only skip if hour is finished; in-progress hours get re-compacted
     }
 
     // Fetch previous hour's summary for context
@@ -162,8 +188,8 @@ pub async fn compact_daily(
     .await
     .map_err(|e| format!("Failed to check existing daily summary: {}", e))?;
 
-    if existing.is_some() {
-        return Ok(());
+    if existing.is_some() && is_day_completed(date) {
+        return Ok(()); // Only skip if day is finished; in-progress days get re-compacted
     }
 
     // Fetch all hourly summaries for this day
@@ -279,8 +305,8 @@ pub async fn compact_period(
     .await
     .map_err(|e| format!("Failed to check existing {} summary: {}", scale, e))?;
 
-    if existing.is_some() {
-        return Ok(());
+    if existing.is_some() && is_period_completed(period_end) {
+        return Ok(()); // Only skip if period is finished; in-progress periods get re-compacted
     }
 
     // Fetch source-scale summaries for this period
@@ -404,15 +430,38 @@ pub async fn run_compaction_cycle(
     .await
     .map_err(|e| format!("Failed to find uncompacted snapshots: {}", e))?;
 
-    // 2. Compact hourly
-    for (project_path, hour_bucket) in &uncompacted {
+    // 2. Also find in-progress hours (current hour that already have a summary but need refresh)
+    let current_hour = chrono::Local::now().format("%Y-%m-%dT%H:00:00").to_string();
+    let in_progress: Vec<(String, String)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT s.project_path, s.hour_bucket
+        FROM snapshot_raw_data s
+        WHERE s.user_id = ? AND s.hour_bucket = ?
+        "#,
+    )
+    .bind(user_id)
+    .bind(&current_hour)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to find in-progress hours: {}", e))?;
+
+    // Merge uncompacted + in-progress, dedup by (project_path, hour_bucket)
+    let mut all_hourly = uncompacted;
+    for entry in in_progress {
+        if !all_hourly.contains(&entry) {
+            all_hourly.push(entry);
+        }
+    }
+
+    // 3. Compact hourly
+    for (project_path, hour_bucket) in &all_hourly {
         match compact_hourly(pool, llm, user_id, project_path, hour_bucket).await {
             Ok(()) => result.hourly_compacted += 1,
             Err(e) => result.errors.push(format!("hourly {}/{}: {}", project_path, hour_bucket, e)),
         }
     }
 
-    // 3. Find days that have hourly summaries but no daily summary
+    // 4. Find days that have hourly summaries but no daily summary
     let uncompacted_days: Vec<(String, String)> = sqlx::query_as(
         r#"
         SELECT DISTINCT ws.project_path, DATE(ws.period_start) as day
@@ -430,20 +479,75 @@ pub async fn run_compaction_cycle(
     .await
     .map_err(|e| format!("Failed to find uncompacted days: {}", e))?;
 
-    for (project_path, day) in &uncompacted_days {
+    // 5. Also include today for re-compaction (daily summary updates as new hourly data arrives)
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let in_progress_days: Vec<(String,)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT ws.project_path
+        FROM work_summaries ws
+        WHERE ws.user_id = ? AND ws.scale = 'hourly' AND DATE(ws.period_start) = ?
+        "#,
+    )
+    .bind(user_id)
+    .bind(&today)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to find in-progress days: {}", e))?;
+
+    // Merge uncompacted days + today's in-progress
+    let mut all_days = uncompacted_days;
+    for (project_path,) in in_progress_days {
+        let entry = (project_path, today.clone());
+        if !all_days.contains(&entry) {
+            all_days.push(entry);
+        }
+    }
+
+    for (project_path, day) in &all_days {
         match compact_daily(pool, llm, user_id, project_path, day).await {
             Ok(()) => result.daily_compacted += 1,
             Err(e) => result.errors.push(format!("daily {}/{}: {}", project_path, day, e)),
         }
     }
 
-    // Weekly and monthly compaction is less urgent; skip for now if there are errors
-    // They can be triggered in subsequent cycles.
+    // 6. Monthly compaction for the current month (re-compact while month is in progress)
+    let now = chrono::Local::now();
+    let month_start = now.format("%Y-%m-01T00:00:00+00:00").to_string();
+    let month_end = {
+        let year = now.format("%Y").to_string().parse::<i32>().unwrap_or(2026);
+        let month = now.format("%m").to_string().parse::<u32>().unwrap_or(1);
+        let (next_year, next_month) = if month == 12 { (year + 1, 1) } else { (year, month + 1) };
+        format!("{:04}-{:02}-01T00:00:00+00:00", next_year, next_month)
+    };
+
+    // Find all projects that have daily summaries this month
+    let monthly_projects: Vec<(String,)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT ws.project_path
+        FROM work_summaries ws
+        WHERE ws.user_id = ? AND ws.scale = 'daily'
+            AND ws.period_start >= ? AND ws.period_start < ?
+        "#,
+    )
+    .bind(user_id)
+    .bind(&month_start)
+    .bind(&month_end)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to find monthly projects: {}", e))?;
+
+    for (project_path,) in &monthly_projects {
+        match compact_period(pool, llm, user_id, Some(project_path), "monthly", &month_start, &month_end).await {
+            Ok(()) => result.monthly_compacted += 1,
+            Err(e) => result.errors.push(format!("monthly {}: {}", project_path, e)),
+        }
+    }
 
     log::info!(
-        "Compaction cycle complete: {} hourly, {} daily, {} errors",
+        "Compaction cycle complete: {} hourly, {} daily, {} monthly, {} errors",
         result.hourly_compacted,
         result.daily_compacted,
+        result.monthly_compacted,
         result.errors.len()
     );
 
@@ -565,32 +669,36 @@ fn aggregate_snapshots(snapshots: &[SnapshotRawData]) -> (String, Vec<&str>, Str
 }
 
 /// Build a rule-based summary when LLM is not available.
+/// Produces a one-line summary followed by bullet-point details in markdown format.
 fn build_rule_based_summary(current_data: &str, key_activities: &str, git_summary: &str) -> String {
-    let mut parts = Vec::new();
+    let commits: Vec<String> = serde_json::from_str(git_summary).unwrap_or_default();
+    let files: Vec<String> = serde_json::from_str(key_activities).unwrap_or_default();
 
-    // Include git commits first (priority)
-    if let Ok(commits) = serde_json::from_str::<Vec<String>>(git_summary) {
-        if !commits.is_empty() {
-            let commit_msgs: Vec<String> = commits.iter().take(5).cloned().collect();
-            parts.push(format!("Commits: {}", commit_msgs.join("; ")));
-        }
+    if commits.is_empty() && files.is_empty() {
+        return current_data.chars().take(200).collect();
     }
 
-    // Include file modifications
-    if let Ok(files) = serde_json::from_str::<Vec<String>>(key_activities) {
-        if !files.is_empty() {
-            let file_list: Vec<&str> = files.iter().map(|s| s.as_str()).take(5).collect();
-            parts.push(format!("修改: {}", file_list.join(", ")));
-        }
+    // Build one-line summary
+    let mut summary_parts = Vec::new();
+    if !commits.is_empty() {
+        summary_parts.push(format!("{} 筆 commit", commits.len()));
+    }
+    if !files.is_empty() {
+        summary_parts.push(format!("修改 {} 個檔案", files.len()));
+    }
+    let summary_line = summary_parts.join("，");
+
+    // Build bullet details
+    let mut details = Vec::new();
+    for commit in commits.iter().take(5) {
+        details.push(format!("- {}", commit));
+    }
+    if !files.is_empty() {
+        let file_list: Vec<&str> = files.iter().map(|s| s.as_str()).take(5).collect();
+        details.push(format!("- 修改: `{}`", file_list.join("`, `")));
     }
 
-    if parts.is_empty() {
-        // Fallback: truncate raw data
-        let truncated: String = current_data.chars().take(200).collect();
-        return truncated;
-    }
-
-    parts.join(" | ")
+    format!("{}\n\n{}", summary_line, details.join("\n"))
 }
 
 /// Merge multiple JSON array strings into one.
@@ -671,9 +779,12 @@ mod tests {
         let commits = r#"["abc123: feat: add login (+50-10)"]"#;
 
         let summary = build_rule_based_summary(data, activities, commits);
-        assert!(summary.contains("Commits:"));
-        assert!(summary.contains("feat: add login"));
-        assert!(summary.contains("修改:"));
+        // First line: summary
+        assert!(summary.contains("1 筆 commit"));
+        assert!(summary.contains("修改 2 個檔案"));
+        // Details section
+        assert!(summary.contains("- abc123: feat: add login"));
+        assert!(summary.contains("- 修改: `src/main.rs`"));
     }
 
     #[test]
@@ -683,8 +794,10 @@ mod tests {
         let commits = "[]";
 
         let summary = build_rule_based_summary(data, activities, commits);
-        assert!(summary.contains("修改:"));
-        assert!(!summary.contains("Commits:"));
+        // Summary line: only files
+        assert!(summary.starts_with("修改 1 個檔案"));
+        // Details
+        assert!(summary.contains("- 修改: `src/main.rs`"));
     }
 
     #[test]
@@ -710,6 +823,42 @@ mod tests {
         let arrays: Vec<String> = vec![];
         let merged = merge_json_arrays(&arrays);
         assert_eq!(merged, "[]");
+    }
+
+    #[test]
+    fn test_is_hour_completed_past() {
+        assert!(is_hour_completed("2020-01-01T00:00:00"));
+    }
+
+    #[test]
+    fn test_is_hour_completed_future() {
+        assert!(!is_hour_completed("2099-12-31T23:00:00"));
+    }
+
+    #[test]
+    fn test_is_day_completed_past() {
+        assert!(is_day_completed("2020-01-01"));
+    }
+
+    #[test]
+    fn test_is_day_completed_future() {
+        assert!(!is_day_completed("2099-12-31"));
+    }
+
+    #[test]
+    fn test_is_day_completed_with_period_start_format() {
+        // period_start format: "2020-01-01T00:00:00+00:00"
+        assert!(is_day_completed("2020-01-01T00:00:00+00:00"));
+    }
+
+    #[test]
+    fn test_is_period_completed_past() {
+        assert!(is_period_completed("2020-02-01T00:00:00+00:00"));
+    }
+
+    #[test]
+    fn test_is_period_completed_future() {
+        assert!(!is_period_completed("2099-02-01T00:00:00+00:00"));
     }
 
     #[test]

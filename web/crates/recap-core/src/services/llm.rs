@@ -229,9 +229,14 @@ Git Commits:
 本時段的工作資料：
 {data}
 
-請用繁體中文回答，重點描述完成了什麼、使用什麼技術、解決什麼問題。
+請用繁體中文回答，格式如下：
+1. 第一行是一句話的總結摘要（不要加前綴）
+2. 空一行後，用條列式列出具體細節，每個要點以「- 」開頭
+
+重點描述完成了什麼、使用什麼技術、解決什麼問題。
 若有 git commit，優先以 commit 訊息作為成果總結。
-直接輸出摘要內容，不要加任何前綴或說明。"#,
+程式碼中的檔名、函式名、變數名請用 `backtick` 包裹。
+直接輸出內容，不要加標題。"#,
             length_hint = length_hint,
             context_section = context_section,
             data = current_data.chars().take(max_chars).collect::<String>()

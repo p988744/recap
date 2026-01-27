@@ -1,5 +1,6 @@
 import { ChevronDown, ChevronRight, GitCommit, FileCode } from 'lucide-react'
 import type { WorklogDayProject, HourlyBreakdownItem } from '@/types/worklog'
+import { MarkdownSummary } from '@/components/MarkdownSummary'
 import { HourlyBreakdown } from './HourlyBreakdown'
 
 interface ProjectCardProps {
@@ -51,9 +52,7 @@ export function ProjectCard({
 
           {/* Summary */}
           {project.daily_summary && (
-            <p className="text-sm text-muted-foreground leading-relaxed line-clamp-2">
-              {project.daily_summary}
-            </p>
+            <MarkdownSummary content={project.daily_summary} />
           )}
 
           {/* Stats row */}

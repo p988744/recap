@@ -1,5 +1,6 @@
 import { Clock, GitCommit, FileCode } from 'lucide-react'
 import type { HourlyBreakdownItem } from '@/types/worklog'
+import { MarkdownSummary } from '@/components/MarkdownSummary'
 
 interface HourlyBreakdownProps {
   items: HourlyBreakdownItem[]
@@ -32,21 +33,36 @@ export function HourlyBreakdown({ items, loading }: HourlyBreakdownProps) {
   )
 }
 
+function uniqueFileNames(files: string[]): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const f of files) {
+    const name = f.split('/').pop() || f
+    if (!seen.has(name)) {
+      seen.add(name)
+      result.push(name)
+    }
+  }
+  return result
+}
+
 function HourlyCard({ item }: { item: HourlyBreakdownItem }) {
+  const fileNames = uniqueFileNames(item.files_modified)
+
   return (
     <div className="px-4 py-3 pl-11">
-      {/* Time + summary */}
-      <div className="flex items-start gap-2">
-        <span className="flex items-center gap-1 text-xs text-muted-foreground shrink-0 mt-0.5">
-          <Clock className="w-3 h-3" strokeWidth={1.5} />
-          {item.hour_start}–{item.hour_end}
-        </span>
-        <p className="text-sm text-foreground leading-relaxed">{item.summary}</p>
-      </div>
+      {/* Time label */}
+      <span className="flex items-center gap-1 text-xs text-muted-foreground mb-1.5">
+        <Clock className="w-3 h-3" strokeWidth={1.5} />
+        {item.hour_start}–{item.hour_end}
+      </span>
+
+      {/* Summary */}
+      <MarkdownSummary content={item.summary} />
 
       {/* Files modified */}
-      {item.files_modified.length > 0 && (
-        <div className="mt-2 pl-14">
+      {fileNames.length > 0 && (
+        <div className="mt-2">
           <div className="flex items-center gap-1 mb-1">
             <FileCode className="w-3 h-3 text-muted-foreground" strokeWidth={1.5} />
             <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -54,17 +70,17 @@ function HourlyCard({ item }: { item: HourlyBreakdownItem }) {
             </span>
           </div>
           <div className="flex flex-wrap gap-1">
-            {item.files_modified.slice(0, 8).map((file, j) => (
+            {fileNames.slice(0, 8).map((name, j) => (
               <span
                 key={j}
                 className="text-xs text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded font-mono"
               >
-                {file.split('/').pop()}
+                {name}
               </span>
             ))}
-            {item.files_modified.length > 8 && (
+            {fileNames.length > 8 && (
               <span className="text-xs text-muted-foreground">
-                +{item.files_modified.length - 8}
+                +{fileNames.length - 8}
               </span>
             )}
           </div>
@@ -73,7 +89,7 @@ function HourlyCard({ item }: { item: HourlyBreakdownItem }) {
 
       {/* Git commits */}
       {item.git_commits.length > 0 && (
-        <div className="mt-2 pl-14">
+        <div className="mt-2">
           <div className="flex items-center gap-1 mb-1">
             <GitCommit className="w-3 h-3 text-muted-foreground" strokeWidth={1.5} />
             <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
