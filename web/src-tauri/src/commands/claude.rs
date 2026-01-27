@@ -605,7 +605,7 @@ pub async fn summarize_claude_session(
     }
 
     match llm.summarize_session(&content).await {
-        Ok(summary) => Ok(SummarizeResult {
+        Ok((summary, _usage)) => Ok(SummarizeResult {
             summary,
             success: true,
             error: None,

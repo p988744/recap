@@ -116,6 +116,11 @@ pub fn run() {
             // Worklog
             commands::snapshots::get_worklog_overview,
             commands::snapshots::get_hourly_breakdown,
+            // LLM Usage
+            commands::llm_usage::get_llm_usage_stats,
+            commands::llm_usage::get_llm_usage_daily,
+            commands::llm_usage::get_llm_usage_by_model,
+            commands::llm_usage::get_llm_usage_logs,
             // Projects
             commands::projects::queries::list_projects,
             commands::projects::queries::get_project_detail,

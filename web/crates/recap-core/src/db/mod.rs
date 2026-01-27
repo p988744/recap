@@ -437,6 +437,37 @@ impl Database {
             .execute(&self.pool)
             .await?;
 
+        // Create llm_usage_logs table for tracking LLM API token usage and costs
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS llm_usage_logs (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                prompt_tokens INTEGER,
+                completion_tokens INTEGER,
+                total_tokens INTEGER,
+                estimated_cost REAL,
+                purpose TEXT NOT NULL,
+                duration_ms INTEGER,
+                status TEXT NOT NULL DEFAULT 'success',
+                error_message TEXT,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_llm_usage_user_date ON llm_usage_logs(user_id, created_at)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_llm_usage_provider ON llm_usage_logs(user_id, provider, created_at)")
+            .execute(&self.pool)
+            .await?;
+
         log::info!("Database migrations completed");
         Ok(())
     }

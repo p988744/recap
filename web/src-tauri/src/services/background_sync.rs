@@ -288,74 +288,81 @@ impl BackgroundSyncService {
         }
 
         let mut results = Vec::new();
-        let db_guard = db.lock().await;
 
-        // Sync Claude sessions (primary source)
-        if config.sync_claude {
-            let result = Self::sync_claude_sessions(&db_guard, user_id).await;
-            results.push(result);
-        }
+        // Phase 1: Sync sources + capture snapshots (hold db lock briefly)
+        let pool = {
+            let db_guard = db.lock().await;
 
-        // Sync Git repos (placeholder - requires git service implementation)
-        if config.sync_git {
-            results.push(SyncOperationResult {
-                source: "git".to_string(),
-                success: true,
-                items_synced: 0,
-                error: None,
-            });
-        }
+            // Sync Claude sessions (primary source)
+            if config.sync_claude {
+                let result = Self::sync_claude_sessions(&db_guard, user_id).await;
+                results.push(result);
+            }
 
-        // Sync GitLab (placeholder)
-        if config.sync_gitlab {
-            results.push(SyncOperationResult {
-                source: "gitlab".to_string(),
-                success: true,
-                items_synced: 0,
-                error: None,
-            });
-        }
+            // Sync Git repos (placeholder)
+            if config.sync_git {
+                results.push(SyncOperationResult {
+                    source: "git".to_string(),
+                    success: true,
+                    items_synced: 0,
+                    error: None,
+                });
+            }
 
-        // Sync Jira (placeholder)
-        if config.sync_jira {
-            results.push(SyncOperationResult {
-                source: "jira".to_string(),
-                success: true,
-                items_synced: 0,
-                error: None,
-            });
-        }
+            // Sync GitLab (placeholder)
+            if config.sync_gitlab {
+                results.push(SyncOperationResult {
+                    source: "gitlab".to_string(),
+                    success: true,
+                    items_synced: 0,
+                    error: None,
+                });
+            }
 
-        // Phase 2: Capture hourly snapshots
-        if config.sync_claude {
-            let projects = recap_core::services::SyncService::discover_project_paths();
-            let mut snapshot_count = 0;
-            for project in &projects {
-                match recap_core::services::snapshot::capture_snapshots_for_project(
-                    &db_guard.pool,
-                    user_id,
-                    project,
-                )
-                .await
-                {
-                    Ok(n) => snapshot_count += n,
-                    Err(e) => {
-                        log::warn!("Snapshot capture error for {}: {}", project.name, e);
+            // Sync Jira (placeholder)
+            if config.sync_jira {
+                results.push(SyncOperationResult {
+                    source: "jira".to_string(),
+                    success: true,
+                    items_synced: 0,
+                    error: None,
+                });
+            }
+
+            // Phase 2: Capture hourly snapshots
+            if config.sync_claude {
+                let projects = recap_core::services::SyncService::discover_project_paths();
+                let mut snapshot_count = 0;
+                for project in &projects {
+                    match recap_core::services::snapshot::capture_snapshots_for_project(
+                        &db_guard.pool,
+                        user_id,
+                        project,
+                    )
+                    .await
+                    {
+                        Ok(n) => snapshot_count += n,
+                        Err(e) => {
+                            log::warn!("Snapshot capture error for {}: {}", project.name, e);
+                        }
                     }
                 }
+                if snapshot_count > 0 {
+                    log::info!("Captured {} hourly snapshots", snapshot_count);
+                }
             }
-            if snapshot_count > 0 {
-                log::info!("Captured {} hourly snapshots", snapshot_count);
-            }
-        }
 
-        // Phase 3: Run compaction cycle
+            // Clone pool before releasing the db lock so compaction can use it without blocking
+            db_guard.pool.clone()
+        }; // db_guard dropped here — other commands can now access the database
+
+        // Phase 3: Run compaction cycle (uses pool directly, does NOT hold db lock)
         if config.sync_claude {
-            let llm = recap_core::services::llm::create_llm_service(&db_guard.pool, user_id)
+            let llm = recap_core::services::llm::create_llm_service(&pool, user_id)
                 .await
                 .ok();
             match recap_core::services::compaction::run_compaction_cycle(
-                &db_guard.pool,
+                &pool,
                 llm.as_ref(),
                 user_id,
             )
@@ -375,8 +382,6 @@ impl BackgroundSyncService {
                 }
             }
         }
-
-        drop(db_guard);
 
         // Update status
         {

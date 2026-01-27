@@ -292,6 +292,14 @@ impl SyncService {
 
             if let Some(raw) = raw_path {
                 let git_root = resolve_git_root(&raw);
+
+                // Skip root filesystem path — these are MCP/no-context sessions
+                // stored in ~/.claude/projects/-/ with no real project directory
+                if git_root == "/" || git_root.is_empty() {
+                    log::debug!("Skipping root path project from {:?}", dir_path);
+                    continue;
+                }
+
                 grouped.entry(git_root).or_default().push(dir_path);
             }
         }
@@ -518,6 +526,11 @@ pub async fn sync_discovered_projects(
     let now = Utc::now();
 
     for project in projects {
+        // Skip root path projects (MCP/no-context sessions)
+        if project.canonical_path == "/" || project.canonical_path.is_empty() {
+            continue;
+        }
+
         for claude_dir in &project.claude_dirs {
             if !claude_dir.is_dir() {
                 continue;

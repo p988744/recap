@@ -1,6 +1,5 @@
 import { useEffect, useState, useMemo, useCallback } from 'react'
-import { listen } from '@tauri-apps/api/event'
-import { workItems, sync, tempo, backgroundSync, tray, notification } from '@/services'
+import { workItems, sync, tempo, notification } from '@/services'
 import type { WorkItemStatsResponse, WorkItem, SyncStatus as SyncStatusType } from '@/types'
 import type { TimelineSession } from '@/components/WorkGanttChart'
 
@@ -71,13 +70,10 @@ export function useDashboard(isAuthenticated: boolean, token: string | null) {
   // Last sync time (client-side tracking)
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null)
 
-  // Sync function (shared between auto and manual)
+  // Dashboard-level sync: fetches work items for display
   const performSync = useCallback(async () => {
     if (!isAuthenticated || !token) return
     setAutoSyncState('syncing')
-
-    // Update tray to show syncing state
-    await tray.setSyncing(true).catch(() => {})
 
     try {
       const result = await sync.autoSync()
@@ -86,8 +82,7 @@ export function useDashboard(isAuthenticated: boolean, token: string | null) {
       const failedResults = result.results.filter((r) => !r.success)
       if (failedResults.length > 0) {
         const errorSources = failedResults.map((r) => r.source).join(', ')
-        const errorMessage = `${errorSources} 同步失敗`
-        await notification.sendSyncNotification(false, errorMessage).catch(() => {})
+        await notification.sendSyncNotification(false, `${errorSources} 同步失敗`).catch(() => {})
       }
 
       if (result.total_items > 0) {
@@ -100,18 +95,8 @@ export function useDashboard(isAuthenticated: boolean, token: string | null) {
       setSyncStatusData(statuses)
       const now = new Date()
       setLastSyncTime(now)
-
-      // Update tray with last sync time
-      await tray.updateSyncStatus(now.toISOString(), false).catch(() => {})
-    } catch (err) {
-      // Send notification for sync error (only for non-network errors)
-      const errorMessage = err instanceof Error ? err.message : '同步失敗'
-      // Only notify if it's not a network error (silent fail for network issues)
-      if (!errorMessage.toLowerCase().includes('network')) {
-        await notification.sendSyncNotification(false, errorMessage).catch(() => {})
-      }
-      // Update tray
-      await tray.setSyncing(false).catch(() => {})
+    } catch {
+      // Silently handle sync errors (notifications handled by useAppSync)
     } finally {
       setAutoSyncState('done')
     }
@@ -124,41 +109,12 @@ export function useDashboard(isAuthenticated: boolean, token: string | null) {
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Start background sync service when authenticated
-  useEffect(() => {
-    if (!isAuthenticated || !token) return
-
-    // Start background sync service
-    backgroundSync.start().catch((err) => {
-      console.warn('Failed to start background sync:', err)
-    })
-
-    // Cleanup: stop service when component unmounts or user logs out
-    return () => {
-      backgroundSync.stop().catch(() => {
-        // Silently ignore stop errors
-      })
-    }
-  }, [isAuthenticated, token])
-
   // Manual sync handler
   const handleManualSync = useCallback(async () => {
     if (autoSyncState === 'syncing') return
-    setAutoSyncState('idle') // Reset to allow sync
+    setAutoSyncState('idle')
     await performSync()
   }, [autoSyncState, performSync])
-
-  // Tray "Sync Now" event listener
-  useEffect(() => {
-    const unlisten = listen('tray-sync-now', () => {
-      console.log('Tray sync triggered')
-      handleManualSync()
-    })
-
-    return () => {
-      unlisten.then(fn => fn())
-    }
-  }, [handleManualSync])
 
   // Main data fetch effect
   useEffect(() => {

@@ -26,6 +26,7 @@ export * as backgroundSync from './background-sync'
 export * as worklog from './worklog'
 export * as tray from './tray'
 export * as notification from './notification'
+export * as llmUsage from './llm-usage'
 
 // Re-export integrations
 export * as gitlab from './integrations/gitlab'

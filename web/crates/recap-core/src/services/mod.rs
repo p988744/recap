@@ -3,6 +3,8 @@
 pub mod compaction;
 pub mod excel;
 pub mod llm;
+pub mod llm_pricing;
+pub mod llm_usage;
 pub mod session_parser;
 pub mod snapshot;
 pub mod sync;
@@ -35,4 +37,10 @@ pub use snapshot::{
 pub use compaction::{
     compact_daily, compact_hourly, compact_period, run_compaction_cycle,
     CompactionResult,
+};
+pub use llm::{LlmUsageRecord, parse_error_usage};
+pub use llm_pricing::estimate_cost;
+pub use llm_usage::{
+    save_usage_log, get_usage_stats, get_usage_by_day, get_usage_by_model, get_usage_logs,
+    LlmUsageStats, DailyUsage, ModelUsage, LlmUsageLog,
 };

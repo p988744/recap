@@ -4,6 +4,7 @@ import {
   Briefcase,
   FileText,
   Users,
+  Activity,
   Settings,
   LogOut,
   User,
@@ -13,18 +14,23 @@ import { cn } from '@/lib/utils'
 import { useAuth } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
 import { Onboarding, useOnboarding } from '@/components/Onboarding'
+import { useAppSync } from '@/hooks/useAppSync'
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: '儀表板' },
   { to: '/work-items', icon: Briefcase, label: '工作日誌' },
   { to: '/reports', icon: FileText, label: '報告中心' },
   { to: '/team', icon: Users, label: '團隊管理' },
+  { to: '/llm-usage', icon: Activity, label: 'LLM 用量' },
 ]
 
 export function Layout() {
-  const { user, logout } = useAuth()
+  const { user, token, isAuthenticated, logout } = useAuth()
   const navigate = useNavigate()
   const { showOnboarding, completeOnboarding, openOnboarding } = useOnboarding()
+
+  // App-level background sync: starts service, listens for tray events, runs initial sync
+  useAppSync(isAuthenticated, token)
 
   const handleLogout = () => {
     logout()

@@ -18,7 +18,8 @@ use uuid::Uuid;
 
 use crate::models::{SnapshotRawData, WorkSummary};
 
-use super::llm::LlmService;
+use super::llm::{LlmService, parse_error_usage};
+use super::llm_usage::save_usage_log;
 use super::snapshot::{CommitSnapshot, ToolCallRecord};
 
 // ============ Types ============
@@ -103,8 +104,14 @@ pub async fn compact_hourly(
                 )
                 .await;
             match result {
-                Ok(s) => (s, Some("llm".to_string())),
+                Ok((s, usage)) => {
+                    let _ = save_usage_log(pool, user_id, &usage).await;
+                    (s, Some("llm".to_string()))
+                }
                 Err(e) => {
+                    if let Some(usage) = parse_error_usage(&e) {
+                        let _ = save_usage_log(pool, user_id, &usage).await;
+                    }
                     log::warn!("LLM summarization failed, using rule-based: {}", e);
                     (build_rule_based_summary(&current_data, &key_activities, &git_summary), None)
                 }
@@ -208,8 +215,14 @@ pub async fn compact_daily(
                 )
                 .await;
             match result {
-                Ok(s) => (s, Some("llm".to_string())),
+                Ok((s, usage)) => {
+                    let _ = save_usage_log(pool, user_id, &usage).await;
+                    (s, Some("llm".to_string()))
+                }
                 Err(e) => {
+                    if let Some(usage) = parse_error_usage(&e) {
+                        let _ = save_usage_log(pool, user_id, &usage).await;
+                    }
                     log::warn!("LLM daily summarization failed: {}", e);
                     (build_rule_based_summary(&current_data, &key_activities, &git_summary), None)
                 }
@@ -321,8 +334,14 @@ pub async fn compact_period(
                 )
                 .await;
             match result {
-                Ok(s) => (s, Some("llm".to_string())),
+                Ok((s, usage)) => {
+                    let _ = save_usage_log(pool, user_id, &usage).await;
+                    (s, Some("llm".to_string()))
+                }
                 Err(e) => {
+                    if let Some(usage) = parse_error_usage(&e) {
+                        let _ = save_usage_log(pool, user_id, &usage).await;
+                    }
                     log::warn!("LLM {} summarization failed: {}", scale, e);
                     (build_rule_based_summary(&current_data, &key_activities, &git_summary), None)
                 }

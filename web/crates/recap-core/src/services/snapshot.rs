@@ -368,6 +368,11 @@ pub async fn capture_snapshots_for_project(
     user_id: &str,
     project: &DiscoveredProject,
 ) -> Result<usize, String> {
+    // Skip root filesystem path — MCP/no-context sessions have no meaningful project
+    if project.canonical_path == "/" || project.canonical_path.is_empty() {
+        return Ok(0);
+    }
+
     let mut total_saved = 0;
 
     for claude_dir in &project.claude_dirs {

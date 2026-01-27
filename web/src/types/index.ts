@@ -139,6 +139,14 @@ export type {
   WorklogOverviewResponse,
 } from './worklog'
 
+// LLM Usage types
+export type {
+  LlmUsageStats,
+  DailyUsage,
+  ModelUsage,
+  LlmUsageLog,
+} from './llm-usage'
+
 // Project types
 export type {
   ProjectInfo,
