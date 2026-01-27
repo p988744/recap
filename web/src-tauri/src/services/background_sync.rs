@@ -326,6 +326,56 @@ impl BackgroundSyncService {
             });
         }
 
+        // Phase 2: Capture hourly snapshots
+        if config.sync_claude {
+            let projects = recap_core::services::SyncService::discover_project_paths();
+            let mut snapshot_count = 0;
+            for project in &projects {
+                match recap_core::services::snapshot::capture_snapshots_for_project(
+                    &db_guard.pool,
+                    user_id,
+                    project,
+                )
+                .await
+                {
+                    Ok(n) => snapshot_count += n,
+                    Err(e) => {
+                        log::warn!("Snapshot capture error for {}: {}", project.name, e);
+                    }
+                }
+            }
+            if snapshot_count > 0 {
+                log::info!("Captured {} hourly snapshots", snapshot_count);
+            }
+        }
+
+        // Phase 3: Run compaction cycle
+        if config.sync_claude {
+            let llm = recap_core::services::llm::create_llm_service(&db_guard.pool, user_id)
+                .await
+                .ok();
+            match recap_core::services::compaction::run_compaction_cycle(
+                &db_guard.pool,
+                llm.as_ref(),
+                user_id,
+            )
+            .await
+            {
+                Ok(cr) => {
+                    if cr.hourly_compacted > 0 || cr.daily_compacted > 0 {
+                        log::info!(
+                            "Compaction: {} hourly, {} daily summaries created",
+                            cr.hourly_compacted,
+                            cr.daily_compacted
+                        );
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Compaction cycle error: {}", e);
+                }
+            }
+        }
+
         drop(db_guard);
 
         // Update status

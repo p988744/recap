@@ -1,0 +1,723 @@
+//! Compaction Engine
+//!
+//! Rolls up raw snapshots into hierarchical summaries:
+//!   snapshot_raw_data (hourly) → work_summaries (hourly)
+//!   work_summaries (hourly)    → work_summaries (daily)
+//!   work_summaries (daily)     → work_summaries (weekly)
+//!   work_summaries (weekly)    → work_summaries (monthly)
+//!
+//! Each level uses the previous period's summary as context for LLM generation.
+//! Falls back to rule-based summarization when LLM is unavailable.
+
+use chrono::{Duration, NaiveDateTime};
+#[cfg(test)]
+use chrono::Utc;
+use serde::Serialize;
+use sqlx::SqlitePool;
+use uuid::Uuid;
+
+use crate::models::{SnapshotRawData, WorkSummary};
+
+use super::llm::LlmService;
+use super::snapshot::{CommitSnapshot, ToolCallRecord};
+
+// ============ Types ============
+
+/// Result of a compaction cycle
+#[derive(Debug, Clone, Serialize)]
+pub struct CompactionResult {
+    pub hourly_compacted: usize,
+    pub daily_compacted: usize,
+    pub weekly_compacted: usize,
+    pub monthly_compacted: usize,
+    pub errors: Vec<String>,
+}
+
+// ============ Hourly Compaction ============
+
+/// Compact raw hourly snapshots into an hourly summary for a specific hour bucket.
+pub async fn compact_hourly(
+    pool: &SqlitePool,
+    llm: Option<&LlmService>,
+    user_id: &str,
+    project_path: &str,
+    hour_bucket: &str,
+) -> Result<(), String> {
+    // Fetch all snapshots for this hour
+    let snapshots: Vec<SnapshotRawData> = sqlx::query_as(
+        "SELECT * FROM snapshot_raw_data WHERE user_id = ? AND project_path = ? AND hour_bucket = ?",
+    )
+    .bind(user_id)
+    .bind(project_path)
+    .bind(hour_bucket)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to fetch snapshots: {}", e))?;
+
+    if snapshots.is_empty() {
+        return Ok(());
+    }
+
+    // Check if summary already exists
+    let existing: Option<WorkSummary> = sqlx::query_as(
+        "SELECT * FROM work_summaries WHERE user_id = ? AND project_path = ? AND scale = 'hourly' AND period_start = ?",
+    )
+    .bind(user_id)
+    .bind(project_path)
+    .bind(hour_bucket)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("Failed to check existing summary: {}", e))?;
+
+    if existing.is_some() {
+        return Ok(()); // Already compacted
+    }
+
+    // Fetch previous hour's summary for context
+    let previous_context = get_previous_summary(pool, user_id, Some(project_path), "hourly", hour_bucket).await;
+
+    // Aggregate data from all snapshots
+    let (current_data, snapshot_ids, key_activities, git_summary) = aggregate_snapshots(&snapshots);
+
+    // Compute period_end (hour_bucket + 1 hour)
+    // hour_bucket is stored as local time without offset: "2026-01-26T10:00:00"
+    let period_end = match NaiveDateTime::parse_from_str(hour_bucket, "%Y-%m-%dT%H:%M:%S") {
+        Ok(ndt) => (ndt + Duration::hours(1)).format("%Y-%m-%dT%H:%M:%S").to_string(),
+        Err(_) => {
+            // Fallback: try RFC 3339 for legacy data
+            match chrono::DateTime::parse_from_rfc3339(hour_bucket) {
+                Ok(dt) => (dt + Duration::hours(1)).format("%Y-%m-%dT%H:%M:%S").to_string(),
+                Err(_) => hour_bucket.to_string(),
+            }
+        }
+    };
+
+    // Generate summary
+    let (summary, llm_model) = match llm {
+        Some(llm_svc) if llm_svc.is_configured() => {
+            let result = llm_svc
+                .summarize_work_period(
+                    &previous_context.as_deref().unwrap_or(""),
+                    &current_data,
+                    "hourly",
+                )
+                .await;
+            match result {
+                Ok(s) => (s, Some("llm".to_string())),
+                Err(e) => {
+                    log::warn!("LLM summarization failed, using rule-based: {}", e);
+                    (build_rule_based_summary(&current_data, &key_activities, &git_summary), None)
+                }
+            }
+        }
+        _ => (build_rule_based_summary(&current_data, &key_activities, &git_summary), None),
+    };
+
+    // Save summary
+    save_summary(
+        pool,
+        user_id,
+        Some(project_path),
+        "hourly",
+        hour_bucket,
+        &period_end,
+        &summary,
+        &key_activities,
+        &git_summary,
+        previous_context.as_deref(),
+        &snapshot_ids,
+        llm_model.as_deref(),
+    )
+    .await
+}
+
+// ============ Daily Compaction ============
+
+/// Compact hourly summaries into a daily summary.
+pub async fn compact_daily(
+    pool: &SqlitePool,
+    llm: Option<&LlmService>,
+    user_id: &str,
+    project_path: &str,
+    date: &str, // "2026-01-26"
+) -> Result<(), String> {
+    let period_start = format!("{}T00:00:00+00:00", date);
+    let period_end = format!("{}T23:59:59+00:00", date);
+
+    // Check if daily summary already exists
+    let existing: Option<WorkSummary> = sqlx::query_as(
+        "SELECT * FROM work_summaries WHERE user_id = ? AND project_path = ? AND scale = 'daily' AND period_start = ?",
+    )
+    .bind(user_id)
+    .bind(project_path)
+    .bind(&period_start)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("Failed to check existing daily summary: {}", e))?;
+
+    if existing.is_some() {
+        return Ok(());
+    }
+
+    // Fetch all hourly summaries for this day
+    let hourlies: Vec<WorkSummary> = sqlx::query_as(
+        "SELECT * FROM work_summaries WHERE user_id = ? AND project_path = ? AND scale = 'hourly' AND period_start >= ? AND period_start < ? ORDER BY period_start",
+    )
+    .bind(user_id)
+    .bind(project_path)
+    .bind(&period_start)
+    .bind(&period_end)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to fetch hourly summaries: {}", e))?;
+
+    if hourlies.is_empty() {
+        return Ok(());
+    }
+
+    let previous_context =
+        get_previous_summary(pool, user_id, Some(project_path), "daily", &period_start).await;
+
+    let current_data = hourlies
+        .iter()
+        .map(|h| format!("[{}] {}", h.period_start, h.summary))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let key_activities = merge_json_arrays(
+        &hourlies
+            .iter()
+            .filter_map(|h| h.key_activities.clone())
+            .collect::<Vec<_>>(),
+    );
+    let git_summary = merge_json_arrays(
+        &hourlies
+            .iter()
+            .filter_map(|h| h.git_commits_summary.clone())
+            .collect::<Vec<_>>(),
+    );
+    let snapshot_ids = hourlies.iter().map(|h| h.id.clone()).collect::<Vec<_>>();
+
+    let (summary, llm_model) = match llm {
+        Some(llm_svc) if llm_svc.is_configured() => {
+            let result = llm_svc
+                .summarize_work_period(
+                    &previous_context.as_deref().unwrap_or(""),
+                    &current_data,
+                    "daily",
+                )
+                .await;
+            match result {
+                Ok(s) => (s, Some("llm".to_string())),
+                Err(e) => {
+                    log::warn!("LLM daily summarization failed: {}", e);
+                    (build_rule_based_summary(&current_data, &key_activities, &git_summary), None)
+                }
+            }
+        }
+        _ => (build_rule_based_summary(&current_data, &key_activities, &git_summary), None),
+    };
+
+    save_summary(
+        pool,
+        user_id,
+        Some(project_path),
+        "daily",
+        &period_start,
+        &period_end,
+        &summary,
+        &key_activities,
+        &git_summary,
+        previous_context.as_deref(),
+        &snapshot_ids.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+        llm_model.as_deref(),
+    )
+    .await
+}
+
+// ============ Weekly / Monthly Compaction ============
+
+/// Roll up daily summaries into weekly or monthly summaries.
+pub async fn compact_period(
+    pool: &SqlitePool,
+    llm: Option<&LlmService>,
+    user_id: &str,
+    project_path: Option<&str>,
+    scale: &str, // "weekly" | "monthly"
+    period_start: &str,
+    period_end: &str,
+) -> Result<(), String> {
+    let source_scale = match scale {
+        "weekly" => "daily",
+        "monthly" => "weekly",
+        _ => return Err(format!("Invalid scale for compact_period: {}", scale)),
+    };
+
+    // Check if summary already exists
+    let existing: Option<WorkSummary> = sqlx::query_as(
+        "SELECT * FROM work_summaries WHERE user_id = ? AND (project_path = ? OR (project_path IS NULL AND ? IS NULL)) AND scale = ? AND period_start = ?",
+    )
+    .bind(user_id)
+    .bind(project_path)
+    .bind(project_path)
+    .bind(scale)
+    .bind(period_start)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("Failed to check existing {} summary: {}", scale, e))?;
+
+    if existing.is_some() {
+        return Ok(());
+    }
+
+    // Fetch source-scale summaries for this period
+    let sources: Vec<WorkSummary> = sqlx::query_as(
+        "SELECT * FROM work_summaries WHERE user_id = ? AND (project_path = ? OR (project_path IS NULL AND ? IS NULL)) AND scale = ? AND period_start >= ? AND period_start < ? ORDER BY period_start",
+    )
+    .bind(user_id)
+    .bind(project_path)
+    .bind(project_path)
+    .bind(source_scale)
+    .bind(period_start)
+    .bind(period_end)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to fetch {} summaries: {}", source_scale, e))?;
+
+    if sources.is_empty() {
+        return Ok(());
+    }
+
+    let previous_context =
+        get_previous_summary(pool, user_id, project_path, scale, period_start).await;
+
+    let current_data = sources
+        .iter()
+        .map(|s| format!("[{}] {}", s.period_start, s.summary))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let key_activities = merge_json_arrays(
+        &sources
+            .iter()
+            .filter_map(|s| s.key_activities.clone())
+            .collect::<Vec<_>>(),
+    );
+    let git_summary = merge_json_arrays(
+        &sources
+            .iter()
+            .filter_map(|s| s.git_commits_summary.clone())
+            .collect::<Vec<_>>(),
+    );
+    let source_ids = sources.iter().map(|s| s.id.clone()).collect::<Vec<_>>();
+
+    let (summary, llm_model) = match llm {
+        Some(llm_svc) if llm_svc.is_configured() => {
+            let result = llm_svc
+                .summarize_work_period(
+                    &previous_context.as_deref().unwrap_or(""),
+                    &current_data,
+                    scale,
+                )
+                .await;
+            match result {
+                Ok(s) => (s, Some("llm".to_string())),
+                Err(e) => {
+                    log::warn!("LLM {} summarization failed: {}", scale, e);
+                    (build_rule_based_summary(&current_data, &key_activities, &git_summary), None)
+                }
+            }
+        }
+        _ => (build_rule_based_summary(&current_data, &key_activities, &git_summary), None),
+    };
+
+    save_summary(
+        pool,
+        user_id,
+        project_path,
+        scale,
+        period_start,
+        period_end,
+        &summary,
+        &key_activities,
+        &git_summary,
+        previous_context.as_deref(),
+        &source_ids.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+        llm_model.as_deref(),
+    )
+    .await
+}
+
+// ============ Full Compaction Cycle ============
+
+/// Run all pending compactions for a user.
+///
+/// Discovers uncompacted hourly snapshots, compacts them to hourly summaries,
+/// then rolls up to daily, weekly, and monthly summaries.
+pub async fn run_compaction_cycle(
+    pool: &SqlitePool,
+    llm: Option<&LlmService>,
+    user_id: &str,
+) -> Result<CompactionResult, String> {
+    let mut result = CompactionResult {
+        hourly_compacted: 0,
+        daily_compacted: 0,
+        weekly_compacted: 0,
+        monthly_compacted: 0,
+        errors: Vec::new(),
+    };
+
+    // 1. Find all uncompacted hourly snapshots
+    let uncompacted: Vec<(String, String)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT s.project_path, s.hour_bucket
+        FROM snapshot_raw_data s
+        LEFT JOIN work_summaries ws ON ws.user_id = s.user_id
+            AND ws.project_path = s.project_path
+            AND ws.scale = 'hourly'
+            AND ws.period_start = s.hour_bucket
+        WHERE s.user_id = ? AND ws.id IS NULL
+        ORDER BY s.hour_bucket
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to find uncompacted snapshots: {}", e))?;
+
+    // 2. Compact hourly
+    for (project_path, hour_bucket) in &uncompacted {
+        match compact_hourly(pool, llm, user_id, project_path, hour_bucket).await {
+            Ok(()) => result.hourly_compacted += 1,
+            Err(e) => result.errors.push(format!("hourly {}/{}: {}", project_path, hour_bucket, e)),
+        }
+    }
+
+    // 3. Find days that have hourly summaries but no daily summary
+    let uncompacted_days: Vec<(String, String)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT ws.project_path, DATE(ws.period_start) as day
+        FROM work_summaries ws
+        LEFT JOIN work_summaries ds ON ds.user_id = ws.user_id
+            AND ds.project_path = ws.project_path
+            AND ds.scale = 'daily'
+            AND DATE(ds.period_start) = DATE(ws.period_start)
+        WHERE ws.user_id = ? AND ws.scale = 'hourly' AND ds.id IS NULL
+        ORDER BY day
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to find uncompacted days: {}", e))?;
+
+    for (project_path, day) in &uncompacted_days {
+        match compact_daily(pool, llm, user_id, project_path, day).await {
+            Ok(()) => result.daily_compacted += 1,
+            Err(e) => result.errors.push(format!("daily {}/{}: {}", project_path, day, e)),
+        }
+    }
+
+    // Weekly and monthly compaction is less urgent; skip for now if there are errors
+    // They can be triggered in subsequent cycles.
+
+    log::info!(
+        "Compaction cycle complete: {} hourly, {} daily, {} errors",
+        result.hourly_compacted,
+        result.daily_compacted,
+        result.errors.len()
+    );
+
+    Ok(result)
+}
+
+// ============ Helpers ============
+
+/// Get the previous period's summary for context chaining.
+async fn get_previous_summary(
+    pool: &SqlitePool,
+    user_id: &str,
+    project_path: Option<&str>,
+    scale: &str,
+    current_period_start: &str,
+) -> Option<String> {
+    let row: Option<WorkSummary> = sqlx::query_as(
+        "SELECT * FROM work_summaries WHERE user_id = ? AND (project_path = ? OR (project_path IS NULL AND ? IS NULL)) AND scale = ? AND period_start < ? ORDER BY period_start DESC LIMIT 1",
+    )
+    .bind(user_id)
+    .bind(project_path)
+    .bind(project_path)
+    .bind(scale)
+    .bind(current_period_start)
+    .fetch_optional(pool)
+    .await
+    .ok()?;
+
+    row.map(|r| r.summary)
+}
+
+/// Aggregate data from multiple snapshots into a single text block.
+fn aggregate_snapshots(snapshots: &[SnapshotRawData]) -> (String, Vec<&str>, String, String) {
+    let mut all_user_messages = Vec::new();
+    let mut all_tool_calls = Vec::new();
+    let mut all_files = Vec::new();
+    let mut all_commits = Vec::new();
+    let mut snapshot_ids = Vec::new();
+
+    for snapshot in snapshots {
+        snapshot_ids.push(snapshot.id.as_str());
+
+        if let Some(ref msgs) = snapshot.user_messages {
+            if let Ok(parsed) = serde_json::from_str::<Vec<String>>(msgs) {
+                all_user_messages.extend(parsed);
+            }
+        }
+
+        if let Some(ref tools) = snapshot.tool_calls {
+            if let Ok(parsed) = serde_json::from_str::<Vec<ToolCallRecord>>(tools) {
+                for tc in &parsed {
+                    all_tool_calls.push(format!("{}({})", tc.tool, tc.input_summary));
+                }
+            }
+        }
+
+        if let Some(ref files) = snapshot.files_modified {
+            if let Ok(parsed) = serde_json::from_str::<Vec<String>>(files) {
+                for f in parsed {
+                    if !all_files.contains(&f) {
+                        all_files.push(f);
+                    }
+                }
+            }
+        }
+
+        if let Some(ref commits) = snapshot.git_commits {
+            if let Ok(parsed) = serde_json::from_str::<Vec<CommitSnapshot>>(commits) {
+                for c in &parsed {
+                    all_commits.push(format!("{}: {} (+{}-{})", c.hash, c.message, c.additions, c.deletions));
+                }
+            }
+        }
+    }
+
+    let mut data_parts = Vec::new();
+    if !all_user_messages.is_empty() {
+        data_parts.push(format!(
+            "使用者訊息:\n{}",
+            all_user_messages
+                .iter()
+                .take(10)
+                .map(|m| format!("- {}", m))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+    if !all_tool_calls.is_empty() {
+        data_parts.push(format!(
+            "工具使用:\n{}",
+            all_tool_calls
+                .iter()
+                .take(20)
+                .map(|t| format!("- {}", t))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+    if !all_files.is_empty() {
+        data_parts.push(format!("修改檔案: {}", all_files.join(", ")));
+    }
+    if !all_commits.is_empty() {
+        data_parts.push(format!(
+            "Git Commits:\n{}",
+            all_commits
+                .iter()
+                .map(|c| format!("- {}", c))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+
+    let current_data = data_parts.join("\n\n");
+
+    let key_activities_json = serde_json::to_string(&all_files).unwrap_or_else(|_| "[]".to_string());
+    let git_summary_json = serde_json::to_string(&all_commits).unwrap_or_else(|_| "[]".to_string());
+
+    (current_data, snapshot_ids, key_activities_json, git_summary_json)
+}
+
+/// Build a rule-based summary when LLM is not available.
+fn build_rule_based_summary(current_data: &str, key_activities: &str, git_summary: &str) -> String {
+    let mut parts = Vec::new();
+
+    // Include git commits first (priority)
+    if let Ok(commits) = serde_json::from_str::<Vec<String>>(git_summary) {
+        if !commits.is_empty() {
+            let commit_msgs: Vec<String> = commits.iter().take(5).cloned().collect();
+            parts.push(format!("Commits: {}", commit_msgs.join("; ")));
+        }
+    }
+
+    // Include file modifications
+    if let Ok(files) = serde_json::from_str::<Vec<String>>(key_activities) {
+        if !files.is_empty() {
+            let file_list: Vec<&str> = files.iter().map(|s| s.as_str()).take(5).collect();
+            parts.push(format!("修改: {}", file_list.join(", ")));
+        }
+    }
+
+    if parts.is_empty() {
+        // Fallback: truncate raw data
+        let truncated: String = current_data.chars().take(200).collect();
+        return truncated;
+    }
+
+    parts.join(" | ")
+}
+
+/// Merge multiple JSON array strings into one.
+fn merge_json_arrays(arrays: &[String]) -> String {
+    let mut merged: Vec<serde_json::Value> = Vec::new();
+    for arr_str in arrays {
+        if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(arr_str) {
+            merged.extend(arr);
+        }
+    }
+    serde_json::to_string(&merged).unwrap_or_else(|_| "[]".to_string())
+}
+
+/// Save a summary to the work_summaries table.
+async fn save_summary(
+    pool: &SqlitePool,
+    user_id: &str,
+    project_path: Option<&str>,
+    scale: &str,
+    period_start: &str,
+    period_end: &str,
+    summary: &str,
+    key_activities: &str,
+    git_commits_summary: &str,
+    previous_context: Option<&str>,
+    source_snapshot_ids: &[&str],
+    llm_model: Option<&str>,
+) -> Result<(), String> {
+    let id = Uuid::new_v4().to_string();
+    let source_ids_json =
+        serde_json::to_string(source_snapshot_ids).unwrap_or_else(|_| "[]".to_string());
+
+    sqlx::query(
+        r#"
+        INSERT INTO work_summaries (id, user_id, project_path, scale, period_start, period_end,
+            summary, key_activities, git_commits_summary, previous_context,
+            source_snapshot_ids, llm_model)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, project_path, scale, period_start) DO UPDATE SET
+            summary = excluded.summary,
+            key_activities = excluded.key_activities,
+            git_commits_summary = excluded.git_commits_summary,
+            previous_context = excluded.previous_context,
+            source_snapshot_ids = excluded.source_snapshot_ids,
+            llm_model = excluded.llm_model,
+            updated_at = CURRENT_TIMESTAMP
+        "#,
+    )
+    .bind(&id)
+    .bind(user_id)
+    .bind(project_path)
+    .bind(scale)
+    .bind(period_start)
+    .bind(period_end)
+    .bind(summary)
+    .bind(key_activities)
+    .bind(git_commits_summary)
+    .bind(previous_context)
+    .bind(&source_ids_json)
+    .bind(llm_model)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to save {} summary: {}", scale, e))?;
+
+    Ok(())
+}
+
+// ============ Tests ============
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_rule_based_summary_with_commits() {
+        let data = "some work data";
+        let activities = r#"["src/main.rs", "src/lib.rs"]"#;
+        let commits = r#"["abc123: feat: add login (+50-10)"]"#;
+
+        let summary = build_rule_based_summary(data, activities, commits);
+        assert!(summary.contains("Commits:"));
+        assert!(summary.contains("feat: add login"));
+        assert!(summary.contains("修改:"));
+    }
+
+    #[test]
+    fn test_build_rule_based_summary_no_commits() {
+        let data = "工具使用:\n- Edit(src/main.rs)";
+        let activities = r#"["src/main.rs"]"#;
+        let commits = "[]";
+
+        let summary = build_rule_based_summary(data, activities, commits);
+        assert!(summary.contains("修改:"));
+        assert!(!summary.contains("Commits:"));
+    }
+
+    #[test]
+    fn test_build_rule_based_summary_fallback() {
+        let data = "使用者在進行工作";
+        let summary = build_rule_based_summary(data, "[]", "[]");
+        assert!(summary.contains("使用者在進行工作"));
+    }
+
+    #[test]
+    fn test_merge_json_arrays() {
+        let arrays = vec![
+            r#"["a", "b"]"#.to_string(),
+            r#"["c"]"#.to_string(),
+        ];
+        let merged = merge_json_arrays(&arrays);
+        let parsed: Vec<String> = serde_json::from_str(&merged).unwrap();
+        assert_eq!(parsed, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn test_merge_json_arrays_empty() {
+        let arrays: Vec<String> = vec![];
+        let merged = merge_json_arrays(&arrays);
+        assert_eq!(merged, "[]");
+    }
+
+    #[test]
+    fn test_aggregate_snapshots_basic() {
+        let snapshot = SnapshotRawData {
+            id: "snap-1".to_string(),
+            user_id: "user1".to_string(),
+            session_id: "sess1".to_string(),
+            project_path: "/project".to_string(),
+            hour_bucket: "2026-01-26T14:00:00+00:00".to_string(),
+            user_messages: Some(r#"["help me implement login"]"#.to_string()),
+            assistant_messages: Some(r#"["Sure, I will help"]"#.to_string()),
+            tool_calls: Some(r#"[{"tool":"Edit","input_summary":"src/main.rs","timestamp":"2026-01-26T14:05:00+00:00"}]"#.to_string()),
+            files_modified: Some(r#"["src/main.rs"]"#.to_string()),
+            git_commits: Some(r#"[{"hash":"abc123","message":"feat: login","timestamp":"2026-01-26T14:30:00+00:00","additions":50,"deletions":10}]"#.to_string()),
+            message_count: 1,
+            raw_size_bytes: 100,
+            created_at: Utc::now(),
+        };
+
+        let snapshots = [snapshot];
+        let (data, ids, activities, git) = aggregate_snapshots(&snapshots);
+        assert!(data.contains("help me implement login"));
+        assert!(data.contains("Edit(src/main.rs)"));
+        assert!(data.contains("abc123"));
+        assert_eq!(ids.len(), 1);
+        assert!(activities.contains("src/main.rs"));
+        assert!(git.contains("feat: login"));
+    }
+}

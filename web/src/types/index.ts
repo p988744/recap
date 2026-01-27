@@ -129,6 +129,16 @@ export type {
   AnalyzeResponse,
 } from './integrations'
 
+// Worklog types
+export type {
+  GitCommitRef,
+  HourlyBreakdownItem,
+  ManualWorkItem,
+  WorklogDayProject,
+  WorklogDay,
+  WorklogOverviewResponse,
+} from './worklog'
+
 // Project types
 export type {
   ProjectInfo,

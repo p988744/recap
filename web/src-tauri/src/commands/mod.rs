@@ -11,6 +11,7 @@ pub mod gitlab;
 pub mod notification;
 pub mod projects;
 pub mod reports;
+pub mod snapshots;
 pub mod sources;
 pub mod sync;
 pub mod tempo;

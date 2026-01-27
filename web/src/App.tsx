@@ -5,7 +5,7 @@ import { Layout } from '@/components/Layout'
 import { LoginPage } from '@/pages/Login'
 import { OnboardingPage } from '@/pages/Onboarding'
 import { Dashboard } from '@/pages/Dashboard'
-import { WorkItemsPage } from '@/pages/WorkItems'
+import { WorklogPage } from '@/pages/Worklog'
 import { Reports } from '@/pages/Reports'
 import { TeamPage } from '@/pages/Team'
 import { SettingsPage } from '@/pages/Settings'
@@ -29,7 +29,7 @@ function App() {
             }
           >
             <Route index element={<Dashboard />} />
-            <Route path="work-items" element={<WorkItemsPage />} />
+            <Route path="work-items" element={<WorklogPage />} />
             <Route path="reports" element={<Reports />} />
             <Route path="team" element={<TeamPage />} />
             <Route path="settings" element={<SettingsPage />} />

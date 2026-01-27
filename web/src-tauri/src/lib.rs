@@ -109,6 +109,13 @@ pub fn run() {
             commands::notification::send_sync_notification,
             commands::notification::send_auth_notification,
             commands::notification::send_source_error_notification,
+            // Snapshots & Compaction
+            commands::snapshots::get_work_summaries,
+            commands::snapshots::get_snapshot_detail,
+            commands::snapshots::trigger_compaction,
+            // Worklog
+            commands::snapshots::get_worklog_overview,
+            commands::snapshots::get_hourly_breakdown,
             // Projects
             commands::projects::queries::list_projects,
             commands::projects::queries::get_project_detail,

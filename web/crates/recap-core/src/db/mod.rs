@@ -364,6 +364,69 @@ impl Database {
             .await
             .ok();
 
+        // Create snapshot_raw_data table for hourly session snapshots
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS snapshot_raw_data (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                project_path TEXT NOT NULL,
+                hour_bucket TEXT NOT NULL,
+                user_messages TEXT,
+                assistant_messages TEXT,
+                tool_calls TEXT,
+                files_modified TEXT,
+                git_commits TEXT,
+                message_count INTEGER DEFAULT 0,
+                raw_size_bytes INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(session_id, hour_bucket)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_snapshots_user_hour ON snapshot_raw_data(user_id, hour_bucket)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_snapshots_session ON snapshot_raw_data(session_id)")
+            .execute(&self.pool)
+            .await?;
+
+        // Create work_summaries table for compacted summaries at multiple time scales
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS work_summaries (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                project_path TEXT,
+                scale TEXT NOT NULL,
+                period_start TEXT NOT NULL,
+                period_end TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                key_activities TEXT,
+                git_commits_summary TEXT,
+                previous_context TEXT,
+                source_snapshot_ids TEXT,
+                llm_model TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, project_path, scale, period_start)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_summaries_user_scale ON work_summaries(user_id, scale, period_start)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_summaries_project ON work_summaries(project_path, scale)")
+            .execute(&self.pool)
+            .await?;
+
         log::info!("Database migrations completed");
         Ok(())
     }

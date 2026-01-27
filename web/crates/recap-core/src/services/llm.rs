@@ -156,6 +156,50 @@ Git Commits:
         self.complete(&prompt).await
     }
 
+    /// Summarize a work period at a given time scale.
+    /// `context` is the previous period's summary (for continuity).
+    /// `current_data` is the current period's data to summarize.
+    /// `scale` controls output length: hourly=50-100, daily=100-200, weekly=200-400, monthly=300-500 chars.
+    pub async fn summarize_work_period(
+        &self,
+        context: &str,
+        current_data: &str,
+        scale: &str,
+    ) -> Result<String, String> {
+        let (length_hint, max_chars) = match scale {
+            "hourly" => ("50-100字", 4000),
+            "daily" => ("100-200字", 6000),
+            "weekly" => ("200-400字", 8000),
+            "monthly" => ("300-500字", 10000),
+            _ => ("100-200字", 6000),
+        };
+
+        let context_section = if context.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n前一時段摘要（作為前後文參考）：\n{}\n",
+                context.chars().take(1000).collect::<String>()
+            )
+        };
+
+        let prompt = format!(
+            r#"你是工作記錄助手。請根據以下工作資料，產生簡潔的工作摘要（{length_hint}）。
+{context_section}
+本時段的工作資料：
+{data}
+
+請用繁體中文回答，重點描述完成了什麼、使用什麼技術、解決什麼問題。
+若有 git commit，優先以 commit 訊息作為成果總結。
+直接輸出摘要內容，不要加任何前綴或說明。"#,
+            length_hint = length_hint,
+            context_section = context_section,
+            data = current_data.chars().take(max_chars).collect::<String>()
+        );
+
+        self.complete(&prompt).await
+    }
+
     /// Send completion request to LLM
     async fn complete(&self, prompt: &str) -> Result<String, String> {
         match self.config.provider.as_str() {

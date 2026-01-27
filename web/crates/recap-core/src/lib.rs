@@ -22,21 +22,24 @@ pub use error::{Error, Result};
 // Re-export commonly used types from models
 pub use models::{
     AppConfig, Claims, CreateWorkItem, GitLabProject, GitRepo, GitRepoInfo, HoursSource,
-    PaginatedResponse, SourcesResponse, SyncResult, SyncStatus, SyncStatusResponse,
-    SyncWorklogsRequest, SyncWorklogsResponse, UpdateWorkItem, User, UserResponse, WorkItem,
-    WorkItemFilters, WorklogEntry, WorklogSyncResult,
+    PaginatedResponse, SnapshotRawData, SourcesResponse, SyncResult, SyncStatus,
+    SyncStatusResponse, SyncWorklogsRequest, SyncWorklogsResponse, UpdateWorkItem, User,
+    UserResponse, WorkItem, WorkItemFilters, WorkSummary, WorklogEntry, WorklogSyncResult,
 };
 
 // Re-export commonly used types from services
 pub use services::{
-    build_rule_based_outcome, calculate_session_hours, create_llm_service, create_sync_service,
+    build_rule_based_outcome, calculate_session_hours, capture_snapshots_for_project,
+    compact_daily, compact_hourly, compact_period, create_llm_service, create_sync_service,
     estimate_commit_hours, estimate_from_diff, extract_cwd, extract_tool_detail,
     generate_daily_hash, get_commits_for_date, get_commits_in_time_range, is_meaningful_message,
-    parse_session_fast, parse_session_full, resolve_git_root, sync_claude_projects,
-    sync_discovered_projects, ClaudeSyncResult, CommitRecord, DailyWorklog, DiscoveredProject,
-    ExcelReportGenerator, ExcelWorkItem, FileChange, HoursEstimate, JiraAuthType, JiraClient,
-    ParsedSession, ProjectSummary, ReportMetadata, SessionBrief, SessionMetadata,
-    StandaloneSession, SyncService, TempoClient, TimelineCommit, ToolUsage,
+    parse_session_fast, parse_session_full, parse_session_into_hourly_buckets, resolve_git_root,
+    run_compaction_cycle, save_hourly_snapshots, sync_claude_projects, sync_discovered_projects,
+    ClaudeSyncResult, CommitRecord, CommitSnapshot, CompactionResult, DailyWorklog,
+    DiscoveredProject, ExcelReportGenerator, ExcelWorkItem, FileChange, HoursEstimate,
+    HourlyBucket, JiraAuthType, JiraClient, ParsedSession, ProjectSummary, ReportMetadata,
+    SessionBrief, SessionMetadata, SnapshotCaptureResult, StandaloneSession, SyncService,
+    TempoClient, TimelineCommit, ToolCallRecord, ToolUsage,
     WorklogEntry as TempoWorklogEntry, WorklogUploader,
 };
 

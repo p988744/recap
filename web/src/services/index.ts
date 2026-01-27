@@ -23,6 +23,7 @@ export * as reports from './reports'
 export * as projects from './projects'
 export * as sync from './sync'
 export * as backgroundSync from './background-sync'
+export * as worklog from './worklog'
 export * as tray from './tray'
 export * as notification from './notification'
 

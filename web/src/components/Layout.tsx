@@ -16,7 +16,7 @@ import { Onboarding, useOnboarding } from '@/components/Onboarding'
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: '儀表板' },
-  { to: '/work-items', icon: Briefcase, label: '工作項目' },
+  { to: '/work-items', icon: Briefcase, label: '工作日誌' },
   { to: '/reports', icon: FileText, label: '報告中心' },
   { to: '/team', icon: Users, label: '團隊管理' },
 ]
