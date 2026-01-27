@@ -6,10 +6,7 @@ import { LoginPage } from '@/pages/Login'
 import { OnboardingPage } from '@/pages/Onboarding'
 import { Dashboard } from '@/pages/Dashboard'
 import { WorklogPage } from '@/pages/Worklog'
-import { Reports } from '@/pages/Reports'
-import { TeamPage } from '@/pages/Team'
 import { SettingsPage } from '@/pages/Settings'
-import { LlmUsagePage } from '@/pages/LlmUsage'
 
 function App() {
   return (
@@ -31,9 +28,6 @@ function App() {
           >
             <Route index element={<Dashboard />} />
             <Route path="work-items" element={<WorklogPage />} />
-            <Route path="reports" element={<Reports />} />
-            <Route path="team" element={<TeamPage />} />
-            <Route path="llm-usage" element={<LlmUsagePage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>
         </Routes>

@@ -32,6 +32,21 @@ impl Database {
             .connect(&db_url)
             .await?;
 
+        // Enable WAL mode for better concurrent read/write performance
+        sqlx::query("PRAGMA journal_mode = WAL")
+            .execute(&pool)
+            .await?;
+
+        // Set busy timeout to 5 seconds — retry on SQLITE_BUSY instead of failing immediately
+        sqlx::query("PRAGMA busy_timeout = 5000")
+            .execute(&pool)
+            .await?;
+
+        // Synchronous NORMAL is safe with WAL and faster than FULL
+        sqlx::query("PRAGMA synchronous = NORMAL")
+            .execute(&pool)
+            .await?;
+
         let db = Self { pool };
         db.run_migrations().await?;
 

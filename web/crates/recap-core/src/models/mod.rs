@@ -267,6 +267,8 @@ pub struct SyncResult {
     pub success: bool,
     pub source: String,
     pub items_synced: i32,
+    pub projects_scanned: i32,
+    pub items_created: i32,
     pub message: Option<String>,
 }
 

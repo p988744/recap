@@ -1,17 +1,19 @@
 import { Link } from 'react-router-dom'
-import { ArrowRight } from 'lucide-react'
+import { ArrowRight, GitCommit, FileCode } from 'lucide-react'
 import { formatDate, cn } from '@/lib/utils'
+import { MarkdownSummary } from '@/components/MarkdownSummary'
 
-interface Activity {
-  title: string
-  source: string
+interface WorklogActivity {
+  projectName: string
+  dailySummary?: string
   date: string
-  hours: number
-  jiraKey: string | null | undefined
+  totalHours: number
+  totalCommits: number
+  totalFiles: number
 }
 
 interface RecentActivitiesProps {
-  activities: Activity[]
+  activities: WorklogActivity[]
 }
 
 export function RecentActivities({ activities }: RecentActivitiesProps) {
@@ -21,7 +23,7 @@ export function RecentActivities({ activities }: RecentActivitiesProps) {
         <h2 className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
           最近活動
         </h2>
-        <Link to="/work-items" className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+        <Link to="/worklog" className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
           查看全部
           <ArrowRight className="w-3 h-3" strokeWidth={1.5} />
         </Link>
@@ -31,7 +33,7 @@ export function RecentActivities({ activities }: RecentActivitiesProps) {
         <div className="space-y-0">
           {activities.map((activity, index) => (
             <div
-              key={`${activity.source}-${activity.date}-${index}`}
+              key={`${activity.projectName}-${activity.date}-${index}`}
               className={cn(
                 "py-4 border-b border-border last:border-b-0",
                 "animate-fade-up opacity-0",
@@ -40,22 +42,36 @@ export function RecentActivities({ activities }: RecentActivitiesProps) {
                 index === 2 && "delay-6"
               )}
             >
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-3 mb-1">
-                    <span className="text-sm text-foreground line-clamp-1">{activity.title}</span>
-                    <span className="text-xs text-muted-foreground tabular-nums">{activity.hours.toFixed(1)}h</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">{activity.source}</span>
-                    {activity.jiraKey && (
-                      <span className="text-xs text-blue-600">{activity.jiraKey}</span>
-                    )}
-                  </div>
+              {/* Header: project name + hours + date */}
+              <div className="flex items-start justify-between gap-4 mb-1">
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="text-sm font-medium text-foreground truncate">{activity.projectName}</span>
+                  <span className="text-xs text-muted-foreground tabular-nums flex-shrink-0">{activity.totalHours.toFixed(1)}h</span>
                 </div>
                 <span className="text-xs text-muted-foreground tabular-nums flex-shrink-0">
                   {formatDate(activity.date)}
                 </span>
+              </div>
+
+              {/* Daily summary rendered as markdown */}
+              {activity.dailySummary && (
+                <MarkdownSummary content={activity.dailySummary} className="mb-1.5" />
+              )}
+
+              {/* Stats: commits & files */}
+              <div className="flex items-center gap-3">
+                {activity.totalCommits > 0 && (
+                  <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <GitCommit className="w-3 h-3" strokeWidth={1.5} />
+                    {activity.totalCommits} commits
+                  </span>
+                )}
+                {activity.totalFiles > 0 && (
+                  <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <FileCode className="w-3 h-3" strokeWidth={1.5} />
+                    {activity.totalFiles} 檔案
+                  </span>
+                )}
               </div>
             </div>
           ))}

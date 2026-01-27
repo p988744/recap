@@ -39,6 +39,8 @@ pub struct AutoSyncResponse {
     pub success: bool,
     pub results: Vec<SyncResult>,
     pub total_items: i32,
+    pub projects_scanned: i32,
+    pub items_created: i32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -65,6 +67,7 @@ pub struct CoreSyncStatus {
 
 #[derive(Debug, Clone, Default)]
 pub struct ClaudeSyncResult {
+    pub projects_scanned: i32,
     pub sessions_processed: i32,
     pub work_items_created: i32,
     pub work_items_updated: i32,
@@ -211,6 +214,7 @@ impl SyncRepository for SqliteSyncRepository {
         let result =
             recap_core::services::sync_claude_projects(&self.pool, user_id, project_paths).await?;
         Ok(ClaudeSyncResult {
+            projects_scanned: result.projects_scanned as i32,
             sessions_processed: result.sessions_processed as i32,
             work_items_created: result.work_items_created as i32,
             work_items_updated: result.work_items_updated as i32,
@@ -233,6 +237,7 @@ impl SyncRepository for SqliteSyncRepository {
         let result =
             recap_core::services::sync_discovered_projects(&self.pool, user_id, projects).await?;
         Ok(ClaudeSyncResult {
+            projects_scanned: result.projects_scanned as i32,
             sessions_processed: result.sessions_processed as i32,
             work_items_created: result.work_items_created as i32,
             work_items_updated: result.work_items_updated as i32,
@@ -272,6 +277,8 @@ pub(crate) fn build_sync_result(sync_result: &ClaudeSyncResult) -> SyncResult {
         success: true,
         source: "claude".to_string(),
         items_synced: item_count,
+        projects_scanned: sync_result.projects_scanned,
+        items_created: sync_result.work_items_created,
         message: Some(format!(
             "Processed {} sessions, created {} items, updated {} items",
             sync_result.sessions_processed,
@@ -287,6 +294,8 @@ pub(crate) fn build_empty_response() -> AutoSyncResponse {
         success: true,
         results: vec![],
         total_items: 0,
+        projects_scanned: 0,
+        items_created: 0,
     }
 }
 
@@ -298,6 +307,8 @@ pub(crate) fn build_success_response(sync_result: &ClaudeSyncResult) -> AutoSync
         success: true,
         results: vec![build_sync_result(sync_result)],
         total_items: item_count,
+        projects_scanned: sync_result.projects_scanned,
+        items_created: sync_result.work_items_created,
     }
 }
 
@@ -729,6 +740,7 @@ mod tests {
     #[test]
     fn test_build_sync_result() {
         let sync_result = ClaudeSyncResult {
+            projects_scanned: 4,
             sessions_processed: 10,
             work_items_created: 5,
             work_items_updated: 3,
@@ -755,6 +767,7 @@ mod tests {
     #[test]
     fn test_build_success_response() {
         let sync_result = ClaudeSyncResult {
+            projects_scanned: 3,
             sessions_processed: 5,
             work_items_created: 2,
             work_items_updated: 1,
@@ -879,6 +892,7 @@ mod tests {
         let user = create_test_user();
         let token = create_token(&user).unwrap();
         let sync_result = ClaudeSyncResult {
+            projects_scanned: 2,
             sessions_processed: 5,
             work_items_created: 3,
             work_items_updated: 2,

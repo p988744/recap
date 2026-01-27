@@ -32,6 +32,8 @@ export interface SyncResult {
   source: string
   success: boolean
   items_synced: number
+  projects_scanned: number
+  items_created: number
   error: string | null
 }
 

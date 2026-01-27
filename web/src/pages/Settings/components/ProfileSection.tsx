@@ -1,8 +1,9 @@
-import { Save, Loader2 } from 'lucide-react'
+import { Save, Loader2, User, LogOut } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import type { UserResponse } from '@/types'
 import type { SettingsMessage } from '../hooks/useSettings'
 
 interface ProfileSectionProps {
@@ -19,6 +20,8 @@ interface ProfileSectionProps {
   saving: boolean
   onSave: (setMessage: (msg: SettingsMessage | null) => void) => Promise<void>
   setMessage: (msg: SettingsMessage | null) => void
+  user: UserResponse | null
+  onLogout: () => void
 }
 
 export function ProfileSection({
@@ -35,12 +38,41 @@ export function ProfileSection({
   saving,
   onSave,
   setMessage,
+  user,
+  onLogout,
 }: ProfileSectionProps) {
   return (
-    <section className="animate-fade-up opacity-0 delay-1">
-      <h2 className="font-display text-2xl text-foreground mb-6">個人資料</h2>
+    <section className="animate-fade-up opacity-0 delay-1 space-y-8">
+      <h2 className="font-display text-2xl text-foreground mb-6">帳號</h2>
 
+      {/* Account Info */}
       <Card className="p-6">
+        <div className="space-y-6">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-full bg-foreground/10 flex items-center justify-center">
+              <User className="w-6 h-6 text-foreground" strokeWidth={1.5} />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-foreground">{user?.name || '本地使用者'}</p>
+              <p className="text-xs text-muted-foreground">{user?.email || '本地模式'}</p>
+            </div>
+          </div>
+
+          <div className="pt-4 border-t border-border">
+            <Button variant="outline" onClick={onLogout} className="text-destructive hover:text-destructive">
+              <LogOut className="w-4 h-4" strokeWidth={1.5} />
+              登出
+            </Button>
+            <p className="text-xs text-muted-foreground mt-2">
+              登出後將清除本地登入狀態，重新啟動 App 會自動登入。
+            </p>
+          </div>
+        </div>
+      </Card>
+
+      {/* Profile Form */}
+      <Card className="p-6">
+        <h3 className="font-medium text-foreground mb-4">個人資料</h3>
         <div className="space-y-6">
           <div>
             <Label htmlFor="profile-name" className="mb-2 block">名稱</Label>

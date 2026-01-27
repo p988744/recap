@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
-import { backgroundSync, tray, notification } from '@/services'
-import type { BackgroundSyncConfig, BackgroundSyncStatus } from '@/services/background-sync'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { backgroundSync } from '@/services'
+import type { BackgroundSyncStatus } from '@/services/background-sync'
 import type { SettingsMessage } from './types'
+import { useSyncContext } from '@/hooks/useAppSync'
 
 // =============================================================================
 // Types
@@ -11,12 +12,6 @@ export interface SyncFormState {
   // Config
   enabled: boolean
   intervalMinutes: number
-  syncGit: boolean
-  syncClaude: boolean
-  syncGitlab: boolean
-  syncJira: boolean
-  // Status
-  status: BackgroundSyncStatus | null
   // UI State
   loading: boolean
   saving: boolean
@@ -30,41 +25,45 @@ export function useSyncForm() {
   const [state, setState] = useState<SyncFormState>({
     enabled: true,
     intervalMinutes: 15,
-    syncGit: true,
-    syncClaude: true,
-    syncGitlab: false,
-    syncJira: false,
-    status: null,
     loading: true,
     saving: false,
   })
 
-  // Fetch initial config and status
+  // App-level sync (lifecycle, tray state, triggering, shared status)
+  const {
+    performFullSync,
+    backendStatus,
+    refreshStatus,
+    dataSyncState,
+    summaryState,
+  } = useSyncContext()
+
+  // Merge frontend phase states into backend status for UI
+  const isSyncing = dataSyncState === 'syncing' || summaryState === 'syncing'
+  const status = useMemo<BackgroundSyncStatus | null>(() => {
+    if (!backendStatus) {
+      if (isSyncing) {
+        return { is_running: false, is_syncing: true, last_sync_at: null, next_sync_at: null, last_result: null, last_error: null }
+      }
+      return null
+    }
+    return {
+      ...backendStatus,
+      is_syncing: backendStatus.is_syncing || isSyncing,
+    }
+  }, [backendStatus, isSyncing])
+
+  // Fetch initial config
   useEffect(() => {
     async function fetchData() {
       try {
-        const [config, status] = await Promise.all([
-          backgroundSync.getConfig(),
-          backgroundSync.getStatus(),
-        ])
+        const config = await backgroundSync.getConfig()
         setState((prev) => ({
           ...prev,
           enabled: config.enabled,
           intervalMinutes: config.interval_minutes,
-          syncGit: config.sync_git,
-          syncClaude: config.sync_claude,
-          syncGitlab: config.sync_gitlab,
-          syncJira: config.sync_jira,
-          status,
           loading: false,
         }))
-
-        // Update tray with current status
-        if (status.is_syncing) {
-          await tray.setSyncing(true).catch(() => {})
-        } else if (status.last_sync_at) {
-          await tray.updateSyncStatus(status.last_sync_at, false).catch(() => {})
-        }
       } catch (err) {
         console.error('Failed to fetch sync config:', err)
         setState((prev) => ({ ...prev, loading: false }))
@@ -72,31 +71,6 @@ export function useSyncForm() {
     }
     fetchData()
   }, [])
-
-  // Refresh status periodically when syncing
-  useEffect(() => {
-    if (!state.status?.is_syncing) return
-
-    const interval = setInterval(async () => {
-      try {
-        const status = await backgroundSync.getStatus()
-        setState((prev) => ({ ...prev, status }))
-
-        // Update tray when sync completes
-        if (!status.is_syncing) {
-          if (status.last_sync_at) {
-            await tray.updateSyncStatus(status.last_sync_at, false).catch(() => {})
-          } else {
-            await tray.setSyncing(false).catch(() => {})
-          }
-        }
-      } catch {
-        // Ignore errors
-      }
-    }, 2000)
-
-    return () => clearInterval(interval)
-  }, [state.status?.is_syncing])
 
   // Setters
   const setEnabled = useCallback((enabled: boolean) => {
@@ -107,23 +81,7 @@ export function useSyncForm() {
     setState((prev) => ({ ...prev, intervalMinutes }))
   }, [])
 
-  const setSyncGit = useCallback((syncGit: boolean) => {
-    setState((prev) => ({ ...prev, syncGit }))
-  }, [])
-
-  const setSyncClaude = useCallback((syncClaude: boolean) => {
-    setState((prev) => ({ ...prev, syncClaude }))
-  }, [])
-
-  const setSyncGitlab = useCallback((syncGitlab: boolean) => {
-    setState((prev) => ({ ...prev, syncGitlab }))
-  }, [])
-
-  const setSyncJira = useCallback((syncJira: boolean) => {
-    setState((prev) => ({ ...prev, syncJira }))
-  }, [])
-
-  // Save config
+  // Save config (backend handles restart/stop internally via update_config)
   const handleSave = useCallback(
     async (setMessage: (msg: SettingsMessage | null) => void) => {
       setState((prev) => ({ ...prev, saving: true }))
@@ -131,22 +89,14 @@ export function useSyncForm() {
         await backgroundSync.updateConfig({
           enabled: state.enabled,
           interval_minutes: state.intervalMinutes,
-          sync_git: state.syncGit,
-          sync_claude: state.syncClaude,
-          sync_gitlab: state.syncGitlab,
-          sync_jira: state.syncJira,
+          sync_git: true,
+          sync_claude: true,
+          sync_gitlab: false,
+          sync_jira: false,
         })
 
-        // If enabled, restart the service to apply new settings
-        if (state.enabled) {
-          await backgroundSync.start()
-        } else {
-          await backgroundSync.stop()
-        }
-
-        // Refresh status
-        const status = await backgroundSync.getStatus()
-        setState((prev) => ({ ...prev, status }))
+        // Refresh shared status so sidebar updates too
+        await refreshStatus()
 
         setMessage({ type: 'success', text: '同步設定已儲存' })
       } catch (err) {
@@ -158,91 +108,25 @@ export function useSyncForm() {
         setState((prev) => ({ ...prev, saving: false }))
       }
     },
-    [state.enabled, state.intervalMinutes, state.syncGit, state.syncClaude, state.syncGitlab, state.syncJira]
+    [state.enabled, state.intervalMinutes, refreshStatus]
   )
 
-  // Trigger immediate sync
+  // Trigger immediate sync via app-level sync
   const handleTriggerSync = useCallback(
     async (setMessage: (msg: SettingsMessage | null) => void) => {
       try {
-        // Update status to show syncing
-        setState((prev) => ({
-          ...prev,
-          status: prev.status ? { ...prev.status, is_syncing: true } : null,
-        }))
-
-        // Update tray to show syncing state
-        await tray.setSyncing(true).catch(() => {})
-
-        const result = await backgroundSync.triggerSync()
-
-        // Refresh status
-        const status = await backgroundSync.getStatus()
-        setState((prev) => ({ ...prev, status }))
-
-        // Update tray with last sync time
-        if (status.last_sync_at) {
-          await tray.updateSyncStatus(status.last_sync_at, false).catch(() => {})
-        } else {
-          await tray.setSyncing(false).catch(() => {})
-        }
-
-        // Check for partial failures
-        const failedResults = result.results.filter((r) => !r.success)
-        if (failedResults.length > 0) {
-          const errorSources = failedResults.map((r) => r.source).join(', ')
-          const errorMessage = `${errorSources} 同步失敗`
-          setMessage({
-            type: 'error',
-            text: errorMessage,
-          })
-          // Send notification for partial failure
-          await notification.sendSyncNotification(false, errorMessage).catch(() => {})
-        } else if (result.total_items > 0) {
-          setMessage({
-            type: 'success',
-            text: `已同步 ${result.total_items} 筆工作項目`,
-          })
-        } else {
-          setMessage({ type: 'success', text: '同步完成，無新項目' })
-        }
+        await performFullSync()
+        // performFullSync already calls refreshStatus internally
+        setMessage({ type: 'success', text: '同步完成' })
       } catch (err) {
-        // Refresh status anyway
-        const status = await backgroundSync.getStatus().catch(() => null)
-        if (status) {
-          setState((prev) => ({ ...prev, status }))
-          // Update tray
-          if (status.last_sync_at) {
-            await tray.updateSyncStatus(status.last_sync_at, false).catch(() => {})
-          } else {
-            await tray.setSyncing(false).catch(() => {})
-          }
-        } else {
-          await tray.setSyncing(false).catch(() => {})
-        }
-
-        const errorMessage = err instanceof Error ? err.message : '同步失敗'
         setMessage({
           type: 'error',
-          text: errorMessage,
+          text: err instanceof Error ? err.message : '同步失敗',
         })
-
-        // Send system notification for sync error
-        await notification.sendSyncNotification(false, errorMessage).catch(() => {})
       }
     },
-    []
+    [performFullSync]
   )
-
-  // Refresh status
-  const refreshStatus = useCallback(async () => {
-    try {
-      const status = await backgroundSync.getStatus()
-      setState((prev) => ({ ...prev, status }))
-    } catch {
-      // Ignore errors
-    }
-  }, [])
 
   return {
     // Config
@@ -250,17 +134,11 @@ export function useSyncForm() {
     setEnabled,
     intervalMinutes: state.intervalMinutes,
     setIntervalMinutes,
-    syncGit: state.syncGit,
-    setSyncGit,
-    syncClaude: state.syncClaude,
-    setSyncClaude,
-    syncGitlab: state.syncGitlab,
-    setSyncGitlab,
-    syncJira: state.syncJira,
-    setSyncJira,
-    // Status
-    status: state.status,
-    refreshStatus,
+    // Status (merged: backend + frontend phase states)
+    status,
+    // Phase states (for split display)
+    dataSyncState,
+    summaryState,
     // UI State
     loading: state.loading,
     saving: state.saving,

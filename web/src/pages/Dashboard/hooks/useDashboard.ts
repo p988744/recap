@@ -1,13 +1,13 @@
-import { useEffect, useState, useMemo, useCallback } from 'react'
-import { workItems, sync, tempo, notification } from '@/services'
-import type { WorkItemStatsResponse, WorkItem, SyncStatus as SyncStatusType } from '@/types'
+import { useEffect, useState, useMemo } from 'react'
+import { workItems, worklog } from '@/services'
+import type { WorkItemStatsResponse } from '@/types'
+import type { WorklogDay } from '@/types/worklog'
 import type { TimelineSession } from '@/components/WorkGanttChart'
+import { useSyncContext } from '@/hooks/useAppSync'
 
 // =============================================================================
 // Types
 // =============================================================================
-
-export type SyncState = 'idle' | 'syncing' | 'success' | 'error'
 
 // =============================================================================
 // Utility Functions
@@ -49,91 +49,34 @@ export function getHeatmapRange(weeks: number = 53) {
 export function useDashboard(isAuthenticated: boolean, token: string | null) {
   const [stats, setStats] = useState<WorkItemStatsResponse | null>(null)
   const [heatmapStats, setHeatmapStats] = useState<WorkItemStatsResponse | null>(null)
-  const [recentItems, setRecentItems] = useState<WorkItem[]>([])
+  const [worklogDays, setWorklogDays] = useState<WorklogDay[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [syncStatus, setSyncStatus] = useState<SyncState>('idle')
-  const [syncMessage, setSyncMessage] = useState<string>('')
   const [weekRange] = useState(getThisWeekRange)
   const [heatmapRange] = useState(() => getHeatmapRange(53))
-  const [claudeSyncInfo, setClaudeSyncInfo] = useState<string>('')
 
   // Gantt chart state
   const [ganttDate, setGanttDate] = useState(() => new Date().toISOString().split('T')[0])
   const [ganttSessions, setGanttSessions] = useState<TimelineSession[]>([])
   const [ganttLoading, setGanttLoading] = useState(false)
 
-  // Auto-sync state
-  const [autoSyncState, setAutoSyncState] = useState<'idle' | 'syncing' | 'done'>('idle')
-  const [syncStatusData, setSyncStatusData] = useState<SyncStatusType[]>([])
+  // Consume app-level sync state to know when to refetch data
+  const { lastSyncTime } = useSyncContext()
 
-  // Last sync time (client-side tracking)
-  const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null)
-
-  // Dashboard-level sync: fetches work items for display
-  const performSync = useCallback(async () => {
-    if (!isAuthenticated || !token) return
-    setAutoSyncState('syncing')
-
-    try {
-      const result = await sync.autoSync()
-
-      // Check for partial failures and notify
-      const failedResults = result.results.filter((r) => !r.success)
-      if (failedResults.length > 0) {
-        const errorSources = failedResults.map((r) => r.source).join(', ')
-        await notification.sendSyncNotification(false, `${errorSources} 同步失敗`).catch(() => {})
-      }
-
-      if (result.total_items > 0) {
-        const totalCreatedUpdated = result.results.reduce((sum, r) => sum + r.items_synced, 0)
-        setClaudeSyncInfo(`已同步 ${totalCreatedUpdated} 筆工作項目`)
-        setTimeout(() => setClaudeSyncInfo(''), 4000)
-      }
-
-      const statuses = await sync.getStatus().catch(() => [])
-      setSyncStatusData(statuses)
-      const now = new Date()
-      setLastSyncTime(now)
-    } catch {
-      // Silently handle sync errors (notifications handled by useAppSync)
-    } finally {
-      setAutoSyncState('done')
-    }
-  }, [isAuthenticated, token])
-
-  // Auto-sync effect (only runs once on mount)
-  useEffect(() => {
-    if (autoSyncState === 'idle') {
-      performSync()
-    }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Manual sync handler
-  const handleManualSync = useCallback(async () => {
-    if (autoSyncState === 'syncing') return
-    setAutoSyncState('idle')
-    await performSync()
-  }, [autoSyncState, performSync])
-
-  // Main data fetch effect
+  // Main data fetch effect — re-runs when app-level sync completes
   useEffect(() => {
     if (!isAuthenticated || !token) return
 
     async function fetchData() {
       try {
-        const [statsResult, heatmapResult, itemsResult] = await Promise.all([
+        const [statsResult, heatmapResult, worklogResult] = await Promise.all([
           workItems.getStats({ start_date: weekRange.start, end_date: weekRange.end }).catch(() => null),
           workItems.getStats({ start_date: heatmapRange.start, end_date: heatmapRange.end }).catch(() => null),
-          workItems.list({
-            start_date: weekRange.start,
-            end_date: weekRange.end,
-            per_page: 20
-          }).catch(() => null),
+          worklog.getOverview(weekRange.start, weekRange.end).catch(() => null),
         ])
         setStats(statsResult)
         setHeatmapStats(heatmapResult)
-        setRecentItems(itemsResult?.items ?? [])
+        setWorklogDays(worklogResult?.days ?? [])
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load data')
       } finally {
@@ -141,7 +84,7 @@ export function useDashboard(isAuthenticated: boolean, token: string | null) {
       }
     }
     fetchData()
-  }, [weekRange, heatmapRange, claudeSyncInfo, isAuthenticated, token])
+  }, [weekRange, heatmapRange, lastSyncTime, isAuthenticated, token])
 
   // Gantt timeline fetch effect
   useEffect(() => {
@@ -175,66 +118,6 @@ export function useDashboard(isAuthenticated: boolean, token: string | null) {
     fetchTimeline()
   }, [ganttDate, isAuthenticated, token])
 
-  // Sync to Tempo handler
-  const handleSyncToTempo = useCallback(async () => {
-    setSyncStatus('syncing')
-    setSyncMessage('')
-
-    try {
-      const response = await workItems.list({
-        jira_mapped: true,
-        synced_to_tempo: false,
-        per_page: 100,
-      })
-
-      const itemsToSync = response.items.filter(item => item.jira_issue_key && item.hours > 0)
-      if (itemsToSync.length === 0) {
-        setSyncStatus('success')
-        setSyncMessage('所有項目都已同步')
-        setTimeout(() => setSyncStatus('idle'), 3000)
-        return
-      }
-
-      const entries = itemsToSync.map(item => ({
-        issue_key: item.jira_issue_key!,
-        date: item.date.split('T')[0],
-        minutes: Math.round(item.hours * 60),
-        description: item.title,
-      }))
-
-      const result = await tempo.syncWorklogs({ entries, dry_run: false })
-
-      if (result.results.length > 0) {
-        for (let i = 0; i < itemsToSync.length; i++) {
-          const item = itemsToSync[i]
-          const syncResult = result.results[i]
-
-          if (syncResult && syncResult.status === 'success') {
-            try {
-              await workItems.update(item.id, {
-                synced_to_tempo: true,
-                tempo_worklog_id: syncResult.id || undefined,
-              })
-            } catch {
-              // Ignore individual update errors
-            }
-          }
-        }
-      }
-
-      const newStats = await workItems.getStats({ start_date: weekRange.start, end_date: weekRange.end }).catch(() => null)
-      if (newStats) setStats(newStats)
-
-      setSyncStatus('success')
-      setSyncMessage(`成功同步 ${result.successful}/${result.total_entries} 筆`)
-      setTimeout(() => setSyncStatus('idle'), 3000)
-    } catch (err) {
-      setSyncStatus('error')
-      setSyncMessage(err instanceof Error ? err.message : '同步失敗')
-      setTimeout(() => setSyncStatus('idle'), 5000)
-    }
-  }, [weekRange])
-
   // Computed values
   const chartData = useMemo(() => {
     if (!stats?.hours_by_project) return []
@@ -248,21 +131,40 @@ export function useDashboard(isAuthenticated: boolean, token: string | null) {
   }, [stats])
 
   const recentActivities = useMemo(() => {
-    return recentItems.slice(0, 5).map(item => ({
-      title: item.title,
-      source: item.source,
-      date: item.date,
-      hours: item.hours,
-      jiraKey: item.jira_issue_key,
-    }))
-  }, [recentItems])
+    // Flatten worklog days into per-project activities, sorted by date descending
+    const activities: Array<{
+      projectName: string
+      dailySummary?: string
+      date: string
+      totalHours: number
+      totalCommits: number
+      totalFiles: number
+    }> = []
+
+    for (const day of worklogDays) {
+      for (const project of day.projects) {
+        activities.push({
+          projectName: project.project_name,
+          dailySummary: project.daily_summary,
+          date: day.date,
+          totalHours: project.total_hours,
+          totalCommits: project.total_commits,
+          totalFiles: project.total_files,
+        })
+      }
+    }
+
+    // Sort by date descending, take top 5
+    activities.sort((a, b) => b.date.localeCompare(a.date))
+    return activities.slice(0, 5)
+  }, [worklogDays])
 
   const projectCount = Object.keys(stats?.hours_by_project ?? {}).length
 
   const daysWorked = useMemo(() => {
-    const dates = new Set(recentItems.map(item => item.date.split('T')[0]))
+    const dates = new Set(worklogDays.map(day => day.date))
     return dates.size
-  }, [recentItems])
+  }, [worklogDays])
 
   return {
     // State
@@ -271,20 +173,11 @@ export function useDashboard(isAuthenticated: boolean, token: string | null) {
     loading,
     error,
     weekRange,
-    autoSyncState,
-    syncStatusData,
-    claudeSyncInfo,
-    lastSyncTime,
-    handleManualSync,
     // Gantt
     ganttDate,
     setGanttDate,
     ganttSessions,
     ganttLoading,
-    // Tempo sync
-    syncStatus,
-    syncMessage,
-    handleSyncToTempo,
     // Computed
     chartData,
     recentActivities,

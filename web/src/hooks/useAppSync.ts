@@ -1,26 +1,91 @@
 /**
- * App-level sync hook.
+ * App-level sync hook & context.
  *
  * Manages the background sync service lifecycle and initial sync.
  * Lives at the Layout level so it works regardless of which page is active.
+ * Pages consume sync state via useSyncContext() — they never trigger sync directly.
+ *
+ * Two-phase sync:
+ *   Phase 1 — 資料同步: discover Claude sessions → import work items (autoSync)
+ *   Phase 2 — 摘要處理: capture snapshots + run LLM compaction (triggerSync)
+ *
+ * Single source of truth: backend BackgroundSyncStatus via getStatus().
  */
-import { useEffect, useCallback, useState } from 'react'
+import { createContext, useContext, useEffect, useCallback, useState, useRef } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { backgroundSync, sync, tray, notification } from '@/services'
+import type { BackgroundSyncStatus } from '@/services/background-sync'
 
-export function useAppSync(isAuthenticated: boolean, token: string | null) {
-  const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'done'>('idle')
+// =============================================================================
+// Context
+// =============================================================================
 
-  // Full sync: auto_sync (work items) + triggerSync (snapshots + compaction)
+export interface SyncContextValue {
+  /** Phase 1: data sync state */
+  dataSyncState: 'idle' | 'syncing' | 'done'
+  /** Phase 2: summary/compaction state */
+  summaryState: 'idle' | 'syncing' | 'done'
+  /** Backend sync status (single source of truth for timing & config) */
+  backendStatus: BackgroundSyncStatus | null
+  /** Transient info message after sync (auto-clears) */
+  syncInfo: string
+  /** Trigger a full sync (work items + snapshots + compaction) */
+  performFullSync: () => Promise<void>
+  /** Refresh backend status (call after config changes) */
+  refreshStatus: () => Promise<void>
+}
+
+const SyncContext = createContext<SyncContextValue | null>(null)
+
+export const SyncProvider = SyncContext.Provider
+
+/**
+ * Consume app-level sync state from any page.
+ * Must be used inside a SyncProvider (Layout).
+ */
+export function useSyncContext(): SyncContextValue {
+  const ctx = useContext(SyncContext)
+  if (!ctx) {
+    throw new Error('useSyncContext must be used within a SyncProvider')
+  }
+  return ctx
+}
+
+// =============================================================================
+// Hook (used only by Layout)
+// =============================================================================
+
+/** Poll interval for backend status (30 seconds) */
+const STATUS_POLL_INTERVAL = 30_000
+
+export function useAppSync(isAuthenticated: boolean, token: string | null): SyncContextValue {
+  const [dataSyncState, setDataSyncState] = useState<'idle' | 'syncing' | 'done'>('idle')
+  const [summaryState, setSummaryState] = useState<'idle' | 'syncing' | 'done'>('idle')
+  const [backendStatus, setBackendStatus] = useState<BackgroundSyncStatus | null>(null)
+  const [syncInfo, setSyncInfo] = useState('')
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Fetch backend status
+  const refreshStatus = useCallback(async () => {
+    try {
+      const status = await backgroundSync.getStatus()
+      setBackendStatus(status)
+    } catch {
+      // Ignore errors
+    }
+  }, [])
+
+  // Full sync: Phase 1 (data) + Phase 2 (summary)
   const performFullSync = useCallback(async () => {
     if (!isAuthenticated || !token) return
-    setSyncState('syncing')
 
     await tray.setSyncing(true).catch(() => {})
 
     try {
-      // Phase 1: Sync Claude sessions → work items
+      // Phase 1: 資料同步 — Sync Claude sessions → work items
+      setDataSyncState('syncing')
       const result = await sync.autoSync()
+      setDataSyncState('done')
 
       const failedResults = result.results.filter((r) => !r.success)
       if (failedResults.length > 0) {
@@ -28,19 +93,31 @@ export function useAppSync(isAuthenticated: boolean, token: string | null) {
         await notification.sendSyncNotification(false, `${errorSources} 同步失敗`).catch(() => {})
       }
 
-      // Phase 2: Capture snapshots + run compaction (for worklog data)
+      // Surface sync info for UI
+      if (result.total_items > 0) {
+        setSyncInfo(`已掃描 ${result.projects_scanned} 個專案，發現 ${result.items_created} 筆新資料`)
+        setTimeout(() => setSyncInfo(''), 4000)
+      }
+
+      // Phase 2: 摘要處理 — Capture snapshots + run compaction
+      setSummaryState('syncing')
       await backgroundSync.triggerSync().catch((err) => {
         console.warn('Background sync trigger failed:', err)
       })
+      setSummaryState('done')
 
-      const now = new Date()
-      await tray.updateSyncStatus(now.toISOString(), false).catch(() => {})
+      // Refresh from backend (single source of truth)
+      await refreshStatus()
+      const status = await backgroundSync.getStatus().catch(() => null)
+      if (status?.last_sync_at) {
+        await tray.updateSyncStatus(status.last_sync_at, false).catch(() => {})
+      }
     } catch {
+      setDataSyncState('done')
+      setSummaryState('done')
       await tray.setSyncing(false).catch(() => {})
-    } finally {
-      setSyncState('done')
     }
-  }, [isAuthenticated, token])
+  }, [isAuthenticated, token, refreshStatus])
 
   // Start background sync service when authenticated
   useEffect(() => {
@@ -57,16 +134,33 @@ export function useAppSync(isAuthenticated: boolean, token: string | null) {
 
   // Initial sync on first mount
   useEffect(() => {
-    if (syncState === 'idle') {
+    if (dataSyncState === 'idle') {
       performFullSync()
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Periodic status polling to stay in sync with backend
+  useEffect(() => {
+    if (!isAuthenticated) return
+
+    // Fetch immediately
+    refreshStatus()
+
+    pollRef.current = setInterval(refreshStatus, STATUS_POLL_INTERVAL)
+
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current)
+        pollRef.current = null
+      }
+    }
+  }, [isAuthenticated, refreshStatus])
+
   // Listen for tray "Sync Now" event
   useEffect(() => {
+    const isSyncing = dataSyncState === 'syncing' || summaryState === 'syncing'
     const unlisten = listen('tray-sync-now', () => {
-      if (syncState !== 'syncing') {
-        setSyncState('idle')
+      if (!isSyncing) {
         performFullSync()
       }
     })
@@ -74,7 +168,7 @@ export function useAppSync(isAuthenticated: boolean, token: string | null) {
     return () => {
       unlisten.then((fn) => fn())
     }
-  }, [syncState, performFullSync])
+  }, [dataSyncState, summaryState, performFullSync])
 
-  return { syncState, performFullSync }
+  return { dataSyncState, summaryState, backendStatus, syncInfo, performFullSync, refreshStatus }
 }

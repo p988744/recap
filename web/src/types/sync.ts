@@ -20,6 +20,8 @@ export interface SyncResult {
   success: boolean
   source: string
   items_synced: number
+  projects_scanned: number
+  items_created: number
   message?: string
 }
 
@@ -27,6 +29,8 @@ export interface AutoSyncResponse {
   success: boolean
   results: SyncResult[]
   total_items: number
+  projects_scanned: number
+  items_created: number
 }
 
 export interface AvailableProject {

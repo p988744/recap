@@ -393,6 +393,7 @@ fn decode_dir_name_to_path(dir_name: &str) -> String {
 /// Sync result for Claude projects
 #[derive(Debug, serde::Serialize)]
 pub struct ClaudeSyncResult {
+    pub projects_scanned: usize,
     pub sessions_processed: usize,
     pub sessions_skipped: usize,
     pub work_items_created: usize,
@@ -705,6 +706,7 @@ pub async fn sync_discovered_projects(
     }
 
     Ok(ClaudeSyncResult {
+        projects_scanned: projects.len(),
         sessions_processed,
         sessions_skipped,
         work_items_created: created,

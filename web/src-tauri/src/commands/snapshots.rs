@@ -276,17 +276,19 @@ pub async fn get_worklog_overview(
     .await
     .map_err(|e| e.to_string())?;
 
-    // Group by (project_path, local_date) and aggregate counts
-    let mut snapshot_stats: Vec<(String, String, i32, i32)> = Vec::new();
+    // Group by (project_path, local_date) and aggregate counts + hours
+    // hours = number of distinct hour buckets (each bucket ≈ 1 hour of activity)
+    let mut snapshot_stats: Vec<(String, String, i32, i32, f64)> = Vec::new();
     {
-        let mut stats_map: std::collections::HashMap<(String, String), (i32, i32)> = std::collections::HashMap::new();
+        let mut stats_map: std::collections::HashMap<(String, String), (i32, i32, std::collections::HashSet<String>)> = std::collections::HashMap::new();
         for snap in &raw_snapshots {
             let local_date = extract_local_date(&snap.hour_bucket);
             if local_date < start_date || local_date > end_date {
                 continue;
             }
+            let local_hour = extract_local_hour(&snap.hour_bucket);
             let key = (snap.project_path.clone(), local_date);
-            let entry = stats_map.entry(key).or_insert((0, 0));
+            let entry = stats_map.entry(key).or_insert((0, 0, std::collections::HashSet::new()));
             entry.0 += snap.git_commits.as_ref()
                 .and_then(|g| serde_json::from_str::<Vec<serde_json::Value>>(g).ok())
                 .map(|v| v.len() as i32)
@@ -295,9 +297,10 @@ pub async fn get_worklog_overview(
                 .and_then(|f| serde_json::from_str::<Vec<serde_json::Value>>(f).ok())
                 .map(|v| v.len() as i32)
                 .unwrap_or(0);
+            entry.2.insert(local_hour);
         }
-        for ((project_path, day), (commits, files)) in stats_map {
-            snapshot_stats.push((project_path, day, commits, files));
+        for ((project_path, day), (commits, files, hours_set)) in stats_map {
+            snapshot_stats.push((project_path, day, commits, files, hours_set.len() as f64));
         }
         snapshot_stats.sort_by(|a, b| b.1.cmp(&a.1)); // newest first
     }
@@ -365,6 +368,12 @@ pub async fn get_worklog_overview(
             .map(|v| v.len() as i32)
             .unwrap_or(0);
 
+        // Get hours from snapshot stats for this project+date
+        let total_hours = snapshot_stats.iter()
+            .find(|(pp, d, _, _, _)| pp == &project_path && d == &date)
+            .map(|(_, _, _, _, h)| *h)
+            .unwrap_or(0.0);
+
         let has_hourly = hourly_exists.iter().any(|(pp, d)| pp == &project_path && d == &date);
 
         get_or_create_day(&mut days_map, &date);
@@ -375,14 +384,14 @@ pub async fn get_worklog_overview(
                 daily_summary: Some(summary.summary.clone()),
                 total_commits: commit_count,
                 total_files: file_count,
-                total_hours: 0.0, // TODO: calculate from hourly data
+                total_hours,
                 has_hourly_data: has_hourly,
             });
         }
     }
 
     // Add snapshot-only data (projects with snapshots but no daily summary)
-    for (project_path, day, commits, files) in &snapshot_stats {
+    for (project_path, day, commits, files, hours) in &snapshot_stats {
         get_or_create_day(&mut days_map, day);
         if let Some(day_entry) = days_map.get_mut(day.as_str()) {
             // Skip if already have a daily summary for this project
@@ -398,7 +407,7 @@ pub async fn get_worklog_overview(
                 daily_summary: None,
                 total_commits: *commits,
                 total_files: *files,
-                total_hours: 0.0,
+                total_hours: *hours,
                 has_hourly_data: has_hourly,
             });
         }
