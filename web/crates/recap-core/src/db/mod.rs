@@ -364,6 +364,16 @@ impl Database {
             .await
             .ok();
 
+        // Add timezone and week_start_day columns to users table
+        sqlx::query("ALTER TABLE users ADD COLUMN timezone TEXT")
+            .execute(&self.pool)
+            .await
+            .ok(); // NULL = system default
+        sqlx::query("ALTER TABLE users ADD COLUMN week_start_day INTEGER DEFAULT 1")
+            .execute(&self.pool)
+            .await
+            .ok(); // 0=Sun, 1=Mon, ..., 6=Sat
+
         // Create snapshot_raw_data table for hourly session snapshots
         sqlx::query(
             r#"

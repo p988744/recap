@@ -13,6 +13,8 @@ export interface ConfigResponse {
   llm_configured: boolean
   daily_work_hours: number
   normalize_hours: boolean
+  timezone: string | null
+  week_start_day: number
   gitlab_url: string | null
   gitlab_configured: boolean
   use_git_mode: boolean
@@ -23,6 +25,8 @@ export interface ConfigResponse {
 export interface UpdateConfigRequest {
   daily_work_hours?: number
   normalize_hours?: boolean
+  timezone?: string
+  week_start_day?: number
 }
 
 export interface UpdateLlmConfigRequest {

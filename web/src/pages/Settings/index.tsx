@@ -156,6 +156,10 @@ export function SettingsPage() {
             setDailyHours={preferencesForm.setDailyHours}
             normalizeHours={preferencesForm.normalizeHours}
             setNormalizeHours={preferencesForm.setNormalizeHours}
+            timezone={preferencesForm.timezone}
+            setTimezone={preferencesForm.setTimezone}
+            weekStartDay={preferencesForm.weekStartDay}
+            setWeekStartDay={preferencesForm.setWeekStartDay}
             savingPreferences={preferencesForm.saving}
             onSavePreferences={preferencesForm.handleSave}
             setMessage={settings.setMessage}

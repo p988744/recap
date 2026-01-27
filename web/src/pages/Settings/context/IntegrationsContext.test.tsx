@@ -85,6 +85,8 @@ describe('IntegrationsContext', () => {
     user_id: 'user-1',
     daily_work_hours: 8,
     normalize_hours: true,
+    timezone: null,
+    week_start_day: 1,
     jira_url: null,
     jira_configured: false,
     gitlab_url: null,

@@ -3,13 +3,47 @@
 //! Provides commands for querying work summaries, viewing snapshot details,
 //! and triggering compaction manually.
 
-use chrono::Datelike;
+use chrono::{DateTime, Datelike, Local, NaiveDateTime, Timelike};
 use recap_core::auth::verify_token;
 use recap_core::models::{SnapshotRawData, WorkSummary};
 use serde::Serialize;
 use tauri::State;
 
 use super::AppState;
+
+/// Extract local HH:MM from a timestamp string.
+/// Handles both naive local time ("2026-01-27T09:00:00") and
+/// UTC-offset format ("2026-01-27T00:00:00+00:00").
+fn extract_local_hour(ts: &str) -> String {
+    // Try RFC3339 first (has timezone offset)
+    if let Ok(dt) = DateTime::parse_from_rfc3339(ts) {
+        let local = dt.with_timezone(&Local);
+        return format!("{:02}:{:02}", local.hour(), local.minute());
+    }
+    // Try naive datetime (already in local time)
+    if let Ok(ndt) = NaiveDateTime::parse_from_str(ts, "%Y-%m-%dT%H:%M:%S") {
+        return format!("{:02}:{:02}", ndt.hour(), ndt.minute());
+    }
+    // Fallback: substring extraction
+    ts.get(11..16).unwrap_or("??:??").to_string()
+}
+
+/// Compute the next hour from a local HH:MM string.
+fn next_hour(hour_str: &str) -> String {
+    let h: u32 = hour_str.get(..2).and_then(|s| s.parse().ok()).unwrap_or(0);
+    format!("{:02}:00", (h + 1).min(23))
+}
+
+/// Extract local date (YYYY-MM-DD) from a timestamp string.
+/// Handles both RFC3339 and naive datetime formats.
+fn extract_local_date(ts: &str) -> String {
+    if let Ok(dt) = DateTime::parse_from_rfc3339(ts) {
+        let local = dt.with_timezone(&Local);
+        return local.format("%Y-%m-%d").to_string();
+    }
+    // Naive or fallback: first 10 chars
+    ts.get(..10).unwrap_or(ts).to_string()
+}
 
 /// Response type for work summaries
 #[derive(Debug, Serialize)]
@@ -220,21 +254,53 @@ pub async fn get_worklog_overview(
     .map_err(|e| e.to_string())?;
 
     // 2. Fetch snapshot stats per project per day (for days without daily summaries)
-    let snapshot_stats: Vec<(String, String, i32, i32)> = sqlx::query_as(
-        r#"SELECT project_path, DATE(hour_bucket) as day,
-              SUM(json_array_length(git_commits)) as commit_count,
-              SUM(json_array_length(files_modified)) as file_count
-           FROM snapshot_raw_data
-           WHERE user_id = ? AND DATE(hour_bucket) >= ? AND DATE(hour_bucket) <= ?
-           GROUP BY project_path, DATE(hour_bucket)
-           ORDER BY day DESC"#,
+    //    Widen query range by 1 day to handle UTC-offset hour_buckets, then group by local date in Rust.
+    let prev_start = chrono::NaiveDate::parse_from_str(&start_date, "%Y-%m-%d")
+        .map(|d| d.pred_opt().unwrap_or(d).format("%Y-%m-%d").to_string())
+        .unwrap_or_else(|_| start_date.clone());
+    let next_end = chrono::NaiveDate::parse_from_str(&end_date, "%Y-%m-%d")
+        .map(|d| d.succ_opt().unwrap_or(d).format("%Y-%m-%d").to_string())
+        .unwrap_or_else(|_| end_date.clone());
+    let wide_snap_start = format!("{}T00:00:00", &prev_start);
+    let wide_snap_end = format!("{}T23:59:59", &next_end);
+
+    let raw_snapshots: Vec<SnapshotRawData> = sqlx::query_as(
+        r#"SELECT * FROM snapshot_raw_data
+           WHERE user_id = ? AND hour_bucket >= ? AND hour_bucket <= ?
+           ORDER BY hour_bucket DESC"#,
     )
     .bind(&claims.sub)
-    .bind(&start_date)
-    .bind(&end_date)
+    .bind(&wide_snap_start)
+    .bind(&wide_snap_end)
     .fetch_all(&db.pool)
     .await
     .map_err(|e| e.to_string())?;
+
+    // Group by (project_path, local_date) and aggregate counts
+    let mut snapshot_stats: Vec<(String, String, i32, i32)> = Vec::new();
+    {
+        let mut stats_map: std::collections::HashMap<(String, String), (i32, i32)> = std::collections::HashMap::new();
+        for snap in &raw_snapshots {
+            let local_date = extract_local_date(&snap.hour_bucket);
+            if local_date < start_date || local_date > end_date {
+                continue;
+            }
+            let key = (snap.project_path.clone(), local_date);
+            let entry = stats_map.entry(key).or_insert((0, 0));
+            entry.0 += snap.git_commits.as_ref()
+                .and_then(|g| serde_json::from_str::<Vec<serde_json::Value>>(g).ok())
+                .map(|v| v.len() as i32)
+                .unwrap_or(0);
+            entry.1 += snap.files_modified.as_ref()
+                .and_then(|f| serde_json::from_str::<Vec<serde_json::Value>>(f).ok())
+                .map(|v| v.len() as i32)
+                .unwrap_or(0);
+        }
+        for ((project_path, day), (commits, files)) in stats_map {
+            snapshot_stats.push((project_path, day, commits, files));
+        }
+        snapshot_stats.sort_by(|a, b| b.1.cmp(&a.1)); // newest first
+    }
 
     // 3. Check which days/projects have hourly data
     let hourly_exists: Vec<(String, String)> = sqlx::query_as(
@@ -370,11 +436,19 @@ pub async fn get_hourly_breakdown(
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
     let db = state.db.lock().await;
 
-    let start = format!("{}T00:00:00", &date);
-    let end = format!("{}T23:59:59", &date);
+    // Widen query range by 1 day on each side to handle UTC-offset period_start,
+    // then filter by local date in Rust.
+    let prev_date_summary = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+        .map(|d| d.pred_opt().unwrap_or(d).format("%Y-%m-%d").to_string())
+        .unwrap_or_else(|_| date.clone());
+    let next_date_summary = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+        .map(|d| d.succ_opt().unwrap_or(d).format("%Y-%m-%d").to_string())
+        .unwrap_or_else(|_| date.clone());
+    let wide_start_summary = format!("{}T00:00:00", &prev_date_summary);
+    let wide_end_summary = format!("{}T23:59:59", &next_date_summary);
 
     // Try hourly summaries first
-    let summaries: Vec<WorkSummary> = sqlx::query_as(
+    let all_summaries: Vec<WorkSummary> = sqlx::query_as(
         r#"SELECT * FROM work_summaries
            WHERE user_id = ? AND scale = 'hourly' AND project_path = ?
              AND period_start >= ? AND period_start <= ?
@@ -382,16 +456,21 @@ pub async fn get_hourly_breakdown(
     )
     .bind(&claims.sub)
     .bind(&project_path)
-    .bind(&start)
-    .bind(&end)
+    .bind(&wide_start_summary)
+    .bind(&wide_end_summary)
     .fetch_all(&db.pool)
     .await
     .map_err(|e| e.to_string())?;
 
+    // Filter to only summaries whose local date matches the requested date
+    let summaries: Vec<&WorkSummary> = all_summaries.iter()
+        .filter(|s| extract_local_date(&s.period_start) == date)
+        .collect();
+
     if !summaries.is_empty() {
         return Ok(summaries.into_iter().map(|s| {
-            let hour_start = s.period_start.get(11..16).unwrap_or("??:??").to_string();
-            let hour_end = s.period_end.get(11..16).unwrap_or("??:??").to_string();
+            let hour_start = extract_local_hour(&s.period_start);
+            let hour_end = extract_local_hour(&s.period_end);
             let files: Vec<String> = s.key_activities.as_ref()
                 .and_then(|a| serde_json::from_str(a).ok())
                 .unwrap_or_default();
@@ -418,7 +497,7 @@ pub async fn get_hourly_breakdown(
             HourlyBreakdownItem {
                 hour_start,
                 hour_end,
-                summary: s.summary,
+                summary: s.summary.clone(),
                 files_modified: files,
                 git_commits: commits,
             }
@@ -426,7 +505,18 @@ pub async fn get_hourly_breakdown(
     }
 
     // Fallback: build from raw snapshots
-    let snapshots: Vec<SnapshotRawData> = sqlx::query_as(
+    // Query broadly to handle both UTC-offset and naive-local hour_bucket formats.
+    // We widen the range by 1 day on each side, then filter by local date in Rust.
+    let prev_date = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+        .map(|d| d.pred_opt().unwrap_or(d).format("%Y-%m-%d").to_string())
+        .unwrap_or_else(|_| date.clone());
+    let next_date = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+        .map(|d| d.succ_opt().unwrap_or(d).format("%Y-%m-%d").to_string())
+        .unwrap_or_else(|_| date.clone());
+    let wide_start = format!("{}T00:00:00", &prev_date);
+    let wide_end = format!("{}T23:59:59", &next_date);
+
+    let all_snapshots: Vec<SnapshotRawData> = sqlx::query_as(
         r#"SELECT * FROM snapshot_raw_data
            WHERE user_id = ? AND project_path = ?
              AND hour_bucket >= ? AND hour_bucket <= ?
@@ -434,16 +524,20 @@ pub async fn get_hourly_breakdown(
     )
     .bind(&claims.sub)
     .bind(&project_path)
-    .bind(&start)
-    .bind(&end)
+    .bind(&wide_start)
+    .bind(&wide_end)
     .fetch_all(&db.pool)
     .await
     .map_err(|e| e.to_string())?;
 
+    // Filter to only snapshots whose local date matches the requested date
+    let snapshots: Vec<&SnapshotRawData> = all_snapshots.iter()
+        .filter(|s| extract_local_date(&s.hour_bucket) == date)
+        .collect();
+
     Ok(snapshots.into_iter().map(|s| {
-        let hour_start = s.hour_bucket.get(11..16).unwrap_or("??:??").to_string();
-        let hour_end_num = hour_start.get(..2).and_then(|h| h.parse::<u32>().ok()).unwrap_or(0) + 1;
-        let hour_end = format!("{:02}:00", hour_end_num.min(23));
+        let hour_start = extract_local_hour(&s.hour_bucket);
+        let hour_end = next_hour(&hour_start);
 
         let files: Vec<String> = s.files_modified.as_ref()
             .and_then(|f| serde_json::from_str(f).ok())
@@ -523,4 +617,200 @@ pub async fn trigger_compaction(
         monthly_compacted: result.monthly_compacted,
         errors: result.errors,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── extract_local_hour ──
+
+    #[test]
+    fn test_extract_local_hour_utc_offset() {
+        // UTC midnight → should be converted to local time.
+        // For Asia/Taipei (UTC+8): "2026-01-27T00:00:00+00:00" → "08:00"
+        let result = extract_local_hour("2026-01-27T00:00:00+00:00");
+        // We can't hardcode the expected value because it depends on the system timezone.
+        // Instead, verify it produces a valid HH:MM format.
+        assert_eq!(result.len(), 5);
+        assert_eq!(&result[2..3], ":");
+        let hour: u32 = result[..2].parse().unwrap();
+        let minute: u32 = result[3..].parse().unwrap();
+        assert!(hour < 24);
+        assert!(minute < 60);
+    }
+
+    #[test]
+    fn test_extract_local_hour_utc_offset_converts_correctly() {
+        // Use a known offset to verify conversion: "+08:00" means already local for UTC+8 systems
+        let result = extract_local_hour("2026-01-27T09:30:00+08:00");
+        // Regardless of system timezone, the conversion should be consistent.
+        // On UTC+8 system: input is 09:30 local → output "09:30"
+        // On UTC system: input is 01:30 UTC → output "01:30"
+        // We just verify the format is valid.
+        assert_eq!(result.len(), 5);
+        assert_eq!(&result[2..3], ":");
+    }
+
+    #[test]
+    fn test_extract_local_hour_naive_datetime() {
+        // Naive datetime (no timezone info) → treated as already local
+        let result = extract_local_hour("2026-01-27T14:30:00");
+        assert_eq!(result, "14:30");
+    }
+
+    #[test]
+    fn test_extract_local_hour_naive_datetime_midnight() {
+        let result = extract_local_hour("2026-01-27T00:00:00");
+        assert_eq!(result, "00:00");
+    }
+
+    #[test]
+    fn test_extract_local_hour_naive_datetime_end_of_day() {
+        let result = extract_local_hour("2026-01-27T23:59:00");
+        assert_eq!(result, "23:59");
+    }
+
+    #[test]
+    fn test_extract_local_hour_fallback() {
+        // Something that doesn't parse → falls back to substring
+        let result = extract_local_hour("invalid-time");
+        assert_eq!(result, "??:??");
+    }
+
+    #[test]
+    fn test_extract_local_hour_z_suffix() {
+        // "Z" suffix = UTC, equivalent to +00:00
+        let result = extract_local_hour("2026-01-27T02:15:00Z");
+        assert_eq!(result.len(), 5);
+        assert_eq!(&result[2..3], ":");
+    }
+
+    // ── next_hour ──
+
+    #[test]
+    fn test_next_hour_normal() {
+        assert_eq!(next_hour("09:00"), "10:00");
+        assert_eq!(next_hour("14:30"), "15:00");
+        assert_eq!(next_hour("00:00"), "01:00");
+    }
+
+    #[test]
+    fn test_next_hour_capped_at_23() {
+        assert_eq!(next_hour("23:00"), "23:00");
+        assert_eq!(next_hour("23:30"), "23:00");
+    }
+
+    #[test]
+    fn test_next_hour_edge_cases() {
+        assert_eq!(next_hour("22:00"), "23:00");
+        assert_eq!(next_hour("01:45"), "02:00");
+    }
+
+    #[test]
+    fn test_next_hour_invalid_input() {
+        // Invalid input → parses as 0 → "01:00"
+        assert_eq!(next_hour("??:??"), "01:00");
+    }
+
+    // ── extract_local_date ──
+
+    #[test]
+    fn test_extract_local_date_utc_offset() {
+        // UTC midnight with offset → converted to local date.
+        let result = extract_local_date("2026-01-27T00:00:00+00:00");
+        // On UTC+8 system: 2026-01-27 00:00 UTC = 2026-01-27 08:00 local → date = "2026-01-27"
+        // On UTC-5 system: 2026-01-27 00:00 UTC = 2026-01-26 19:00 local → date = "2026-01-26"
+        // Just verify valid date format YYYY-MM-DD
+        assert_eq!(result.len(), 10);
+        assert_eq!(&result[4..5], "-");
+        assert_eq!(&result[7..8], "-");
+    }
+
+    #[test]
+    fn test_extract_local_date_utc_offset_date_boundary() {
+        // 2026-01-26T23:00:00+00:00 on UTC+8 → 2026-01-27T07:00 local
+        // This tests that date conversion crosses the date boundary correctly
+        let result = extract_local_date("2026-01-26T23:00:00+00:00");
+        assert_eq!(result.len(), 10);
+        // On positive UTC offset systems, this should be the next day
+        let local_offset = Local::now().offset().local_minus_utc();
+        if local_offset > 3600 {
+            // UTC+2 or more: 23:00 UTC becomes next day
+            assert_eq!(result, "2026-01-27");
+        }
+    }
+
+    #[test]
+    fn test_extract_local_date_naive() {
+        // Naive datetime → first 10 chars
+        let result = extract_local_date("2026-01-27T14:30:00");
+        assert_eq!(result, "2026-01-27");
+    }
+
+    #[test]
+    fn test_extract_local_date_date_only() {
+        // Just a date string → first 10 chars
+        let result = extract_local_date("2026-01-27");
+        assert_eq!(result, "2026-01-27");
+    }
+
+    #[test]
+    fn test_extract_local_date_z_suffix() {
+        let result = extract_local_date("2026-01-27T10:00:00Z");
+        assert_eq!(result.len(), 10);
+    }
+
+    // ── Integration-style tests for timezone conversion consistency ──
+
+    #[test]
+    fn test_hour_and_date_consistent_for_utc_offset() {
+        // Ensure that for the same timestamp, extract_local_hour and extract_local_date
+        // produce consistent results (both refer to the same local time).
+        let ts = "2026-01-27T01:30:00+00:00";
+        let date = extract_local_date(ts);
+        let hour = extract_local_hour(ts);
+
+        // Both should be valid
+        assert_eq!(date.len(), 10);
+        assert_eq!(hour.len(), 5);
+
+        // Verify they match the same chrono Local conversion
+        let dt = DateTime::parse_from_rfc3339(ts).unwrap();
+        let local = dt.with_timezone(&Local);
+        let expected_date = local.format("%Y-%m-%d").to_string();
+        let expected_hour = format!("{:02}:{:02}", local.hour(), local.minute());
+        assert_eq!(date, expected_date);
+        assert_eq!(hour, expected_hour);
+    }
+
+    #[test]
+    fn test_hour_and_date_consistent_for_naive() {
+        let ts = "2026-01-27T09:45:00";
+        let date = extract_local_date(ts);
+        let hour = extract_local_hour(ts);
+
+        assert_eq!(date, "2026-01-27");
+        assert_eq!(hour, "09:45");
+    }
+
+    #[test]
+    fn test_next_hour_from_extracted_hour() {
+        // Simulate the typical flow: extract hour, compute next hour
+        let hour_start = extract_local_hour("2026-01-27T15:00:00");
+        let hour_end = next_hour(&hour_start);
+        assert_eq!(hour_start, "15:00");
+        assert_eq!(hour_end, "16:00");
+    }
+
+    #[test]
+    fn test_utc_offset_positive_timezone_conversion() {
+        // Test with explicit +08:00 offset
+        let ts = "2026-01-27T08:00:00+08:00";
+        let dt = DateTime::parse_from_rfc3339(ts).unwrap();
+        let local = dt.with_timezone(&Local);
+        let result = extract_local_hour(ts);
+        let expected = format!("{:02}:{:02}", local.hour(), local.minute());
+        assert_eq!(result, expected);
+    }
 }

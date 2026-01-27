@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { worklog, workItems } from '@/services'
+import { worklog, workItems, config as configService } from '@/services'
 import type { WorklogDay, HourlyBreakdownItem } from '@/types/worklog'
 import type { WorkItem } from '@/types'
 
@@ -55,11 +55,27 @@ function shiftWeek(startDate: string, direction: -1 | 1): { start: string; end: 
 // =============================================================================
 
 export function useWorklog(isAuthenticated: boolean) {
-  // Date range state — default to current week (Monday start)
-  const weekStartDay = 1 // Monday
+  // Week start day from config (default Monday)
+  const [weekStartDay, setWeekStartDay] = useState(1)
   const initialRange = getWeekRange(weekStartDay)
   const [startDate, setStartDate] = useState(initialRange.start)
   const [endDate, setEndDate] = useState(initialRange.end)
+
+  // Fetch week_start_day from config
+  useEffect(() => {
+    if (!isAuthenticated) return
+    configService.getConfig()
+      .then((c) => {
+        if (c.week_start_day !== weekStartDay) {
+          setWeekStartDay(c.week_start_day)
+          const range = getWeekRange(c.week_start_day)
+          setStartDate(range.start)
+          setEndDate(range.end)
+        }
+      })
+      .catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated])
 
   // Data state
   const [days, setDays] = useState<WorklogDay[]>([])
