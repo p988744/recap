@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   Save,
   Loader2,
@@ -6,6 +7,7 @@ import {
   XCircle,
   Eye,
   EyeOff,
+  RefreshCw,
 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -13,6 +15,10 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import type { ConfigResponse } from '@/types'
 import type { SettingsMessage } from '../hooks/useSettings'
+import { useLlmUsage } from '@/pages/LlmUsage/hooks/useLlmUsage'
+import { UsageSummary } from '@/pages/LlmUsage/components/UsageSummary'
+import { DailyChart } from '@/pages/LlmUsage/components/DailyChart'
+import { UsageLogs } from '@/pages/LlmUsage/components/UsageLogs'
 
 interface AiSectionProps {
   config: ConfigResponse | null
@@ -59,8 +65,12 @@ export function AiSection({
   setMessage,
   refreshConfig,
 }: AiSectionProps) {
+  const [rangeDays, setRangeDays] = useState(30)
+  const usageRange = getUsageDateRange(rangeDays)
+  const { stats, daily, logs, loading: usageLoading, refresh } = useLlmUsage(usageRange.start, usageRange.end)
+
   return (
-    <section className="animate-fade-up opacity-0 delay-1">
+    <section className="animate-fade-up opacity-0 delay-1 space-y-8">
       <h2 className="font-display text-2xl text-foreground mb-6">AI 助手</h2>
 
       <Card className="p-6">
@@ -171,6 +181,64 @@ export function AiSection({
           </div>
         </div>
       </Card>
+
+      {/* LLM Usage */}
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-medium text-foreground">用量統計</h3>
+            <p className="text-xs text-muted-foreground mt-1">
+              追蹤 API 呼叫次數、Token 用量與預估費用
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {RANGE_OPTIONS.map((opt) => (
+              <Button
+                key={opt.days}
+                variant={rangeDays === opt.days ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setRangeDays(opt.days)}
+                className="text-xs"
+              >
+                {opt.label}
+              </Button>
+            ))}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={refresh}
+              disabled={usageLoading}
+              className="h-8 w-8"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${usageLoading ? 'animate-spin' : ''}`} strokeWidth={1.5} />
+            </Button>
+          </div>
+        </div>
+
+        <UsageSummary stats={stats} />
+
+        <DailyChart data={daily} />
+
+        <div className="h-px bg-charcoal/6" />
+
+        <UsageLogs logs={logs} />
+      </div>
     </section>
   )
+}
+
+const RANGE_OPTIONS = [
+  { label: '7 天', days: 7 },
+  { label: '30 天', days: 30 },
+  { label: '90 天', days: 90 },
+]
+
+function getUsageDateRange(days: number): { start: string; end: string } {
+  const end = new Date()
+  const start = new Date()
+  start.setDate(end.getDate() - days + 1)
+  return {
+    start: start.toISOString().slice(0, 10),
+    end: end.toISOString().slice(0, 10),
+  }
 }

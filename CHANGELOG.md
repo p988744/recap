@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0-rc.2] - 2026-01-28
+
+### Fixed
+
+- **Jira Issue 搜尋** - 修復 JQL 查詢無法搜尋部分 key（如 `PROJ-1`）和專案前綴（如 `PROJ`）的問題
+- **ManualItemCard 佈局統一** - 手動項目卡片改為與 ProjectCard 相同的兩欄結構
+- **IssueKeyCombobox 鍵盤操作** - 支援方向鍵選擇、Enter 確認、Escape 關閉，含 ARIA 無障礙屬性
+- **TypeScript 編譯錯誤** - 修復 Dashboard SyncState 型別和所有測試 mock 資料
+
+## [2.0.0-rc.1] - 2026-01-28
+
+### Added
+
+- **Worklog 頁面** - 全新每日工時總覽，按日期分組顯示工作紀錄
+  - 每小時明細展開檢視
+  - 手動新增工作項目
+  - 專案卡片顯示 Git commits + Claude Code sessions 統計
+- **Tempo 工時匯出** - 三種匯出模式
+  - 單筆匯出（per-project）
+  - 單日批次匯出（Export Day）
+  - 整週批次匯出（Export Week）
+  - 匯出前 LLM 自動摘要工作描述
+  - 預覽（Preview / Dry-run）確認後再正式匯出
+  - Jira Issue Key 驗證與自動補全（含 issue cache）
+  - JiraBadge 顯示 issue 類型和摘要
+- **LLM Token 用量追蹤** - 記錄每次 LLM 呼叫的 token 使用量
+- **時區與週起始日設定** - 支援自訂時區和週起始日
+
+### Changed
+
+- **跨平台路徑處理** - 所有路徑操作改用 `Path` API 和 `dirs` crate，支援 Windows
+- **API 層重構** - `lib/api.ts` + `lib/tauri-api.ts` 整合為 `services/` 目錄
+- **大型模組拆分** - 所有 Rust commands 和 React 頁面已按模組/功能拆分
+
+### Fixed
+
+- LLM 摘要短路條件：單行描述不再跳過 LLM
+- 移除 backend 重複摘要（frontend 已摘要，backend 不再重複呼叫）
+- SQLite database lock 問題修復
+- Worklog UTC 時區顯示修正
+
+### Removed
+
+- `upload_single_worklog` command（未使用的 dead code）
+
 ## [2.1.0] - 2026-01-09
 
 ### Changed

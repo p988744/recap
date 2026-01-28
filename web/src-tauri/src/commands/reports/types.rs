@@ -73,6 +73,46 @@ pub struct ExportResult {
     pub error: Option<String>,
 }
 
+// ==================== Analyze Types ====================
+
+#[derive(Debug, Deserialize)]
+pub struct AnalyzeQuery {
+    pub start_date: String,
+    pub end_date: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AnalyzeDailyEntry {
+    pub date: String,
+    pub minutes: f64,
+    pub hours: f64,
+    pub todos: Vec<String>,
+    pub summaries: Vec<String>,
+    pub description: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AnalyzeProjectSummary {
+    pub project_name: String,
+    pub project_path: String,
+    pub total_minutes: f64,
+    pub total_hours: f64,
+    pub daily_entries: Vec<AnalyzeDailyEntry>,
+    pub jira_id: Option<String>,
+    pub jira_id_suggestions: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AnalyzeResponse {
+    pub start_date: String,
+    pub end_date: String,
+    pub total_minutes: f64,
+    pub total_hours: f64,
+    pub dates_covered: Vec<String>,
+    pub projects: Vec<AnalyzeProjectSummary>,
+    pub mode: String,
+}
+
 // ==================== Tempo Report Types ====================
 
 #[derive(Debug, Clone, Deserialize)]

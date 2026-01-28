@@ -84,7 +84,7 @@ pub async fn generate_tempo_report(
                 .join("\n");
 
             match llm_service.as_ref().unwrap().summarize_project_work(project, &work_items_text).await {
-                Ok(summaries) => summaries,
+                Ok((summaries, _usage)) => summaries,
                 Err(e) => {
                     print_info(&format!("LLM error for {}: {}, using fallback", project, e), ctx.quiet);
                     generate_smart_summary(project_items)

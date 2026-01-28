@@ -275,7 +275,7 @@ pub async fn generate_tempo_report(
                 .join("\n");
 
             match llm_service.as_ref().unwrap().summarize_project_work(project, &work_items_text).await {
-                Ok(s) => s,
+                Ok((s, _usage)) => s,
                 Err(_) => generate_fallback_summary(project_items),
             }
         } else {

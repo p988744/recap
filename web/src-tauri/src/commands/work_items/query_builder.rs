@@ -46,6 +46,12 @@ impl SafeQueryBuilder {
         }
     }
 
+    /// Add a raw SQL condition (no additional bindings)
+    /// Safety: Caller must ensure no user input is interpolated into the SQL string.
+    pub fn add_raw_condition(&mut self, condition: &str) {
+        self.conditions.push(condition.to_string());
+    }
+
     /// Build the WHERE clause
     pub fn build_where_clause(&self) -> String {
         if self.conditions.is_empty() {

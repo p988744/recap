@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { renderHook, act, waitFor } from '@testing-library/react'
+import { renderHook, act } from '@testing-library/react'
 import { useProfileForm } from './useProfileForm'
 import { auth } from '@/services'
 
@@ -17,6 +17,8 @@ describe('useProfileForm', () => {
     title: 'Engineer',
     employee_id: 'EMP001',
     department_id: 'DEP001',
+    is_active: true,
+    is_admin: false,
     created_at: '2024-01-01T00:00:00Z',
   }
 
@@ -55,7 +57,7 @@ describe('useProfileForm', () => {
   })
 
   it('should call auth.updateProfile on save', async () => {
-    vi.mocked(auth.updateProfile).mockResolvedValue({ message: 'success' })
+    vi.mocked(auth.updateProfile).mockResolvedValue(mockUser)
     const setMessage = vi.fn()
     const { result } = renderHook(() => useProfileForm(mockUser))
 
@@ -88,7 +90,7 @@ describe('useProfileForm', () => {
   it('should set saving state during save', async () => {
     let resolvePromise: () => void
     vi.mocked(auth.updateProfile).mockImplementation(
-      () => new Promise(resolve => { resolvePromise = () => resolve({ message: 'success' }) })
+      () => new Promise(resolve => { resolvePromise = () => resolve(mockUser) })
     )
     const setMessage = vi.fn()
     const { result } = renderHook(() => useProfileForm(mockUser))

@@ -33,6 +33,8 @@ pub struct ConfigResponse {
     // Work settings
     pub daily_work_hours: f64,
     pub normalize_hours: bool,
+    pub timezone: Option<String>,
+    pub week_start_day: i32,
 
     // GitLab settings
     pub gitlab_url: Option<String>,
@@ -58,6 +60,8 @@ pub struct UserConfigRow {
     pub llm_base_url: Option<String>,
     pub daily_work_hours: Option<f64>,
     pub normalize_hours: Option<bool>,
+    pub timezone: Option<String>,
+    pub week_start_day: Option<i32>,
 }
 
 impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for UserConfigRow {
@@ -76,6 +80,8 @@ impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for UserConfigRow {
             llm_base_url: row.try_get("llm_base_url")?,
             daily_work_hours: row.try_get("daily_work_hours")?,
             normalize_hours: row.try_get("normalize_hours")?,
+            timezone: row.try_get("timezone")?,
+            week_start_day: row.try_get("week_start_day")?,
         })
     }
 }
@@ -84,6 +90,8 @@ impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for UserConfigRow {
 pub struct UpdateConfigRequest {
     pub daily_work_hours: Option<f64>,
     pub normalize_hours: Option<bool>,
+    pub timezone: Option<String>,
+    pub week_start_day: Option<i32>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -149,6 +157,12 @@ pub trait ConfigRepository: Send + Sync {
 
     /// Update Tempo token
     async fn update_tempo_token(&self, user_id: &str, token: &str) -> Result<(), String>;
+
+    /// Update timezone
+    async fn update_timezone(&self, user_id: &str, timezone: Option<&str>) -> Result<(), String>;
+
+    /// Update week start day (0=Sun, 1=Mon, ..., 6=Sat)
+    async fn update_week_start_day(&self, user_id: &str, day: i32) -> Result<(), String>;
 }
 
 // ============================================================================
@@ -174,7 +188,8 @@ impl<'a> ConfigRepository for SqliteConfigRepository<'a> {
                 jira_url, jira_pat, jira_email, tempo_token,
                 gitlab_url, gitlab_pat,
                 llm_provider, llm_model, llm_api_key, llm_base_url,
-                daily_work_hours, normalize_hours
+                daily_work_hours, normalize_hours,
+                timezone, week_start_day
             FROM users WHERE id = ?"#,
         )
         .bind(user_id)
@@ -296,6 +311,30 @@ impl<'a> ConfigRepository for SqliteConfigRepository<'a> {
             .map_err(|e| e.to_string())?;
         Ok(())
     }
+
+    async fn update_timezone(&self, user_id: &str, timezone: Option<&str>) -> Result<(), String> {
+        let now = Utc::now();
+        sqlx::query("UPDATE users SET timezone = ?, updated_at = ? WHERE id = ?")
+            .bind(timezone)
+            .bind(now)
+            .bind(user_id)
+            .execute(self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    async fn update_week_start_day(&self, user_id: &str, day: i32) -> Result<(), String> {
+        let now = Utc::now();
+        sqlx::query("UPDATE users SET week_start_day = ?, updated_at = ? WHERE id = ?")
+            .bind(day)
+            .bind(now)
+            .bind(user_id)
+            .execute(self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
 }
 
 // ============================================================================
@@ -353,6 +392,8 @@ pub(crate) fn build_config_response(user: &UserConfigRow) -> ConfigResponse {
 
         daily_work_hours: user.daily_work_hours.unwrap_or(8.0),
         normalize_hours: user.normalize_hours.unwrap_or(true),
+        timezone: user.timezone.clone(),
+        week_start_day: user.week_start_day.unwrap_or(1),
 
         gitlab_url: user.gitlab_url.clone(),
         gitlab_configured: user.gitlab_pat.is_some(),
@@ -391,6 +432,15 @@ pub async fn update_config_impl<R: ConfigRepository>(
 
     if let Some(normalize) = request.normalize_hours {
         repo.update_normalize_hours(&claims.sub, normalize).await?;
+    }
+
+    if let Some(ref tz) = request.timezone {
+        let tz_value = if tz.is_empty() { None } else { Some(tz.as_str()) };
+        repo.update_timezone(&claims.sub, tz_value).await?;
+    }
+
+    if let Some(day) = request.week_start_day {
+        repo.update_week_start_day(&claims.sub, day).await?;
     }
 
     Ok(MessageResponse {
@@ -654,6 +704,26 @@ mod tests {
             }
             Ok(())
         }
+
+        async fn update_timezone(
+            &self,
+            _user_id: &str,
+            timezone: Option<&str>,
+        ) -> Result<(), String> {
+            self.check_failure()?;
+            if let Some(config) = self.config.lock().unwrap().as_mut() {
+                config.timezone = timezone.map(|s| s.to_string());
+            }
+            Ok(())
+        }
+
+        async fn update_week_start_day(&self, _user_id: &str, day: i32) -> Result<(), String> {
+            self.check_failure()?;
+            if let Some(config) = self.config.lock().unwrap().as_mut() {
+                config.week_start_day = Some(day);
+            }
+            Ok(())
+        }
     }
 
     // Test user helper
@@ -768,6 +838,8 @@ mod tests {
             llm_base_url: None,
             daily_work_hours: Some(7.5),
             normalize_hours: Some(false),
+            timezone: None,
+            week_start_day: None,
         };
         let response = build_config_response(&config);
 
@@ -840,6 +912,7 @@ mod tests {
         let request = UpdateConfigRequest {
             daily_work_hours: Some(7.5),
             normalize_hours: None,
+            ..Default::default()
         };
 
         let result = update_config_impl(&repo, &token, request).await.unwrap();
@@ -857,6 +930,7 @@ mod tests {
         let request = UpdateConfigRequest {
             daily_work_hours: None,
             normalize_hours: Some(false),
+            ..Default::default()
         };
 
         let result = update_config_impl(&repo, &token, request).await.unwrap();
@@ -1042,5 +1116,92 @@ mod tests {
         let result = update_jira_config_impl(&repo, "invalid", request).await;
 
         assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // timezone & week_start_day Tests
+    // ========================================================================
+
+    #[test]
+    fn test_build_config_response_with_timezone() {
+        let config = UserConfigRow {
+            timezone: Some("Asia/Taipei".to_string()),
+            week_start_day: Some(0),
+            ..Default::default()
+        };
+        let response = build_config_response(&config);
+
+        assert_eq!(response.timezone, Some("Asia/Taipei".to_string()));
+        assert_eq!(response.week_start_day, 0);
+    }
+
+    #[test]
+    fn test_build_config_response_defaults_timezone_and_week_start_day() {
+        let config = UserConfigRow::default();
+        let response = build_config_response(&config);
+
+        assert_eq!(response.timezone, None);
+        assert_eq!(response.week_start_day, 1);
+    }
+
+    #[tokio::test]
+    async fn test_update_config_timezone() {
+        let user = create_test_user();
+        let token = create_token(&user).unwrap();
+        let config = UserConfigRow::default();
+        let repo = MockConfigRepository::new().with_config(config);
+
+        let request = UpdateConfigRequest {
+            timezone: Some("Asia/Tokyo".to_string()),
+            ..Default::default()
+        };
+
+        let result = update_config_impl(&repo, &token, request).await.unwrap();
+        assert_eq!(result.message, "Config updated");
+
+        // Verify the timezone was stored
+        let updated = repo.get_user_config("user-1").await.unwrap();
+        assert_eq!(updated.timezone, Some("Asia/Tokyo".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_update_config_timezone_empty_sets_null() {
+        let user = create_test_user();
+        let token = create_token(&user).unwrap();
+        let config = UserConfigRow {
+            timezone: Some("Asia/Taipei".to_string()),
+            ..Default::default()
+        };
+        let repo = MockConfigRepository::new().with_config(config);
+
+        let request = UpdateConfigRequest {
+            timezone: Some("".to_string()),
+            ..Default::default()
+        };
+
+        let result = update_config_impl(&repo, &token, request).await.unwrap();
+        assert_eq!(result.message, "Config updated");
+
+        let updated = repo.get_user_config("user-1").await.unwrap();
+        assert_eq!(updated.timezone, None);
+    }
+
+    #[tokio::test]
+    async fn test_update_config_week_start_day() {
+        let user = create_test_user();
+        let token = create_token(&user).unwrap();
+        let config = UserConfigRow::default();
+        let repo = MockConfigRepository::new().with_config(config);
+
+        let request = UpdateConfigRequest {
+            week_start_day: Some(0),
+            ..Default::default()
+        };
+
+        let result = update_config_impl(&repo, &token, request).await.unwrap();
+        assert_eq!(result.message, "Config updated");
+
+        let updated = repo.get_user_config("user-1").await.unwrap();
+        assert_eq!(updated.week_start_day, Some(0));
     }
 }

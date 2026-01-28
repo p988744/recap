@@ -136,7 +136,34 @@ export interface ValidateIssueResponse {
   valid: boolean
   issue_key: string
   summary?: string
+  description?: string
+  assignee?: string
+  issue_type?: string
   message: string
+}
+
+export interface JiraIssueItem {
+  key: string
+  summary: string
+  issue_type?: string
+}
+
+export interface JiraIssueDetail {
+  key: string
+  summary: string
+  description?: string
+  assignee?: string
+  issue_type?: string
+}
+
+export interface SearchIssuesRequest {
+  query: string
+  max_results?: number
+}
+
+export interface SearchIssuesResponse {
+  issues: JiraIssueItem[]
+  total: number
 }
 
 // ============ Claude ============

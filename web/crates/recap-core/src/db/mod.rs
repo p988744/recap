@@ -32,6 +32,21 @@ impl Database {
             .connect(&db_url)
             .await?;
 
+        // Enable WAL mode for better concurrent read/write performance
+        sqlx::query("PRAGMA journal_mode = WAL")
+            .execute(&pool)
+            .await?;
+
+        // Set busy timeout to 5 seconds — retry on SQLITE_BUSY instead of failing immediately
+        sqlx::query("PRAGMA busy_timeout = 5000")
+            .execute(&pool)
+            .await?;
+
+        // Synchronous NORMAL is safe with WAL and faster than FULL
+        sqlx::query("PRAGMA synchronous = NORMAL")
+            .execute(&pool)
+            .await?;
+
         let db = Self { pool };
         db.run_migrations().await?;
 
@@ -318,6 +333,194 @@ impl Database {
             .execute(&self.pool)
             .await
             .ok();
+
+        // Create project_preferences table for project visibility management
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS project_preferences (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                project_name TEXT NOT NULL,
+                project_path TEXT,
+                hidden BOOLEAN DEFAULT 0,
+                display_name TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, project_name)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_project_prefs_user ON project_preferences(user_id)")
+            .execute(&self.pool)
+            .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_project_prefs_hidden ON project_preferences(user_id, hidden)")
+            .execute(&self.pool)
+            .await?;
+
+        // Add claude_session_path column to users table (default: ~/.claude)
+        sqlx::query("ALTER TABLE users ADD COLUMN claude_session_path TEXT")
+            .execute(&self.pool)
+            .await
+            .ok();
+
+        // Add git_repo_path column to project_preferences (for manual projects)
+        sqlx::query("ALTER TABLE project_preferences ADD COLUMN git_repo_path TEXT")
+            .execute(&self.pool)
+            .await
+            .ok();
+
+        // Add manual_added flag to project_preferences
+        sqlx::query("ALTER TABLE project_preferences ADD COLUMN manual_added BOOLEAN DEFAULT 0")
+            .execute(&self.pool)
+            .await
+            .ok();
+
+        // Add timezone and week_start_day columns to users table
+        sqlx::query("ALTER TABLE users ADD COLUMN timezone TEXT")
+            .execute(&self.pool)
+            .await
+            .ok(); // NULL = system default
+        sqlx::query("ALTER TABLE users ADD COLUMN week_start_day INTEGER DEFAULT 1")
+            .execute(&self.pool)
+            .await
+            .ok(); // 0=Sun, 1=Mon, ..., 6=Sat
+
+        // Create snapshot_raw_data table for hourly session snapshots
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS snapshot_raw_data (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                project_path TEXT NOT NULL,
+                hour_bucket TEXT NOT NULL,
+                user_messages TEXT,
+                assistant_messages TEXT,
+                tool_calls TEXT,
+                files_modified TEXT,
+                git_commits TEXT,
+                message_count INTEGER DEFAULT 0,
+                raw_size_bytes INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(session_id, hour_bucket)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_snapshots_user_hour ON snapshot_raw_data(user_id, hour_bucket)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_snapshots_session ON snapshot_raw_data(session_id)")
+            .execute(&self.pool)
+            .await?;
+
+        // Create work_summaries table for compacted summaries at multiple time scales
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS work_summaries (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                project_path TEXT,
+                scale TEXT NOT NULL,
+                period_start TEXT NOT NULL,
+                period_end TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                key_activities TEXT,
+                git_commits_summary TEXT,
+                previous_context TEXT,
+                source_snapshot_ids TEXT,
+                llm_model TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, project_path, scale, period_start)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_summaries_user_scale ON work_summaries(user_id, scale, period_start)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_summaries_project ON work_summaries(project_path, scale)")
+            .execute(&self.pool)
+            .await?;
+
+        // Create llm_usage_logs table for tracking LLM API token usage and costs
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS llm_usage_logs (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                prompt_tokens INTEGER,
+                completion_tokens INTEGER,
+                total_tokens INTEGER,
+                estimated_cost REAL,
+                purpose TEXT NOT NULL,
+                duration_ms INTEGER,
+                status TEXT NOT NULL DEFAULT 'success',
+                error_message TEXT,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_llm_usage_user_date ON llm_usage_logs(user_id, created_at)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_llm_usage_provider ON llm_usage_logs(user_id, provider, created_at)")
+            .execute(&self.pool)
+            .await?;
+
+        // Create project_issue_mappings table for Tempo sync
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS project_issue_mappings (
+                project_path TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                jira_issue_key TEXT NOT NULL,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (project_path, user_id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Create worklog_sync_records table for tracking Tempo sync status
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS worklog_sync_records (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                project_path TEXT NOT NULL,
+                date TEXT NOT NULL,
+                jira_issue_key TEXT NOT NULL,
+                hours REAL NOT NULL,
+                description TEXT,
+                tempo_worklog_id TEXT,
+                synced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, project_path, date)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_sync_records_user_date ON worklog_sync_records(user_id, date)")
+            .execute(&self.pool)
+            .await?;
 
         log::info!("Database migrations completed");
         Ok(())

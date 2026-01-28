@@ -1,28 +1,25 @@
-import { User, Link2, Bot, Settings, Sparkles, RefreshCw } from 'lucide-react'
-import { Cloud } from 'lucide-react'
+import { User, Bot, Settings, Sparkles, FolderGit2, Plug } from 'lucide-react'
 import {
   useSettings,
   useProfileForm,
   usePreferencesForm,
   useLlmForm,
   useSyncForm,
+  useJiraForm,
 } from './hooks/useSettings'
 import { ProfileSection } from './components/ProfileSection'
-import { AccountSection } from './components/AccountSection'
-import { IntegrationsSectionV2 } from './components/IntegrationsSection/IntegrationsSectionV2'
+import { ProjectsSection } from './components/ProjectsSection'
 import { SyncSection } from './components/SyncSection'
+import { ExportSection } from './components/ExportSection'
 import { AiSection } from './components/AiSection'
-import { PreferencesSection } from './components/PreferencesSection'
 import { AboutSection } from './components/AboutSection'
-import { IntegrationsProvider } from './context'
 
 const sections = [
-  { id: 'profile' as const, label: '個人資料', icon: User },
-  { id: 'account' as const, label: '帳號', icon: Cloud },
-  { id: 'integrations' as const, label: '整合服務', icon: Link2 },
-  { id: 'sync' as const, label: '背景同步', icon: RefreshCw },
+  { id: 'profile' as const, label: '帳號', icon: User },
+  { id: 'projects' as const, label: '專案', icon: FolderGit2 },
+  { id: 'sync' as const, label: '系統設定', icon: Settings },
+  { id: 'export' as const, label: '整合', icon: Plug },
   { id: 'ai' as const, label: 'AI 助手', icon: Sparkles },
-  { id: 'preferences' as const, label: '偏好設定', icon: Settings },
   { id: 'about' as const, label: '關於', icon: Bot },
 ]
 
@@ -32,6 +29,7 @@ export function SettingsPage() {
   const preferencesForm = usePreferencesForm(settings.config)
   const llmForm = useLlmForm(settings.config)
   const syncForm = useSyncForm()
+  const jiraForm = useJiraForm(settings.config)
 
   if (settings.loading) {
     return (
@@ -44,7 +42,7 @@ export function SettingsPage() {
   return (
     <div className="flex gap-8">
       {/* Sidebar Navigation */}
-      <aside className="w-48 shrink-0">
+      <aside className="w-48 shrink-0 sticky top-10 self-start">
         <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground mb-4">
           設定
         </p>
@@ -82,60 +80,72 @@ export function SettingsPage() {
           </div>
         )}
 
-        {/* Profile Section */}
+        {/* Profile & Account Section */}
         {settings.activeSection === 'profile' && (
           <ProfileSection
             {...profileForm}
             onSave={profileForm.handleSave}
             setMessage={settings.setMessage}
-          />
-        )}
-
-        {/* Account Section */}
-        {settings.activeSection === 'account' && (
-          <AccountSection
             user={settings.user}
-            appStatus={settings.appStatus}
             onLogout={settings.logout}
           />
         )}
 
-        {/* Integrations Section */}
-        {settings.activeSection === 'integrations' && (
-          <IntegrationsProvider
-            config={settings.config}
-            sources={settings.sources}
-            setSources={settings.setSources}
-            setMessage={settings.setMessage}
-            refreshConfig={settings.refreshConfig}
-            refreshSources={settings.refreshSources}
-            isAuthenticated={settings.isAuthenticated}
-          >
-            <IntegrationsSectionV2 />
-          </IntegrationsProvider>
+        {/* Projects Section */}
+        {settings.activeSection === 'projects' && (
+          <ProjectsSection />
         )}
 
-        {/* Sync Section */}
+        {/* Sync + Preferences Section */}
         {settings.activeSection === 'sync' && (
           <SyncSection
             enabled={syncForm.enabled}
             setEnabled={syncForm.setEnabled}
             intervalMinutes={syncForm.intervalMinutes}
             setIntervalMinutes={syncForm.setIntervalMinutes}
-            syncGit={syncForm.syncGit}
-            setSyncGit={syncForm.setSyncGit}
-            syncClaude={syncForm.syncClaude}
-            setSyncClaude={syncForm.setSyncClaude}
-            syncGitlab={syncForm.syncGitlab}
-            setSyncGitlab={syncForm.setSyncGitlab}
-            syncJira={syncForm.syncJira}
-            setSyncJira={syncForm.setSyncJira}
             status={syncForm.status}
+            dataSyncState={syncForm.dataSyncState}
+            summaryState={syncForm.summaryState}
             loading={syncForm.loading}
             saving={syncForm.saving}
             onSave={syncForm.handleSave}
             onTriggerSync={syncForm.handleTriggerSync}
+            dailyHours={preferencesForm.dailyHours}
+            setDailyHours={preferencesForm.setDailyHours}
+            normalizeHours={preferencesForm.normalizeHours}
+            setNormalizeHours={preferencesForm.setNormalizeHours}
+            timezone={preferencesForm.timezone}
+            setTimezone={preferencesForm.setTimezone}
+            weekStartDay={preferencesForm.weekStartDay}
+            setWeekStartDay={preferencesForm.setWeekStartDay}
+            savingPreferences={preferencesForm.saving}
+            onSavePreferences={preferencesForm.handleSave}
             setMessage={settings.setMessage}
+          />
+        )}
+
+        {/* Export Section */}
+        {settings.activeSection === 'export' && (
+          <ExportSection
+            config={settings.config}
+            jiraUrl={jiraForm.jiraUrl}
+            setJiraUrl={jiraForm.setJiraUrl}
+            jiraAuthType={jiraForm.jiraAuthType}
+            setJiraAuthType={jiraForm.setJiraAuthType}
+            jiraToken={jiraForm.jiraToken}
+            setJiraToken={jiraForm.setJiraToken}
+            jiraEmail={jiraForm.jiraEmail}
+            setJiraEmail={jiraForm.setJiraEmail}
+            tempoToken={jiraForm.tempoToken}
+            setTempoToken={jiraForm.setTempoToken}
+            showToken={jiraForm.showToken}
+            setShowToken={jiraForm.setShowToken}
+            saving={jiraForm.saving}
+            testing={jiraForm.testing}
+            onSave={jiraForm.handleSave}
+            onTest={jiraForm.handleTest}
+            setMessage={settings.setMessage}
+            refreshConfig={settings.refreshConfig}
           />
         )}
 
@@ -157,19 +167,6 @@ export function SettingsPage() {
             onSaveLlm={llmForm.handleSave}
             setMessage={settings.setMessage}
             refreshConfig={settings.refreshConfig}
-          />
-        )}
-
-        {/* Preferences Section */}
-        {settings.activeSection === 'preferences' && (
-          <PreferencesSection
-            dailyHours={preferencesForm.dailyHours}
-            setDailyHours={preferencesForm.setDailyHours}
-            normalizeHours={preferencesForm.normalizeHours}
-            setNormalizeHours={preferencesForm.setNormalizeHours}
-            savingPreferences={preferencesForm.saving}
-            onSavePreferences={preferencesForm.handleSave}
-            setMessage={settings.setMessage}
           />
         )}
 

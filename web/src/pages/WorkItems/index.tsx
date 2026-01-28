@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -11,6 +12,7 @@ import {
   ProjectView,
   TaskView,
   TimelineView,
+  ProjectDetailPanel,
   CreateModal,
   EditModal,
   JiraModal,
@@ -25,6 +27,9 @@ export function WorkItemsPage() {
 
   // CRUD operations
   const crud = useWorkItemCrud(workItemsState.fetchWorkItems, workItemsState.fetchStats)
+
+  // Project detail panel
+  const [detailProjectName, setDetailProjectName] = useState<string | null>(null)
 
   // Loading state
   if (workItemsState.loading || (workItemsState.viewMode === 'timeline' && workItemsState.timelineLoading)) {
@@ -122,6 +127,7 @@ export function WorkItemsPage() {
               projectGroups={workItemsState.projectGroups}
               items={workItemsState.items}
               onItemClick={crud.openEditModal}
+              onProjectDetail={setDetailProjectName}
             />
           )}
 
@@ -184,6 +190,12 @@ export function WorkItemsPage() {
           itemToDelete={crud.itemToDelete}
           onConfirm={crud.handleDelete}
           onCancel={crud.closeDeleteConfirm}
+        />
+
+        {/* Project Detail Side Panel */}
+        <ProjectDetailPanel
+          projectName={detailProjectName}
+          onClose={() => setDetailProjectName(null)}
         />
       </div>
     </TooltipProvider>

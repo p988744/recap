@@ -1,36 +1,79 @@
+import { useMemo } from 'react'
 import { Save, Loader2, RefreshCw, Clock, CheckCircle2, AlertCircle } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import type { SettingsMessage } from '../hooks/useSettings'
 import type { BackgroundSyncStatus } from '@/services/background-sync'
 
 // =============================================================================
+// Constants
+// =============================================================================
+
+const TIMEZONE_OPTIONS = [
+  'Asia/Taipei',
+  'Asia/Tokyo',
+  'Asia/Shanghai',
+  'Asia/Hong_Kong',
+  'Asia/Singapore',
+  'Asia/Seoul',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'Europe/London',
+  'Europe/Berlin',
+  'Europe/Paris',
+  'Australia/Sydney',
+  'Pacific/Auckland',
+  'UTC',
+]
+
+const WEEK_DAYS = [
+  { value: 0, label: '日' },
+  { value: 1, label: '一' },
+  { value: 2, label: '二' },
+  { value: 3, label: '三' },
+  { value: 4, label: '四' },
+  { value: 5, label: '五' },
+  { value: 6, label: '六' },
+]
+
+// =============================================================================
 // Types
 // =============================================================================
 
+type PhaseState = 'idle' | 'syncing' | 'done'
+
 interface SyncSectionProps {
-  // Config
+  // Sync Config
   enabled: boolean
   setEnabled: (v: boolean) => void
   intervalMinutes: number
   setIntervalMinutes: (v: number) => void
-  syncGit: boolean
-  setSyncGit: (v: boolean) => void
-  syncClaude: boolean
-  setSyncClaude: (v: boolean) => void
-  syncGitlab: boolean
-  setSyncGitlab: (v: boolean) => void
-  syncJira: boolean
-  setSyncJira: (v: boolean) => void
-  // Status
+  // Sync Status
   status: BackgroundSyncStatus | null
-  // UI
+  dataSyncState: PhaseState
+  summaryState: PhaseState
+  // Sync UI
   loading: boolean
   saving: boolean
-  // Actions
+  // Sync Actions
   onSave: (setMessage: (msg: SettingsMessage | null) => void) => Promise<void>
   onTriggerSync: (setMessage: (msg: SettingsMessage | null) => void) => Promise<void>
+  // Preferences
+  dailyHours: number
+  setDailyHours: (v: number) => void
+  normalizeHours: boolean
+  setNormalizeHours: (v: boolean) => void
+  timezone: string | null
+  setTimezone: (v: string | null) => void
+  weekStartDay: number
+  setWeekStartDay: (v: number) => void
+  savingPreferences: boolean
+  onSavePreferences: (setMessage: (msg: SettingsMessage | null) => void) => Promise<void>
+  // Shared
   setMessage: (msg: SettingsMessage | null) => void
 }
 
@@ -104,7 +147,40 @@ function Toggle({
   )
 }
 
-function StatusCard({ status }: { status: BackgroundSyncStatus | null }) {
+function PhaseStatus({ label, state }: { label: string; state: PhaseState }) {
+  return (
+    <div className="flex items-center justify-between py-2">
+      <span className="text-sm text-muted-foreground">{label}</span>
+      <div className="flex items-center gap-1.5">
+        {state === 'syncing' ? (
+          <>
+            <Loader2 className="w-3.5 h-3.5 animate-spin text-foreground" />
+            <span className="text-sm font-medium">處理中</span>
+          </>
+        ) : state === 'done' ? (
+          <>
+            <CheckCircle2 className="w-3.5 h-3.5 text-sage" />
+            <span className="text-sm text-sage">完成</span>
+          </>
+        ) : (
+          <span className="text-sm text-muted-foreground">待執行</span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function StatusCard({
+  status,
+  enabled,
+  dataSyncState,
+  summaryState,
+}: {
+  status: BackgroundSyncStatus | null
+  enabled: boolean
+  dataSyncState: PhaseState
+  summaryState: PhaseState
+}) {
   if (!status) {
     return (
       <div className="p-4 bg-foreground/5 text-sm text-muted-foreground">
@@ -113,13 +189,13 @@ function StatusCard({ status }: { status: BackgroundSyncStatus | null }) {
     )
   }
 
-  const isActive = status.is_running
   const isSyncing = status.is_syncing
+  const isActive = enabled && (status.is_running || !!status.last_sync_at)
   const hasError = status.last_error
 
   return (
     <div className="space-y-3">
-      {/* Status Badge */}
+      {/* Overall Status Badge */}
       <div className="flex items-center gap-2">
         {isSyncing ? (
           <>
@@ -137,6 +213,12 @@ function StatusCard({ status }: { status: BackgroundSyncStatus | null }) {
             <span className="text-sm text-muted-foreground">已停止</span>
           </>
         )}
+      </div>
+
+      {/* Phase Breakdown */}
+      <div className="divide-y divide-border">
+        <PhaseStatus label="資料同步" state={dataSyncState} />
+        <PhaseStatus label="摘要處理" state={summaryState} />
       </div>
 
       {/* Status Details */}
@@ -178,25 +260,37 @@ export function SyncSection({
   setEnabled,
   intervalMinutes,
   setIntervalMinutes,
-  syncGit,
-  setSyncGit,
-  syncClaude,
-  setSyncClaude,
-  syncGitlab,
-  setSyncGitlab,
-  syncJira,
-  setSyncJira,
   status,
+  dataSyncState,
+  summaryState,
   loading,
   saving,
   onSave,
   onTriggerSync,
+  dailyHours,
+  setDailyHours,
+  normalizeHours,
+  setNormalizeHours,
+  timezone,
+  setTimezone,
+  weekStartDay,
+  setWeekStartDay,
+  savingPreferences,
+  onSavePreferences,
   setMessage,
 }: SyncSectionProps) {
+  const systemTimezone = useMemo(() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone
+    } catch {
+      return 'UTC'
+    }
+  }, [])
+
   if (loading) {
     return (
       <section className="animate-fade-up opacity-0 delay-1">
-        <h2 className="font-display text-2xl text-foreground mb-6">背景同步</h2>
+        <h2 className="font-display text-2xl text-foreground mb-6">系統設定</h2>
         <div className="flex items-center justify-center h-48">
           <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
         </div>
@@ -206,9 +300,9 @@ export function SyncSection({
 
   return (
     <section className="animate-fade-up opacity-0 delay-1">
-      <h2 className="font-display text-2xl text-foreground mb-6">背景同步</h2>
+      <h2 className="font-display text-2xl text-foreground mb-6">系統設定</h2>
 
-      {/* Status Card */}
+      {/* Sync Status Card */}
       <Card className="p-6 mb-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-medium">同步狀態</h3>
@@ -226,12 +320,12 @@ export function SyncSection({
             立即同步
           </Button>
         </div>
-        <StatusCard status={status} />
+        <StatusCard status={status} enabled={enabled} dataSyncState={dataSyncState} summaryState={summaryState} />
       </Card>
 
-      {/* Configuration Card */}
-      <Card className="p-6">
-        <h3 className="font-medium mb-4">同步設定</h3>
+      {/* Sync Configuration Card */}
+      <Card className="p-6 mb-6">
+        <h3 className="font-medium mb-4">背景同步</h3>
 
         <div className="space-y-6">
           {/* Enable Toggle */}
@@ -261,41 +355,6 @@ export function SyncSection({
             </div>
           </div>
 
-          {/* Source Toggles */}
-          <div className={enabled ? '' : 'opacity-50 pointer-events-none'}>
-            <Label className="mb-3 block">同步來源</Label>
-            <div className="space-y-3">
-              <Toggle
-                checked={syncClaude}
-                onChange={setSyncClaude}
-                label="Claude Code"
-                description="同步 Claude Code 工作階段"
-                disabled={!enabled}
-              />
-              <Toggle
-                checked={syncGit}
-                onChange={setSyncGit}
-                label="本地 Git"
-                description="同步本地 Git 提交記錄"
-                disabled={!enabled}
-              />
-              <Toggle
-                checked={syncGitlab}
-                onChange={setSyncGitlab}
-                label="GitLab"
-                description="同步 GitLab 提交記錄（需先設定連線）"
-                disabled={!enabled}
-              />
-              <Toggle
-                checked={syncJira}
-                onChange={setSyncJira}
-                label="Jira / Tempo"
-                description="同步 Jira 工作記錄（需先設定連線）"
-                disabled={!enabled}
-              />
-            </div>
-          </div>
-
           {/* Save Button */}
           <div className="pt-4 border-t border-border">
             <Button onClick={() => onSave(setMessage)} disabled={saving}>
@@ -304,7 +363,77 @@ export function SyncSection({
               ) : (
                 <Save className="w-4 h-4" />
               )}
-              {saving ? '儲存中...' : '儲存設定'}
+              {saving ? '儲存中...' : '儲存同步設定'}
+            </Button>
+          </div>
+        </div>
+      </Card>
+
+      {/* Preferences Card */}
+      <Card className="p-6">
+        <h3 className="font-medium mb-4">工時與時區</h3>
+
+        <div className="space-y-6">
+          <div>
+            <Label htmlFor="daily-hours" className="mb-2 block">每日標準工時</Label>
+            <div className="flex items-center gap-3">
+              <Input
+                id="daily-hours"
+                type="number"
+                value={dailyHours}
+                onChange={(e) => setDailyHours(Number(e.target.value))}
+                min={1}
+                max={24}
+                step={0.5}
+                className="w-24"
+              />
+              <span className="text-sm text-muted-foreground">小時</span>
+            </div>
+          </div>
+
+          <Toggle
+            checked={normalizeHours}
+            onChange={setNormalizeHours}
+            label="自動正規化工時"
+            description="將每日工時調整為標準工時"
+          />
+
+          <div>
+            <Label htmlFor="timezone" className="mb-2 block">時區</Label>
+            <select
+              id="timezone"
+              value={timezone ?? ''}
+              onChange={(e) => setTimezone(e.target.value || null)}
+              className="flex h-9 w-full max-w-xs rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              <option value="">{systemTimezone} (系統預設)</option>
+              {TIMEZONE_OPTIONS.map((tz) => (
+                <option key={tz} value={tz}>{tz}</option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground mt-1">
+              留空則使用系統偵測的時區
+            </p>
+          </div>
+
+          <div>
+            <Label htmlFor="week-start-day" className="mb-2 block">每週起始日</Label>
+            <select
+              id="week-start-day"
+              value={weekStartDay}
+              onChange={(e) => setWeekStartDay(Number(e.target.value))}
+              className="flex h-9 w-full max-w-xs rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              {WEEK_DAYS.map((day) => (
+                <option key={day.value} value={day.value}>{day.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="pt-4 border-t border-border">
+            <Button onClick={() => onSavePreferences(setMessage)} disabled={savingPreferences}>
+              {savingPreferences ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {savingPreferences ? '儲存中...' : '儲存偏好設定'}
             </Button>
           </div>
         </div>

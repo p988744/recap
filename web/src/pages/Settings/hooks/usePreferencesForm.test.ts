@@ -11,18 +11,23 @@ vi.mock('@/services', () => ({
 
 describe('usePreferencesForm', () => {
   const mockConfig = {
-    id: 'config-1',
-    user_id: 'user-1',
     daily_work_hours: 8,
     normalize_hours: true,
+    timezone: null as string | null,
+    week_start_day: 1,
     jira_url: null,
     jira_configured: false,
+    tempo_configured: false,
     gitlab_url: null,
     gitlab_configured: false,
-    llm_provider: null,
-    llm_model: null,
+    llm_provider: '',
+    llm_model: '',
     llm_base_url: null,
-    auth_type: null,
+    llm_configured: false,
+    auth_type: '',
+    use_git_mode: false,
+    git_repos: [] as string[],
+    outlook_enabled: false,
   }
 
   beforeEach(() => {
@@ -34,6 +39,8 @@ describe('usePreferencesForm', () => {
 
     expect(result.current.dailyHours).toBe(8)
     expect(result.current.normalizeHours).toBe(true)
+    expect(result.current.timezone).toBe(null)
+    expect(result.current.weekStartDay).toBe(1)
   })
 
   it('should initialize with config values when config is provided', () => {
@@ -76,6 +83,8 @@ describe('usePreferencesForm', () => {
     expect(configService.updateConfig).toHaveBeenCalledWith({
       daily_work_hours: 8,
       normalize_hours: true,
+      timezone: '',
+      week_start_day: 1,
     })
     expect(setMessage).toHaveBeenCalledWith({ type: 'success', text: '偏好設定已儲存' })
   })
@@ -90,5 +99,37 @@ describe('usePreferencesForm', () => {
     })
 
     expect(setMessage).toHaveBeenCalledWith({ type: 'error', text: 'Save failed' })
+  })
+
+  it('should initialize timezone from config', () => {
+    const configWithTz = { ...mockConfig, timezone: 'Asia/Taipei' }
+    const { result } = renderHook(() => usePreferencesForm(configWithTz))
+
+    expect(result.current.timezone).toBe('Asia/Taipei')
+  })
+
+  it('should initialize week start day from config', () => {
+    const configWithDay = { ...mockConfig, week_start_day: 0 }
+    const { result } = renderHook(() => usePreferencesForm(configWithDay))
+
+    expect(result.current.weekStartDay).toBe(0)
+  })
+
+  it('should save timezone and week_start_day', async () => {
+    vi.mocked(configService.updateConfig).mockResolvedValue({ message: 'success' })
+    const setMessage = vi.fn()
+    const configWithSettings = { ...mockConfig, timezone: 'Asia/Tokyo', week_start_day: 0 }
+    const { result } = renderHook(() => usePreferencesForm(configWithSettings))
+
+    await act(async () => {
+      await result.current.handleSave(setMessage)
+    })
+
+    expect(configService.updateConfig).toHaveBeenCalledWith({
+      daily_work_hours: 8,
+      normalize_hours: true,
+      timezone: 'Asia/Tokyo',
+      week_start_day: 0,
+    })
   })
 })

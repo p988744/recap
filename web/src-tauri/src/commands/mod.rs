@@ -8,14 +8,18 @@ pub mod background_sync;
 pub mod claude;
 pub mod config;
 pub mod gitlab;
+pub mod llm_usage;
 pub mod notification;
+pub mod projects;
 pub mod reports;
+pub mod snapshots;
 pub mod sources;
 pub mod sync;
 pub mod tempo;
 pub mod tray;
 pub mod users;
 pub mod work_items;
+pub mod worklog_sync;
 
 use crate::services::BackgroundSyncService;
 use recap_core::Database;

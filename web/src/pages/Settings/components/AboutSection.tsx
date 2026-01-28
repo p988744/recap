@@ -22,8 +22,8 @@ export function AboutSection() {
           <div className="pt-4 border-t border-border">
             <p className="text-sm text-foreground mb-2">自動回顧你的工作</p>
             <p className="text-xs text-muted-foreground leading-relaxed">
-              Recap 自動追蹤您從 GitLab、Claude Code 等來源的工作記錄，
-              協助您生成報告並同步到 Jira Tempo。
+              Recap 自動追蹤您從 Git、Claude Code 等來源的工作記錄，
+              協助您回顧與管理每日工作成果。
             </p>
           </div>
 

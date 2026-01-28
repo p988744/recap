@@ -29,18 +29,40 @@ describe('useClaudeCodeForm', () => {
     claude_path: '/home/user/.claude',
   }
 
+  const makeSession = (overrides: Partial<{
+    session_id: string; agent_id: string; slug: string; cwd: string; first_message: string;
+    message_count: number; first_timestamp: string; last_timestamp: string; file_path: string;
+    file_size: number; tool_usage: Array<{ tool_name: string; count: number; details: string[] }>;
+    files_modified: string[]; commands_run: string[]; user_messages: string[];
+  }> = {}) => ({
+    session_id: 'default-session',
+    agent_id: 'agent-1',
+    slug: 'slug',
+    cwd: '/home/user',
+    message_count: 1,
+    file_path: '/home/user/.claude/session.json',
+    file_size: 1024,
+    tool_usage: [],
+    files_modified: [],
+    commands_run: [],
+    user_messages: [],
+    ...overrides,
+  })
+
   const mockProjects = [
     {
       path: '/home/user/project-a',
+      name: 'project-a',
       sessions: [
-        { session_id: 'session-1', created_at: '2024-01-01T00:00:00Z', title: 'Session 1' },
-        { session_id: 'session-2', created_at: '2024-01-02T00:00:00Z', title: 'Session 2' },
+        makeSession({ session_id: 'session-1', first_timestamp: '2024-01-01T00:00:00Z' }),
+        makeSession({ session_id: 'session-2', first_timestamp: '2024-01-02T00:00:00Z' }),
       ],
     },
     {
       path: '/home/user/project-b',
+      name: 'project-b',
       sessions: [
-        { session_id: 'session-3', created_at: '2024-01-03T00:00:00Z', title: 'Session 3' },
+        makeSession({ session_id: 'session-3', first_timestamp: '2024-01-03T00:00:00Z' }),
       ],
     },
   ]

@@ -67,6 +67,7 @@ pub fn run() {
             commands::reports::queries::get_summary_report,
             commands::reports::queries::get_category_report,
             commands::reports::queries::get_source_report,
+            commands::reports::queries::analyze_work_items,
             // Reports - export
             commands::reports::export::export_excel_report,
             commands::reports::export::generate_tempo_report,
@@ -89,8 +90,10 @@ pub fn run() {
             commands::tempo::test_tempo_connection,
             commands::tempo::validate_jira_issue,
             commands::tempo::sync_worklogs_to_tempo,
-            commands::tempo::upload_single_worklog,
             commands::tempo::get_tempo_worklogs,
+            commands::tempo::search_jira_issues,
+            commands::tempo::batch_get_jira_issues,
+            commands::tempo::summarize_tempo_description,
             // Users
             commands::users::get_profile,
             commands::users::update_profile,
@@ -108,6 +111,33 @@ pub fn run() {
             commands::notification::send_sync_notification,
             commands::notification::send_auth_notification,
             commands::notification::send_source_error_notification,
+            // Snapshots & Compaction
+            commands::snapshots::get_work_summaries,
+            commands::snapshots::get_snapshot_detail,
+            commands::snapshots::trigger_compaction,
+            // Worklog
+            commands::snapshots::get_worklog_overview,
+            commands::snapshots::get_hourly_breakdown,
+            // Worklog Sync
+            commands::worklog_sync::get_project_issue_mappings,
+            commands::worklog_sync::save_project_issue_mapping,
+            commands::worklog_sync::get_worklog_sync_records,
+            commands::worklog_sync::save_worklog_sync_record,
+            // LLM Usage
+            commands::llm_usage::get_llm_usage_stats,
+            commands::llm_usage::get_llm_usage_daily,
+            commands::llm_usage::get_llm_usage_by_model,
+            commands::llm_usage::get_llm_usage_logs,
+            // Projects
+            commands::projects::queries::list_projects,
+            commands::projects::queries::get_project_detail,
+            commands::projects::queries::set_project_visibility,
+            commands::projects::queries::get_hidden_projects,
+            commands::projects::queries::get_project_directories,
+            commands::projects::queries::get_claude_session_path,
+            commands::projects::queries::update_claude_session_path,
+            commands::projects::queries::add_manual_project,
+            commands::projects::queries::remove_manual_project,
         ])
         .setup(|app| {
             // Setup logging

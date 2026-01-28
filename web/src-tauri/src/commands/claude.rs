@@ -115,9 +115,7 @@ pub use recap_core::services::ClaudeSyncResult as SyncResult;
 // Helper functions
 
 pub(crate) fn get_claude_home() -> Option<PathBuf> {
-    std::env::var("HOME")
-        .ok()
-        .map(|h| PathBuf::from(h).join(".claude"))
+    dirs::home_dir().map(|h| h.join(".claude"))
 }
 
 // generate_daily_hash, is_meaningful_message, extract_tool_detail, calculate_session_hours
@@ -420,7 +418,9 @@ pub async fn list_claude_sessions(
             let project_path = sessions.first()
                 .map(|s| s.cwd.clone())
                 .unwrap_or_else(|| dir_name.replace('-', "/"));
-            let project_name = project_path.split('/').last()
+            let project_name = std::path::Path::new(&project_path)
+                .file_name()
+                .and_then(|n| n.to_str())
                 .unwrap_or(&dir_name)
                 .to_string();
 
@@ -498,7 +498,7 @@ pub async fn import_claude_sessions(
                 let hours = session_hours_from_options(&session.first_timestamp, &session.last_timestamp);
                 // Note: calculate_session_hours already enforces minimum 0.1h (6 min)
 
-                let project_name = session.cwd.split('/').last().unwrap_or(&session.slug);
+                let project_name = std::path::Path::new(&session.cwd).file_name().and_then(|n| n.to_str()).unwrap_or(&session.slug);
                 let title = if let Some(ref msg) = session.first_message {
                     let truncated = if msg.len() > 80 {
                         format!("{}...", &msg.chars().take(80).collect::<String>())
@@ -605,7 +605,7 @@ pub async fn summarize_claude_session(
     }
 
     match llm.summarize_session(&content).await {
-        Ok(summary) => Ok(SummarizeResult {
+        Ok((summary, _usage)) => Ok(SummarizeResult {
             summary,
             success: true,
             error: None,

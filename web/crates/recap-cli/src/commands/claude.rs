@@ -283,8 +283,9 @@ fn extract_project_name(cwd: &str) -> String {
         return "unknown".to_string();
     }
 
-    cwd.split('/')
-        .last()
+    std::path::Path::new(&cwd)
+        .file_name()
+        .and_then(|n| n.to_str())
         .unwrap_or("unknown")
         .to_string()
 }

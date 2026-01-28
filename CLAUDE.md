@@ -26,19 +26,36 @@ Frontend (React/TypeScript)
 ```
 web/
 ├── src/                      # Frontend (React + TypeScript)
-│   ├── components/          # UI components (shadcn/ui)
-│   ├── pages/              # Page components
-│   └── lib/
-│       ├── api.ts          # API interface (detects Tauri environment)
-│       └── tauri-api.ts    # Tauri Commands wrapper
-└── src-tauri/               # Backend (Rust)
-    └── src/
-        ├── lib.rs          # App entry, command registration
-        ├── commands/       # Tauri Commands (IPC handlers)
-        ├── services/       # Business logic
-        ├── models/         # Data models
-        ├── db/            # SQLite database
-        └── auth/          # JWT authentication
+│   ├── components/ui/       # shadcn/ui base components
+│   ├── pages/               # Page components (each page has components/ + hooks/)
+│   │   ├── Dashboard/
+│   │   ├── Worklog/         # Worklog overview with Tempo export
+│   │   ├── WorkItems/
+│   │   ├── Reports/
+│   │   └── Settings/
+│   ├── services/            # Tauri API wrappers (per-module)
+│   └── types/               # Shared type definitions
+├── src-tauri/               # Backend (Rust)
+│   └── src/
+│       ├── lib.rs           # App entry, command registration
+│       ├── commands/        # Tauri Commands (per-module directories)
+│       │   ├── work_items/  # queries, mutations, sync, grouped
+│       │   ├── projects/
+│       │   ├── reports/
+│       │   ├── gitlab/
+│       │   ├── sources/
+│       │   ├── auth/
+│       │   ├── claude.rs
+│       │   ├── tempo.rs
+│       │   ├── snapshots.rs
+│       │   └── ...
+│       ├── services/        # Business logic
+│       ├── models/          # Data models
+│       ├── db/              # SQLite database
+│       └── auth/            # JWT authentication
+└── crates/
+    ├── recap-core/          # Shared core logic (worklog, sessions, snapshots)
+    └── recap-cli/           # CLI tool
 ```
 
 ## Development Guidelines
@@ -52,8 +69,9 @@ web/
    - Token-based auth: pass `token: String` as first parameter, verify with `verify_token(&token)`
 
 2. **Frontend (TypeScript)**:
-   - Add type definitions and invoke function in `src/lib/tauri-api.ts`
-   - Update `src/lib/api.ts` to use new Tauri command
+   - Add type definitions in `src/types/`
+   - Add invoke function in `src/services/<module>.ts`
+   - Export from `src/services/index.ts`
 
 ### Tauri Command Pattern
 
@@ -79,19 +97,20 @@ pub async fn example_command(
 ### Frontend API Pattern
 
 ```typescript
-// src/lib/tauri-api.ts
-export async function exampleCommand(token: string, param: SomeType): Promise<ReturnType> {
-  return invoke<ReturnType>('example_command', { token, param })
+// src/services/example.ts
+import { invoke } from '@tauri-apps/api/core'
+import { getRequiredToken } from './client'
+import type { ReturnType } from '@/types'
+
+export async function exampleCommand(param: SomeType): Promise<ReturnType> {
+  return invoke<ReturnType>('example_command', {
+    token: getRequiredToken(),
+    param,
+  })
 }
 
-// src/lib/api.ts
-exampleCommand: async (param: SomeType) => {
-  if (isTauri) {
-    return tauriApi.exampleCommand(getRequiredToken(), param)
-  }
-  // Fallback for non-Tauri environment (if needed)
-  throw new Error('This feature requires the desktop app')
-}
+// src/services/index.ts — re-export as namespace
+export * as example from './example'
 ```
 
 ### Code Style
@@ -118,14 +137,27 @@ exampleCommand: async (param: SomeType) => {
 - Rust: Return `Result<T, String>` from commands
 - TypeScript: Handle errors with try/catch around `invoke()` calls
 
+### Cross-Platform Compatibility
+
+- **Path handling**: Always use `std::path::Path` API instead of `split('/')` for file name extraction
+- **Home directory**: Use `dirs::home_dir()` instead of `std::env::var("HOME")`
+- **Path encoding**: Use `replace(['/', '\\'], "-")` for Claude Code directory name encoding
+- **Frontend paths**: Use `split(/[/\\]/)` instead of `split('/')`
+
 ## Testing
 
 ```bash
-# Frontend build check
-cd web && npm run build
+# Frontend tests
+cd web && npm test
+
+# Rust tests
+cd web && cargo test --workspace
+
+# TypeScript type check
+cd web && npx tsc --noEmit
 
 # Rust compilation check
-cd web/src-tauri && cargo check
+cd web && cargo check --workspace
 
 # Run Tauri development mode
 cd web && cargo tauri dev
@@ -137,8 +169,8 @@ cd web && cargo tauri dev
 
 1. Create command in `src-tauri/src/commands/<module>.rs`
 2. Register in `src-tauri/src/lib.rs`
-3. Add TypeScript types and function in `src/lib/tauri-api.ts`
-4. Update `src/lib/api.ts` to use the new command
+3. Add TypeScript types in `src/types/`
+4. Add invoke function in `src/services/<module>.ts`
 
 ### Modifying database schema
 
@@ -159,6 +191,7 @@ cd web && cargo tauri dev
 - **AppState**: Use `State<'_, AppState>` to access shared database connection
 - **Async/Await**: All database operations are async
 - **Error Messages**: Return user-friendly error messages from commands
+- **Cross-Platform**: Use `Path` API and `dirs` crate for all path operations — never hardcode `/` as path separator
 
 ## Team Collaboration & Git Worktree Strategy
 

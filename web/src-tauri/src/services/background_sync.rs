@@ -72,6 +72,8 @@ pub struct SyncOperationResult {
     pub source: String,
     pub success: bool,
     pub items_synced: i32,
+    pub projects_scanned: i32,
+    pub items_created: i32,
     pub error: Option<String>,
 }
 
@@ -266,6 +268,7 @@ impl BackgroundSyncService {
                 success: false,
                 items_synced: 0,
                 error: Some("No user logged in".to_string()),
+                ..Default::default()
             }];
         }
 
@@ -288,45 +291,94 @@ impl BackgroundSyncService {
         }
 
         let mut results = Vec::new();
-        let db_guard = db.lock().await;
 
-        // Sync Claude sessions (primary source)
+        // Clone pool immediately — never hold Mutex during I/O to avoid db lock contention
+        let pool = {
+            let db_guard = db.lock().await;
+            db_guard.pool.clone()
+        }; // Mutex released immediately
+
+        // Phase 1: Sync sources (uses pool directly, no Mutex)
         if config.sync_claude {
+            let db_guard = db.lock().await;
             let result = Self::sync_claude_sessions(&db_guard, user_id).await;
             results.push(result);
+            drop(db_guard); // Release Mutex before next phase
         }
 
-        // Sync Git repos (placeholder - requires git service implementation)
         if config.sync_git {
             results.push(SyncOperationResult {
                 source: "git".to_string(),
                 success: true,
-                items_synced: 0,
-                error: None,
+                ..Default::default()
             });
         }
 
-        // Sync GitLab (placeholder)
         if config.sync_gitlab {
             results.push(SyncOperationResult {
                 source: "gitlab".to_string(),
                 success: true,
-                items_synced: 0,
-                error: None,
+                ..Default::default()
             });
         }
 
-        // Sync Jira (placeholder)
         if config.sync_jira {
             results.push(SyncOperationResult {
                 source: "jira".to_string(),
                 success: true,
-                items_synced: 0,
-                error: None,
+                ..Default::default()
             });
         }
 
-        drop(db_guard);
+        // Phase 2: Capture hourly snapshots (uses pool directly, no Mutex)
+        if config.sync_claude {
+            let projects = recap_core::services::SyncService::discover_project_paths();
+            let mut snapshot_count = 0;
+            for project in &projects {
+                match recap_core::services::snapshot::capture_snapshots_for_project(
+                    &pool,
+                    user_id,
+                    project,
+                )
+                .await
+                {
+                    Ok(n) => snapshot_count += n,
+                    Err(e) => {
+                        log::warn!("Snapshot capture error for {}: {}", project.name, e);
+                    }
+                }
+            }
+            if snapshot_count > 0 {
+                log::info!("Captured {} hourly snapshots", snapshot_count);
+            }
+        }
+
+        // Phase 3: Run compaction cycle (uses pool directly, does NOT hold db lock)
+        if config.sync_claude {
+            let llm = recap_core::services::llm::create_llm_service(&pool, user_id)
+                .await
+                .ok();
+            match recap_core::services::compaction::run_compaction_cycle(
+                &pool,
+                llm.as_ref(),
+                user_id,
+            )
+            .await
+            {
+                Ok(cr) => {
+                    if cr.hourly_compacted > 0 || cr.daily_compacted > 0 {
+                        log::info!(
+                            "Compaction: {} hourly, {} daily summaries created",
+                            cr.hourly_compacted,
+                            cr.daily_compacted
+                        );
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Compaction cycle error: {}", e);
+                }
+            }
+        }
 
         // Update status
         {
@@ -334,14 +386,15 @@ impl BackgroundSyncService {
             st.is_syncing = false;
             st.last_sync_at = Some(chrono::Utc::now().to_rfc3339());
 
-            let total_items: i32 = results.iter().map(|r| r.items_synced).sum();
+            let total_projects: i32 = results.iter().map(|r| r.projects_scanned).sum();
+            let total_created: i32 = results.iter().map(|r| r.items_created).sum();
             let errors: Vec<String> = results
                 .iter()
                 .filter_map(|r| r.error.clone())
                 .collect();
 
             if errors.is_empty() {
-                st.last_result = Some(format!("成功同步 {} 筆項目", total_items));
+                st.last_result = Some(format!("已掃描 {} 個專案，發現 {} 筆新資料", total_projects, total_created));
                 st.last_error = None;
             } else {
                 st.last_result = Some(format!("同步完成，{} 個錯誤", errors.len()));
@@ -353,55 +406,40 @@ impl BackgroundSyncService {
         results
     }
 
-    /// Sync Claude Code sessions
+    /// Sync Claude Code sessions using project discovery with git root resolution
     async fn sync_claude_sessions(db: &recap_core::Database, user_id: &str) -> SyncOperationResult {
         log::info!("Syncing Claude sessions for user: {}", user_id);
 
-        // Get all available Claude projects
-        let project_paths: Vec<String> = recap_core::services::SyncService::list_claude_projects()
-            .into_iter()
-            .filter_map(|p| {
-                match std::fs::read_dir(&p) {
-                    Ok(files) => {
-                        for file in files.flatten() {
-                            let path = file.path();
-                            if path.extension().map(|e| e == "jsonl").unwrap_or(false) {
-                                if let Ok(content) = std::fs::read_to_string(&path) {
-                                    if let Some(first_line) = content.lines().next() {
-                                        if let Ok(msg) = serde_json::from_str::<serde_json::Value>(first_line) {
-                                            if let Some(cwd) = msg.get("cwd").and_then(|v| v.as_str()) {
-                                                return Some(cwd.to_string());
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        log::debug!("Failed to read directory {:?}: {}", p, e);
-                    }
-                }
-                None
-            })
-            .collect();
+        // Discover all projects using multi-strategy discovery + git root grouping
+        let projects = recap_core::services::SyncService::discover_project_paths();
 
-        if project_paths.is_empty() {
+        if projects.is_empty() {
             return SyncOperationResult {
                 source: "claude".to_string(),
                 success: true,
-                items_synced: 0,
-                error: None,
+                ..Default::default()
             };
         }
 
-        match recap_core::services::sync_claude_projects(&db.pool, user_id, &project_paths).await {
+        log::info!("Discovered {} Claude projects", projects.len());
+        for project in &projects {
+            log::debug!(
+                "  Project: {} ({}) - {} dirs",
+                project.name,
+                project.canonical_path,
+                project.claude_dirs.len()
+            );
+        }
+
+        match recap_core::services::sync_discovered_projects(&db.pool, user_id, &projects).await {
             Ok(result) => {
                 let items_synced = (result.work_items_created + result.work_items_updated) as i32;
                 SyncOperationResult {
                     source: "claude".to_string(),
                     success: true,
                     items_synced,
+                    projects_scanned: result.projects_scanned as i32,
+                    items_created: result.work_items_created as i32,
                     error: None,
                 }
             }
@@ -410,8 +448,8 @@ impl BackgroundSyncService {
                 SyncOperationResult {
                     source: "claude".to_string(),
                     success: false,
-                    items_synced: 0,
                     error: Some(e),
+                    ..Default::default()
                 }
             }
         }
@@ -466,10 +504,14 @@ mod tests {
             source: "git".to_string(),
             success: true,
             items_synced: 5,
+            projects_scanned: 3,
+            items_created: 2,
             error: None,
         };
         assert_eq!(result.source, "git");
         assert!(result.success);
         assert_eq!(result.items_synced, 5);
+        assert_eq!(result.projects_scanned, 3);
+        assert_eq!(result.items_created, 2);
     }
 }

@@ -267,6 +267,8 @@ pub struct SyncResult {
     pub success: bool,
     pub source: String,
     pub items_synced: i32,
+    pub projects_scanned: i32,
+    pub items_created: i32,
     pub message: Option<String>,
 }
 
@@ -339,4 +341,41 @@ pub struct SyncWorklogsResponse {
     pub failed: i32,
     pub results: Vec<WorklogSyncResult>,
     pub dry_run: bool,
+}
+
+/// Raw snapshot data for hourly session buckets
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct SnapshotRawData {
+    pub id: String,
+    pub user_id: String,
+    pub session_id: String,
+    pub project_path: String,
+    pub hour_bucket: String,
+    pub user_messages: Option<String>,
+    pub assistant_messages: Option<String>,
+    pub tool_calls: Option<String>,
+    pub files_modified: Option<String>,
+    pub git_commits: Option<String>,
+    pub message_count: i32,
+    pub raw_size_bytes: i32,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Work summary at various time scales (hourly, daily, weekly, monthly)
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct WorkSummary {
+    pub id: String,
+    pub user_id: String,
+    pub project_path: Option<String>,
+    pub scale: String,
+    pub period_start: String,
+    pub period_end: String,
+    pub summary: String,
+    pub key_activities: Option<String>,
+    pub git_commits_summary: Option<String>,
+    pub previous_context: Option<String>,
+    pub source_snapshot_ids: Option<String>,
+    pub llm_model: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }

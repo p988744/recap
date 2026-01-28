@@ -256,6 +256,8 @@ mod tests {
             source: "git".to_string(),
             success: true,
             items_synced: 3,
+            projects_scanned: 0,
+            items_created: 0,
             error: None,
         };
 

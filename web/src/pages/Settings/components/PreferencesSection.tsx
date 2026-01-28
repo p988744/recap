@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { Save, Loader2 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -5,11 +6,44 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import type { SettingsMessage } from '../hooks/useSettings'
 
+const TIMEZONE_OPTIONS = [
+  'Asia/Taipei',
+  'Asia/Tokyo',
+  'Asia/Shanghai',
+  'Asia/Hong_Kong',
+  'Asia/Singapore',
+  'Asia/Seoul',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'Europe/London',
+  'Europe/Berlin',
+  'Europe/Paris',
+  'Australia/Sydney',
+  'Pacific/Auckland',
+  'UTC',
+]
+
+const WEEK_DAYS = [
+  { value: 0, label: '日' },
+  { value: 1, label: '一' },
+  { value: 2, label: '二' },
+  { value: 3, label: '三' },
+  { value: 4, label: '四' },
+  { value: 5, label: '五' },
+  { value: 6, label: '六' },
+]
+
 interface PreferencesSectionProps {
   dailyHours: number
   setDailyHours: (v: number) => void
   normalizeHours: boolean
   setNormalizeHours: (v: boolean) => void
+  timezone: string | null
+  setTimezone: (v: string | null) => void
+  weekStartDay: number
+  setWeekStartDay: (v: number) => void
   savingPreferences: boolean
   onSavePreferences: (setMessage: (msg: SettingsMessage | null) => void) => Promise<void>
   setMessage: (msg: SettingsMessage | null) => void
@@ -20,10 +54,22 @@ export function PreferencesSection({
   setDailyHours,
   normalizeHours,
   setNormalizeHours,
+  timezone,
+  setTimezone,
+  weekStartDay,
+  setWeekStartDay,
   savingPreferences,
   onSavePreferences,
   setMessage,
 }: PreferencesSectionProps) {
+  const systemTimezone = useMemo(() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone
+    } catch {
+      return 'UTC'
+    }
+  }, [])
+
   return (
     <section className="animate-fade-up opacity-0 delay-1">
       <h2 className="font-display text-2xl text-foreground mb-6">偏好設定</h2>
@@ -64,6 +110,38 @@ export function PreferencesSection({
                 <p className="text-xs text-muted-foreground">將每日工時調整為標準工時</p>
               </div>
             </label>
+          </div>
+
+          <div>
+            <Label htmlFor="timezone" className="mb-2 block">時區</Label>
+            <select
+              id="timezone"
+              value={timezone ?? ''}
+              onChange={(e) => setTimezone(e.target.value || null)}
+              className="flex h-9 w-full max-w-xs rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              <option value="">{systemTimezone} (系統預設)</option>
+              {TIMEZONE_OPTIONS.map((tz) => (
+                <option key={tz} value={tz}>{tz}</option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground mt-1">
+              留空則使用系統偵測的時區
+            </p>
+          </div>
+
+          <div>
+            <Label htmlFor="week-start-day" className="mb-2 block">每週起始日</Label>
+            <select
+              id="week-start-day"
+              value={weekStartDay}
+              onChange={(e) => setWeekStartDay(Number(e.target.value))}
+              className="flex h-9 w-full max-w-xs rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              {WEEK_DAYS.map((day) => (
+                <option key={day.value} value={day.value}>{day.label}</option>
+              ))}
+            </select>
           </div>
 
           <div className="pt-4 border-t border-border">

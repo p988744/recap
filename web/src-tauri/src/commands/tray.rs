@@ -2,6 +2,7 @@
 //!
 //! Tauri commands for system tray operations.
 
+use chrono::Local;
 use tauri::{
     menu::{Menu, MenuItem},
     AppHandle,
@@ -13,9 +14,9 @@ use tauri::{
 
 /// Format time for display in tray menu
 fn format_time_for_tray(iso_string: &str) -> String {
-    // Parse ISO 8601 and format as HH:MM
+    // Parse ISO 8601 and convert to local time
     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(iso_string) {
-        dt.format("%H:%M").to_string()
+        dt.with_timezone(&Local).format("%H:%M").to_string()
     } else {
         // Fallback: try to extract time from the string
         if let Some(time_part) = iso_string.split('T').nth(1) {
@@ -126,8 +127,11 @@ mod tests {
 
     #[test]
     fn test_format_time_for_tray_utc() {
+        // UTC input should be converted to local time
         let time = format_time_for_tray("2026-01-16T06:30:00Z");
-        assert_eq!(time, "06:30");
+        // Verify valid HH:MM format (actual value depends on system timezone)
+        assert_eq!(time.len(), 5);
+        assert_eq!(&time[2..3], ":");
     }
 
     #[test]
