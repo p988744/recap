@@ -261,11 +261,7 @@ impl JiraClient {
         let jql = if query.trim().is_empty() {
             "ORDER BY updated DESC".to_string()
         } else {
-            let sanitized = sanitize_jql_query(query);
-            format!(
-                r#"summary ~ "{}" OR key = "{}" ORDER BY updated DESC"#,
-                sanitized, sanitized
-            )
+            build_search_jql(query)
         };
 
         let url = format!("{}/rest/api/2/search", self.base_url);
@@ -609,6 +605,51 @@ impl WorklogUploader {
     }
 }
 
+/// Build a JQL query string for issue search.
+///
+/// Detects three patterns:
+/// 1. "PROJ-123" (full issue key)   → exact key match OR project-scoped search
+/// 2. "PROJ" or "PROJ-" (project prefix) → project-scoped search
+/// 3. Free text                      → summary text search
+fn build_search_jql(query: &str) -> String {
+    let trimmed = query.trim();
+    let sanitized = sanitize_jql_query(trimmed);
+
+    // Check if the query looks like an issue key pattern: all-caps letters optionally followed by dash and digits
+    // e.g. "PROJ", "PROJ-", "PROJ-1", "PROJ-123"
+    let is_key_pattern = {
+        let parts: Vec<&str> = trimmed.splitn(2, '-').collect();
+        let prefix = parts[0];
+        let suffix = parts.get(1).copied().unwrap_or("");
+        !prefix.is_empty()
+            && prefix.chars().all(|c| c.is_ascii_uppercase())
+            && (suffix.is_empty() || suffix.chars().all(|c| c.is_ascii_digit()))
+    };
+
+    if is_key_pattern {
+        let project = trimmed.split('-').next().unwrap_or(trimmed);
+        if trimmed.contains('-') && trimmed.split('-').nth(1).map_or(false, |n| !n.is_empty()) {
+            // Full or partial key like "PROJ-12" → exact match OR project fallback
+            format!(
+                r#"key = "{}" OR project = "{}" ORDER BY updated DESC"#,
+                sanitized, project
+            )
+        } else {
+            // Project prefix only like "PROJ" or "PROJ-" → project-scoped
+            format!(
+                r#"project = "{}" ORDER BY updated DESC"#,
+                project
+            )
+        }
+    } else {
+        // Free text search on summary
+        format!(
+            r#"summary ~ "{}" ORDER BY updated DESC"#,
+            sanitized
+        )
+    }
+}
+
 /// Sanitize a query string for use in JQL by escaping special characters
 fn sanitize_jql_query(query: &str) -> String {
     query
@@ -640,5 +681,41 @@ mod tests {
         assert_eq!(JiraAuthType::from("basic"), JiraAuthType::Basic);
         assert_eq!(JiraAuthType::from("BASIC"), JiraAuthType::Basic);
         assert_eq!(JiraAuthType::from("unknown"), JiraAuthType::Pat);
+    }
+
+    #[test]
+    fn test_build_search_jql_project_prefix() {
+        let jql = build_search_jql("PROJ");
+        assert_eq!(jql, r#"project = "PROJ" ORDER BY updated DESC"#);
+    }
+
+    #[test]
+    fn test_build_search_jql_project_prefix_with_dash() {
+        let jql = build_search_jql("PROJ-");
+        assert_eq!(jql, r#"project = "PROJ" ORDER BY updated DESC"#);
+    }
+
+    #[test]
+    fn test_build_search_jql_partial_key() {
+        let jql = build_search_jql("PROJ-12");
+        assert_eq!(jql, r#"key = "PROJ-12" OR project = "PROJ" ORDER BY updated DESC"#);
+    }
+
+    #[test]
+    fn test_build_search_jql_full_key() {
+        let jql = build_search_jql("PROJ-123");
+        assert_eq!(jql, r#"key = "PROJ-123" OR project = "PROJ" ORDER BY updated DESC"#);
+    }
+
+    #[test]
+    fn test_build_search_jql_free_text() {
+        let jql = build_search_jql("fix login bug");
+        assert_eq!(jql, r#"summary ~ "fix login bug" ORDER BY updated DESC"#);
+    }
+
+    #[test]
+    fn test_build_search_jql_lowercase_not_key() {
+        let jql = build_search_jql("proj-123");
+        assert_eq!(jql, r#"summary ~ "proj-123" ORDER BY updated DESC"#);
     }
 }
