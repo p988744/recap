@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0-rc.2] - 2026-01-28
+
+### Fixed
+
+- **Jira Issue 搜尋** - 修復 JQL 查詢無法搜尋部分 key（如 `PROJ-1`）和專案前綴（如 `PROJ`）的問題
+- **ManualItemCard 佈局統一** - 手動項目卡片改為與 ProjectCard 相同的兩欄結構
+- **IssueKeyCombobox 鍵盤操作** - 支援方向鍵選擇、Enter 確認、Escape 關閉，含 ARIA 無障礙屬性
+- **TypeScript 編譯錯誤** - 修復 Dashboard SyncState 型別和所有測試 mock 資料
+
 ## [2.0.0-rc.1] - 2026-01-28
 
 ### Added
