@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0-rc.3] - 2026-01-28
+
+### Changed
+
+- **專案詳情改用 Dialog** - 將 Project Detail 從 Drawer 側面板改為 Dialog 模態視窗，簡化元件結構
+
+### Fixed
+
+- **CI artifact 上傳路徑** - 修正 build-desktop workflow 中 artifact 上傳路徑指向 workspace target 目錄
+- **Windows CI 建置** - 移除 MSI 打包目標，僅使用 NSIS 安裝程式
+
 ## [2.0.0-rc.2] - 2026-01-28
 
 ### Fixed
