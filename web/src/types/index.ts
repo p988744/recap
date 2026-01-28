@@ -110,6 +110,10 @@ export type {
   SyncWorklogsResponse,
   GetWorklogsRequest,
   ValidateIssueResponse,
+  JiraIssueItem,
+  JiraIssueDetail,
+  SearchIssuesRequest,
+  SearchIssuesResponse,
   // Claude
   ToolUsage,
   ClaudeSession,

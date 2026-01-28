@@ -1,9 +1,9 @@
 import { useMemo } from 'react'
-import { Plus } from 'lucide-react'
+import { Plus, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/lib/auth'
 import { useWorklog, useTempoSync } from './hooks'
-import { DateRangeBar, DaySection, TempoSyncModal, TempoBatchSyncModal } from './components'
+import { DateRangeBar, DaySection, TempoSyncModal, TempoBatchSyncModal, TempoWeekSyncModal } from './components'
 import {
   CreateModal,
   EditModal,
@@ -58,7 +58,42 @@ export function WorklogPage() {
       })
     }
     return rows
-  }, [ts.batchSyncDate, wl.days, ts])
+  }, [ts.batchSyncDate, wl.days, ts.getSyncRecord, ts.getMappedIssueKey])
+
+  // Build week sync rows (all days, all projects + manual items, skip synced)
+  const weekRows: BatchSyncRow[] = useMemo(() => {
+    const rows: BatchSyncRow[] = []
+    for (const day of wl.days) {
+      for (const p of day.projects) {
+        const existing = ts.getSyncRecord(p.project_path, day.date)
+        if (existing) continue
+        rows.push({
+          projectPath: p.project_path,
+          projectName: p.project_name,
+          issueKey: ts.getMappedIssueKey(p.project_path),
+          hours: p.total_hours,
+          description: p.daily_summary ?? '',
+          isManual: false,
+          date: day.date,
+        })
+      }
+      for (const m of day.manual_items) {
+        const existing = ts.getSyncRecord(`manual:${m.id}`, day.date)
+        if (existing) continue
+        rows.push({
+          projectPath: `manual:${m.id}`,
+          projectName: m.title,
+          issueKey: ts.getMappedIssueKey(`manual:${m.id}`),
+          hours: m.hours,
+          description: m.description ?? m.title,
+          isManual: true,
+          manualItemId: m.id,
+          date: day.date,
+        })
+      }
+    }
+    return rows
+  }, [wl.days, ts.getSyncRecord, ts.getMappedIssueKey])
 
   // Loading state
   if (wl.loading) {
@@ -100,10 +135,18 @@ export function WorklogPage() {
             </p>
             <h1 className="font-display text-4xl text-foreground tracking-tight">工作日誌</h1>
           </div>
-          <Button onClick={() => wl.openCreateModal()}>
-            <Plus className="w-4 h-4 mr-2" strokeWidth={1.5} />
-            新增項目
-          </Button>
+          <div className="flex items-center gap-2">
+            {wl.jiraConfigured && (
+              <Button variant="outline" onClick={ts.openWeekSyncModal}>
+                <Upload className="w-4 h-4 mr-2" strokeWidth={1.5} />
+                Export Week
+              </Button>
+            )}
+            <Button onClick={() => wl.openCreateModal()}>
+              <Plus className="w-4 h-4 mr-2" strokeWidth={1.5} />
+              新增項目
+            </Button>
+          </div>
         </div>
         <DateRangeBar
           startDate={wl.startDate}
@@ -137,9 +180,11 @@ export function WorklogPage() {
               onAddManualItem={wl.openCreateModal}
               onEditManualItem={wl.openEditManualItem}
               onDeleteManualItem={wl.confirmDeleteManualItem}
-              getSyncRecord={ts.getSyncRecord}
-              onSyncProject={ts.openSyncModal}
-              onSyncDay={ts.openBatchSyncModal}
+              getSyncRecord={wl.jiraConfigured ? ts.getSyncRecord : undefined}
+              onSyncProject={wl.jiraConfigured ? ts.openSyncModal : undefined}
+              onSyncDay={wl.jiraConfigured ? ts.openBatchSyncModal : undefined}
+              getMappedIssueKey={wl.jiraConfigured ? ts.getMappedIssueKey : undefined}
+              onIssueKeyChange={wl.jiraConfigured ? ts.updateIssueKey : undefined}
             />
           ))
         )}
@@ -172,26 +217,41 @@ export function WorklogPage() {
         onCancel={wl.closeDeleteConfirm}
       />
 
-      {/* Tempo Sync Modals */}
-      <TempoSyncModal
-        target={ts.syncTarget}
-        defaultIssueKey={ts.syncTarget ? ts.getMappedIssueKey(ts.syncTarget.projectPath) : ''}
-        syncing={ts.syncing}
-        syncResult={ts.syncResult}
-        onSync={ts.executeSingleSync}
-        onClose={ts.closeSyncModal}
-      />
+      {/* Tempo Sync Modals (only when Jira configured) */}
+      {wl.jiraConfigured && (
+        <>
+          <TempoSyncModal
+            target={ts.syncTarget}
+            defaultIssueKey={ts.syncTarget ? ts.getMappedIssueKey(ts.syncTarget.projectPath) : ''}
+            syncing={ts.syncing}
+            syncResult={ts.syncResult}
+            onSync={ts.executeSingleSync}
+            onClose={ts.closeSyncModal}
+          />
 
-      <TempoBatchSyncModal
-        open={!!ts.batchSyncDate}
-        date={ts.batchSyncDate ?? ''}
-        weekday={ts.batchSyncWeekday}
-        initialRows={batchRows}
-        syncing={ts.syncing}
-        syncResult={ts.syncResult}
-        onSync={ts.executeBatchSync}
-        onClose={ts.closeBatchSyncModal}
-      />
+          <TempoBatchSyncModal
+            open={!!ts.batchSyncDate}
+            date={ts.batchSyncDate ?? ''}
+            weekday={ts.batchSyncWeekday}
+            initialRows={batchRows}
+            syncing={ts.syncing}
+            syncResult={ts.syncResult}
+            onSync={ts.executeBatchSync}
+            onClose={ts.closeBatchSyncModal}
+          />
+
+          <TempoWeekSyncModal
+            open={ts.weekSyncOpen}
+            startDate={wl.startDate}
+            endDate={wl.endDate}
+            initialRows={weekRows}
+            syncing={ts.syncing}
+            syncResult={ts.syncResult}
+            onSync={ts.executeWeekSync}
+            onClose={ts.closeWeekSyncModal}
+          />
+        </>
+      )}
     </div>
   )
 }

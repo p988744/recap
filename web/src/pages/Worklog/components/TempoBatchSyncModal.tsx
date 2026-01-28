@@ -3,6 +3,7 @@ import { Check, AlertCircle, Loader2 } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -10,6 +11,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { tempo } from '@/services'
+import { IssueKeyCombobox } from './IssueKeyCombobox'
 import type { BatchSyncRow, SyncWorklogsResponse } from '@/types'
 
 interface TempoBatchSyncModalProps {
@@ -79,10 +81,11 @@ export function TempoBatchSyncModal({
           loading: false,
         },
       }))
-    } catch {
+    } catch (err) {
+      console.error('Issue validation error:', key, err)
       setValidation((prev) => ({
         ...prev,
-        [`${index}`]: { valid: false, summary: 'Validation failed', loading: false },
+        [`${index}`]: { valid: false, summary: String(err), loading: false },
       }))
     }
   }, [rows])
@@ -101,8 +104,11 @@ export function TempoBatchSyncModal({
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>
-            Sync Day: {date.slice(5).replace('-', '/')} ({weekday})
+            Export Day: {date.slice(5).replace('-', '/')} ({weekday})
           </DialogTitle>
+          <DialogDescription className="sr-only">
+            Export worklog entries for the selected day to Tempo
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
@@ -129,16 +135,16 @@ export function TempoBatchSyncModal({
                       </td>
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-1">
-                          <Input
+                          <IssueKeyCombobox
                             value={row.issueKey}
-                            onChange={(e) => updateRow(i, 'issueKey', e.target.value)}
+                            onChange={(v) => updateRow(i, 'issueKey', v)}
                             onBlur={() => validateIssue(i)}
                             placeholder="PROJ-123"
-                            className="h-8 text-xs"
+                            compact
                           />
                           {v?.loading && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground shrink-0" />}
-                          {v?.valid === true && <Check className="w-3 h-3 text-green-600 shrink-0" />}
-                          {v?.valid === false && <AlertCircle className="w-3 h-3 text-destructive shrink-0" />}
+                          {v?.valid === true && <span title={v.summary}><Check className="w-3 h-3 text-green-600 shrink-0" /></span>}
+                          {v?.valid === false && <span title={v.summary}><AlertCircle className="w-3 h-3 text-destructive shrink-0" /></span>}
                         </div>
                       </td>
                       <td className="px-3 py-2">
@@ -184,7 +190,7 @@ export function TempoBatchSyncModal({
                 <p>Preview: {syncResult.total_entries} entries ready ({totalHours.toFixed(1)}h total)</p>
               ) : (
                 <p>
-                  {syncResult.successful} synced, {syncResult.failed} failed
+                  {syncResult.successful} exported, {syncResult.failed} failed
                   {syncResult.failed > 0 && (
                     <> — {syncResult.results.filter(r => r.status === 'error').map(r => `${r.issue_key}: ${r.error_message}`).join(', ')}</>
                   )}
@@ -202,7 +208,7 @@ export function TempoBatchSyncModal({
           </Button>
           <Button onClick={handleSync} disabled={!canSync}>
             {syncing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-            Sync All
+            Export All
           </Button>
         </DialogFooter>
       </DialogContent>

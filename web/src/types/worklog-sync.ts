@@ -60,4 +60,6 @@ export interface BatchSyncRow {
   isManual: boolean
   /** id of the ManualWorkItem, if applicable */
   manualItemId?: string
+  /** date for week-level sync (YYYY-MM-DD) */
+  date?: string
 }

@@ -55,6 +55,8 @@ pub struct JiraIssue {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JiraIssueFields {
     pub summary: Option<String>,
+    pub description: Option<String>,
+    pub assignee: Option<JiraUser>,
     #[serde(rename = "issuetype")]
     pub issue_type: Option<JiraIssueType>,
 }
@@ -175,14 +177,11 @@ impl JiraClient {
         Ok(Some(issue))
     }
 
-    /// Validate an issue key exists
-    pub async fn validate_issue_key(&self, issue_key: &str) -> Result<(bool, String)> {
+    /// Validate an issue key exists and return full issue details
+    pub async fn validate_issue_key(&self, issue_key: &str) -> Result<(bool, Option<JiraIssue>)> {
         match self.get_issue(issue_key).await? {
-            Some(issue) => {
-                let summary = issue.fields.summary.unwrap_or_else(|| "Unknown".to_string());
-                Ok((true, summary))
-            }
-            None => Ok((false, "Issue not found".to_string())),
+            Some(issue) => Ok((true, Some(issue))),
+            None => Ok((false, None)),
         }
     }
 
@@ -257,6 +256,49 @@ impl JiraClient {
         Ok(members)
     }
 
+    /// Search for issues by summary or key
+    pub async fn search_issues(&self, query: &str, max_results: u32) -> Result<Vec<JiraIssue>> {
+        let jql = if query.trim().is_empty() {
+            "ORDER BY updated DESC".to_string()
+        } else {
+            let sanitized = sanitize_jql_query(query);
+            format!(
+                r#"summary ~ "{}" OR key = "{}" ORDER BY updated DESC"#,
+                sanitized, sanitized
+            )
+        };
+
+        let url = format!("{}/rest/api/2/search", self.base_url);
+        let response = self.client
+            .get(&url)
+            .query(&[
+                ("jql", jql.as_str()),
+                ("fields", "summary,issuetype,status"),
+                ("maxResults", &max_results.to_string()),
+            ])
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(anyhow!("Jira search error {}: {}", status, text));
+        }
+
+        let data: serde_json::Value = response.json().await?;
+        let mut issues = Vec::new();
+
+        if let Some(arr) = data.get("issues").and_then(|v| v.as_array()) {
+            for item in arr {
+                if let Ok(issue) = serde_json::from_value::<JiraIssue>(item.clone()) {
+                    issues.push(issue);
+                }
+            }
+        }
+
+        Ok(issues)
+    }
+
     /// Batch get issue types for multiple issues
     pub async fn batch_get_issue_types(&self, issue_keys: &[String]) -> Result<std::collections::HashMap<String, String>> {
         let mut result = std::collections::HashMap::new();
@@ -309,6 +351,46 @@ impl JiraClient {
         }
 
         Ok(result)
+    }
+
+    /// Batch get full issue details for multiple issue keys
+    pub async fn batch_get_issues(&self, issue_keys: &[String]) -> Result<Vec<JiraIssue>> {
+        let mut all_issues = Vec::new();
+        if issue_keys.is_empty() {
+            return Ok(all_issues);
+        }
+
+        let batch_size = 50;
+        for chunk in issue_keys.chunks(batch_size) {
+            let jql = format!("key in ({})", chunk.join(","));
+            let url = format!("{}/rest/api/2/search", self.base_url);
+
+            match self.client
+                .get(&url)
+                .query(&[
+                    ("jql", jql.as_str()),
+                    ("fields", "summary,description,assignee,issuetype"),
+                    ("maxResults", &batch_size.to_string()),
+                ])
+                .send()
+                .await
+            {
+                Ok(response) if response.status().is_success() => {
+                    if let Ok(data) = response.json::<serde_json::Value>().await {
+                        if let Some(issues) = data.get("issues").and_then(|v| v.as_array()) {
+                            for item in issues {
+                                if let Ok(issue) = serde_json::from_value::<JiraIssue>(item.clone()) {
+                                    all_issues.push(issue);
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {} // skip failed batches
+            }
+        }
+
+        Ok(all_issues)
     }
 }
 
@@ -493,7 +575,7 @@ impl WorklogUploader {
     }
 
     /// Validate an issue
-    pub async fn validate_issue(&self, issue_key: &str) -> Result<(bool, String)> {
+    pub async fn validate_issue(&self, issue_key: &str) -> Result<(bool, Option<JiraIssue>)> {
         self.jira.validate_issue_key(issue_key).await
     }
 
@@ -525,6 +607,14 @@ impl WorklogUploader {
             Err(e) => Ok((false, format!("Connection failed: {}", e))),
         }
     }
+}
+
+/// Sanitize a query string for use in JQL by escaping special characters
+fn sanitize_jql_query(query: &str) -> String {
+    query
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\'', "\\'")
 }
 
 /// Format date string to Jira datetime format

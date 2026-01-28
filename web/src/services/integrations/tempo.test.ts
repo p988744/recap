@@ -103,7 +103,7 @@ describe('tempo service', () => {
       expect(result.summary).toBe('Implement feature X')
       expect(mockInvoke).toHaveBeenCalledWith('validate_jira_issue', {
         token: 'test-token',
-        issue_key: 'PROJ-123',
+        issueKey: 'PROJ-123',
       })
     })
 

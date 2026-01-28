@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { worklogSync, tempo } from '@/services'
+import * as jiraIssueCache from '@/services/jiraIssueCache'
 import type {
   WorklogSyncRecord,
   TempoSyncTarget,
@@ -23,6 +24,7 @@ export function useTempoSync(
   const [syncTarget, setSyncTarget] = useState<TempoSyncTarget | null>(null)
   const [batchSyncDate, setBatchSyncDate] = useState<string | null>(null)
   const [batchSyncWeekday, setBatchSyncWeekday] = useState<string>('')
+  const [weekSyncOpen, setWeekSyncOpen] = useState(false)
   // Loading / result
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState<SyncWorklogsResponse | null>(null)
@@ -37,6 +39,12 @@ export function useTempoSync(
         map[m.project_path] = m.jira_issue_key
       }
       setMappings(map)
+
+      // Prefetch issue details for all mapped keys
+      const uniqueKeys = [...new Set(Object.values(map).filter(Boolean))]
+      if (uniqueKeys.length > 0) {
+        jiraIssueCache.prefetchAndNotify(uniqueKeys).catch(() => {})
+      }
     } catch {
       // ignore — Jira may not be configured
     }
@@ -59,6 +67,17 @@ export function useTempoSync(
     loadMappings()
     loadSyncRecords()
   }, [isAuthenticated, loadMappings, loadSyncRecords])
+
+  // ---- Update mapping inline ----
+
+  const updateIssueKey = useCallback(async (projectPath: string, issueKey: string) => {
+    const trimmed = issueKey.trim()
+    if (!trimmed) return
+    try {
+      await worklogSync.saveMapping({ project_path: projectPath, jira_issue_key: trimmed })
+      setMappings(prev => ({ ...prev, [projectPath]: trimmed }))
+    } catch { /* ignore */ }
+  }, [])
 
   // ---- Lookup helpers ----
 
@@ -222,6 +241,76 @@ export function useTempoSync(
     [batchSyncDate, loadMappings, loadSyncRecords, onSyncComplete],
   )
 
+  // ---- Week sync modal ----
+
+  const openWeekSyncModal = useCallback(() => {
+    setWeekSyncOpen(true)
+    setSyncResult(null)
+  }, [])
+
+  const closeWeekSyncModal = useCallback(() => {
+    setWeekSyncOpen(false)
+    setSyncResult(null)
+  }, [])
+
+  const executeWeekSync = useCallback(
+    async (rows: BatchSyncRow[], dryRun: boolean) => {
+      setSyncing(true)
+      setSyncResult(null)
+      try {
+        const entries = rows
+          .filter((r) => r.issueKey.trim() !== '' && r.date)
+          .map((r) => ({
+            issue_key: r.issueKey.trim(),
+            date: r.date!,
+            minutes: Math.round(r.hours * 60),
+            description: r.description,
+          }))
+
+        if (entries.length === 0) return null
+
+        const result = await tempo.syncWorklogs({
+          entries,
+          dry_run: dryRun,
+        })
+        setSyncResult(result)
+
+        if (!dryRun && result.success) {
+          // Build a mapping from entry index to original row index
+          const validRows = rows.filter((r) => r.issueKey.trim() !== '' && r.date)
+          for (let i = 0; i < validRows.length; i++) {
+            const row = validRows[i]
+            const entryResult = result.results[i]
+            if (entryResult?.status !== 'success') continue
+
+            await worklogSync.saveMapping({
+              project_path: row.projectPath,
+              jira_issue_key: row.issueKey.trim(),
+            })
+            await worklogSync.saveSyncRecord({
+              project_path: row.projectPath,
+              date: row.date!,
+              jira_issue_key: row.issueKey.trim(),
+              hours: row.hours,
+              description: row.description,
+              tempo_worklog_id: entryResult.id ?? undefined,
+            })
+          }
+          await loadMappings()
+          await loadSyncRecords()
+          onSyncComplete()
+        }
+        return result
+      } catch (err) {
+        console.error('Week sync failed:', err)
+        return null
+      } finally {
+        setSyncing(false)
+      }
+    },
+    [loadMappings, loadSyncRecords, onSyncComplete],
+  )
+
   return {
     // State
     mappings,
@@ -231,6 +320,7 @@ export function useTempoSync(
     // Lookups
     getSyncRecord,
     getMappedIssueKey,
+    updateIssueKey,
     // Single sync modal
     syncTarget,
     openSyncModal,
@@ -242,5 +332,10 @@ export function useTempoSync(
     openBatchSyncModal,
     closeBatchSyncModal,
     executeBatchSync,
+    // Week sync modal
+    weekSyncOpen,
+    openWeekSyncModal,
+    closeWeekSyncModal,
+    executeWeekSync,
   }
 }

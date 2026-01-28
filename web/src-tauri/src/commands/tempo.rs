@@ -66,7 +66,43 @@ pub struct ValidateIssueResponse {
     pub valid: bool,
     pub issue_key: String,
     pub summary: Option<String>,
+    pub description: Option<String>,
+    pub assignee: Option<String>,
+    pub issue_type: Option<String>,
     pub message: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SearchIssuesRequest {
+    pub query: String,
+    #[serde(default = "default_max_results")]
+    pub max_results: u32,
+}
+
+fn default_max_results() -> u32 {
+    20
+}
+
+#[derive(Debug, Serialize)]
+pub struct JiraIssueItem {
+    pub key: String,
+    pub summary: String,
+    pub issue_type: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SearchIssuesResponse {
+    pub issues: Vec<JiraIssueItem>,
+    pub total: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct JiraIssueDetail {
+    pub key: String,
+    pub summary: String,
+    pub description: Option<String>,
+    pub assignee: Option<String>,
+    pub issue_type: Option<String>,
 }
 
 // Helper function to get user's Jira/Tempo config
@@ -91,6 +127,64 @@ async fn get_user_config(
 
     Ok((jira_url, row.1, row.2, row.3))
 }
+
+// Helpers
+
+/// Simplify a markdown description for Tempo upload.
+/// Strips markdown formatting, collapses to a single-line summary + condensed bullet points,
+/// and truncates to a maximum length.
+fn sanitize_description(raw: &str, max_len: usize) -> String {
+    let mut lines: Vec<String> = Vec::new();
+
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // Strip markdown bullet markers
+        let stripped = trimmed
+            .trim_start_matches("- ")
+            .trim_start_matches("* ")
+            .trim_start_matches("• ");
+
+        // Strip bold / italic / backtick markers
+        let cleaned: String = stripped
+            .replace("**", "")
+            .replace('*', "")
+            .replace('`', "");
+
+        let cleaned = cleaned.trim().to_string();
+        if !cleaned.is_empty() {
+            lines.push(cleaned);
+        }
+    }
+
+    if lines.is_empty() {
+        return String::new();
+    }
+
+    // First line is the summary; remaining become "; "-separated list
+    let summary = lines[0].clone();
+    if lines.len() == 1 {
+        return truncate_str(&summary, max_len);
+    }
+
+    let details = lines[1..].join("; ");
+    let full = format!("{} — {}", summary, details);
+    truncate_str(&full, max_len)
+}
+
+fn truncate_str(s: &str, max_len: usize) -> String {
+    if s.chars().count() <= max_len {
+        return s.to_string();
+    }
+    let truncated: String = s.chars().take(max_len.saturating_sub(3)).collect();
+    format!("{}...", truncated)
+}
+
+/// Max description length for Tempo worklog
+const MAX_DESCRIPTION_LEN: usize = 255;
 
 // Commands
 
@@ -148,12 +242,20 @@ pub async fn validate_jira_issue(
     .map_err(|e| e.to_string())?;
 
     match client.validate_issue_key(&issue_key).await {
-        Ok((valid, summary)) => {
+        Ok((valid, issue)) => {
             if valid {
+                let fields = issue.as_ref().map(|i| &i.fields);
+                let summary = fields.and_then(|f| f.summary.clone()).unwrap_or_default();
+                let description = fields.and_then(|f| f.description.clone());
+                let assignee = fields.and_then(|f| f.assignee.as_ref()).and_then(|a| a.display_name.clone());
+                let issue_type = fields.and_then(|f| f.issue_type.as_ref()).map(|t| t.name.clone());
                 Ok(ValidateIssueResponse {
                     valid: true,
                     issue_key: issue_key.clone(),
                     summary: Some(summary.clone()),
+                    description,
+                    assignee,
+                    issue_type,
                     message: format!("{}: {}", issue_key, summary),
                 })
             } else {
@@ -161,6 +263,9 @@ pub async fn validate_jira_issue(
                     valid: false,
                     issue_key,
                     summary: None,
+                    description: None,
+                    assignee: None,
+                    issue_type: None,
                     message: "Issue not found".to_string(),
                 })
             }
@@ -197,11 +302,12 @@ pub async fn sync_worklogs_to_tempo(
     let mut failed = 0;
 
     for entry_req in &request.entries {
+        let clean_desc = sanitize_description(&entry_req.description, MAX_DESCRIPTION_LEN);
         let entry = WorklogEntry {
             issue_key: entry_req.issue_key.clone(),
             date: entry_req.date.clone(),
             time_spent_seconds: entry_req.minutes * 60,
-            description: entry_req.description.clone(),
+            description: clean_desc.clone(),
             account_id: None,
         };
 
@@ -312,11 +418,12 @@ pub async fn upload_single_worklog(
     )
     .map_err(|e| e.to_string())?;
 
+    let clean_desc = sanitize_description(&request.description, MAX_DESCRIPTION_LEN);
     let entry = WorklogEntry {
         issue_key: request.issue_key.clone(),
         date: request.date.clone(),
         time_spent_seconds: request.minutes * 60,
-        description: request.description.clone(),
+        description: clean_desc,
         account_id: None,
     };
 
@@ -381,4 +488,86 @@ pub async fn get_tempo_worklogs(
 
     tempo.get_worklogs(&request.date_from, &request.date_to).await
         .map_err(|e| e.to_string())
+}
+
+/// Search Jira issues by summary or key
+#[tauri::command]
+pub async fn search_jira_issues(
+    state: State<'_, AppState>,
+    token: String,
+    request: SearchIssuesRequest,
+) -> Result<SearchIssuesResponse, String> {
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
+
+    let (jira_url, jira_email, jira_pat, _tempo_token) = get_user_config(&db.pool, &claims.sub).await?;
+
+    let client = JiraClient::new(
+        &jira_url,
+        &jira_pat.unwrap(),
+        jira_email.as_deref(),
+        JiraAuthType::Pat,
+    )
+    .map_err(|e| e.to_string())?;
+
+    let issues = client
+        .search_issues(&request.query, request.max_results)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let total = issues.len();
+    let items: Vec<JiraIssueItem> = issues
+        .into_iter()
+        .map(|issue| JiraIssueItem {
+            key: issue.key,
+            summary: issue.fields.summary.unwrap_or_default(),
+            issue_type: issue.fields.issue_type.map(|t| t.name),
+        })
+        .collect();
+
+    Ok(SearchIssuesResponse {
+        issues: items,
+        total,
+    })
+}
+
+/// Batch get full issue details for multiple issue keys
+#[tauri::command]
+pub async fn batch_get_jira_issues(
+    state: State<'_, AppState>,
+    token: String,
+    issue_keys: Vec<String>,
+) -> Result<Vec<JiraIssueDetail>, String> {
+    if issue_keys.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
+
+    let (jira_url, jira_email, jira_pat, _tempo_token) = get_user_config(&db.pool, &claims.sub).await?;
+
+    let client = JiraClient::new(
+        &jira_url,
+        &jira_pat.unwrap(),
+        jira_email.as_deref(),
+        JiraAuthType::Pat,
+    )
+    .map_err(|e| e.to_string())?;
+
+    let issues = client
+        .batch_get_issues(&issue_keys)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(issues
+        .into_iter()
+        .map(|issue| JiraIssueDetail {
+            key: issue.key,
+            summary: issue.fields.summary.unwrap_or_default(),
+            description: issue.fields.description,
+            assignee: issue.fields.assignee.and_then(|a| a.display_name),
+            issue_type: issue.fields.issue_type.map(|t| t.name),
+        })
+        .collect())
 }

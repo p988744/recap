@@ -1,14 +1,16 @@
-import { User, Bot, Settings, Sparkles, FolderGit2 } from 'lucide-react'
+import { User, Bot, Settings, Sparkles, FolderGit2, Plug } from 'lucide-react'
 import {
   useSettings,
   useProfileForm,
   usePreferencesForm,
   useLlmForm,
   useSyncForm,
+  useJiraForm,
 } from './hooks/useSettings'
 import { ProfileSection } from './components/ProfileSection'
 import { ProjectsSection } from './components/ProjectsSection'
 import { SyncSection } from './components/SyncSection'
+import { ExportSection } from './components/ExportSection'
 import { AiSection } from './components/AiSection'
 import { AboutSection } from './components/AboutSection'
 
@@ -16,6 +18,7 @@ const sections = [
   { id: 'profile' as const, label: '帳號', icon: User },
   { id: 'projects' as const, label: '專案', icon: FolderGit2 },
   { id: 'sync' as const, label: '系統設定', icon: Settings },
+  { id: 'export' as const, label: '整合', icon: Plug },
   { id: 'ai' as const, label: 'AI 助手', icon: Sparkles },
   { id: 'about' as const, label: '關於', icon: Bot },
 ]
@@ -26,6 +29,7 @@ export function SettingsPage() {
   const preferencesForm = usePreferencesForm(settings.config)
   const llmForm = useLlmForm(settings.config)
   const syncForm = useSyncForm()
+  const jiraForm = useJiraForm(settings.config)
 
   if (settings.loading) {
     return (
@@ -117,6 +121,31 @@ export function SettingsPage() {
             savingPreferences={preferencesForm.saving}
             onSavePreferences={preferencesForm.handleSave}
             setMessage={settings.setMessage}
+          />
+        )}
+
+        {/* Export Section */}
+        {settings.activeSection === 'export' && (
+          <ExportSection
+            config={settings.config}
+            jiraUrl={jiraForm.jiraUrl}
+            setJiraUrl={jiraForm.setJiraUrl}
+            jiraAuthType={jiraForm.jiraAuthType}
+            setJiraAuthType={jiraForm.setJiraAuthType}
+            jiraToken={jiraForm.jiraToken}
+            setJiraToken={jiraForm.setJiraToken}
+            jiraEmail={jiraForm.jiraEmail}
+            setJiraEmail={jiraForm.setJiraEmail}
+            tempoToken={jiraForm.tempoToken}
+            setTempoToken={jiraForm.setTempoToken}
+            showToken={jiraForm.showToken}
+            setShowToken={jiraForm.setShowToken}
+            saving={jiraForm.saving}
+            testing={jiraForm.testing}
+            onSave={jiraForm.handleSave}
+            onTest={jiraForm.handleTest}
+            setMessage={settings.setMessage}
+            refreshConfig={settings.refreshConfig}
           />
         )}
 

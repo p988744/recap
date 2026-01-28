@@ -61,11 +61,15 @@ export function useWorklog(isAuthenticated: boolean) {
   const [startDate, setStartDate] = useState(initialRange.start)
   const [endDate, setEndDate] = useState(initialRange.end)
 
+  // Whether Jira/Tempo is configured
+  const [jiraConfigured, setJiraConfigured] = useState(false)
+
   // Fetch week_start_day from config
   useEffect(() => {
     if (!isAuthenticated) return
     configService.getConfig()
       .then((c) => {
+        setJiraConfigured(c.jira_configured)
         if (c.week_start_day !== weekStartDay) {
           setWeekStartDay(c.week_start_day)
           const range = getWeekRange(c.week_start_day)
@@ -341,6 +345,8 @@ export function useWorklog(isAuthenticated: boolean) {
     handleDelete,
     openEditManualItem,
     confirmDeleteManualItem,
+    // Config
+    jiraConfigured,
     // Refresh
     fetchOverview,
   }

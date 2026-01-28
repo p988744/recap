@@ -18,6 +18,8 @@ interface DaySectionProps {
   getSyncRecord?: (projectPath: string, date: string) => WorklogSyncRecord | undefined
   onSyncProject?: (target: TempoSyncTarget) => void
   onSyncDay?: (date: string, weekday: string) => void
+  getMappedIssueKey?: (path: string) => string
+  onIssueKeyChange?: (path: string, key: string) => void
 }
 
 export function DaySection({
@@ -32,6 +34,8 @@ export function DaySection({
   getSyncRecord,
   onSyncProject,
   onSyncDay,
+  getMappedIssueKey,
+  onIssueKeyChange,
 }: DaySectionProps) {
   const isEmpty = day.projects.length === 0 && day.manual_items.length === 0
 
@@ -54,7 +58,7 @@ export function DaySection({
               onClick={() => onSyncDay(day.date, day.weekday)}
             >
               <Upload className="w-3 h-3 mr-1" strokeWidth={1.5} />
-              Sync Day
+              Export Day
             </Button>
           )}
           <Button
@@ -104,6 +108,8 @@ export function DaySection({
                         })
                     : undefined
                 }
+                mappedIssueKey={getMappedIssueKey?.(project.project_path)}
+                onIssueKeyChange={onIssueKeyChange ? (key) => onIssueKeyChange(project.project_path, key) : undefined}
               />
             )
           })}
@@ -129,6 +135,8 @@ export function DaySection({
                       })
                   : undefined
               }
+              mappedIssueKey={getMappedIssueKey?.(`manual:${item.id}`)}
+              onIssueKeyChange={onIssueKeyChange ? (key) => onIssueKeyChange(`manual:${item.id}`, key) : undefined}
             />
           ))}
         </div>

@@ -1,7 +1,10 @@
-import { Pencil, Trash2, Upload, RefreshCw, Check } from 'lucide-react'
+import { useState } from 'react'
+import { Pencil, Trash2, Upload, RefreshCw, Link } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { ManualWorkItem } from '@/types/worklog'
 import type { WorklogSyncRecord } from '@/types'
+import { JiraBadge } from './JiraBadge'
+import { IssueKeyCombobox } from './IssueKeyCombobox'
 
 interface ManualItemCardProps {
   item: ManualWorkItem
@@ -9,10 +12,15 @@ interface ManualItemCardProps {
   onDelete: () => void
   syncRecord?: WorklogSyncRecord
   onSyncToTempo?: () => void
+  mappedIssueKey?: string
+  onIssueKeyChange?: (issueKey: string) => void
 }
 
-export function ManualItemCard({ item, onEdit, onDelete, syncRecord, onSyncToTempo }: ManualItemCardProps) {
+export function ManualItemCard({ item, onEdit, onDelete, syncRecord, onSyncToTempo, mappedIssueKey, onIssueKeyChange }: ManualItemCardProps) {
   const isSynced = !!syncRecord
+  const [editing, setEditing] = useState(false)
+  const [editValue, setEditValue] = useState('')
+  const displayKey = syncRecord?.jira_issue_key ?? mappedIssueKey ?? ''
 
   return (
     <div className="group/item border border-border rounded-lg bg-white/60 px-4 py-3 flex items-start gap-3">
@@ -30,13 +38,44 @@ export function ManualItemCard({ item, onEdit, onDelete, syncRecord, onSyncToTem
         {item.description && (
           <p className="text-sm text-muted-foreground mt-0.5 line-clamp-1">{item.description}</p>
         )}
-        {/* Sync status row */}
-        {isSynced && (
-          <div className="flex items-center gap-1.5 mt-1.5 text-xs text-green-700">
-            <Check className="w-3 h-3" strokeWidth={2} />
-            <span>
-              Synced to {syncRecord.jira_issue_key} · {syncRecord.hours}h · {syncRecord.synced_at.slice(5, 16).replace('T', ' ')}
-            </span>
+        {/* Jira issue key: badge + inline edit */}
+        {onIssueKeyChange && (
+          <div className="mt-1.5">
+            {editing ? (
+              <div className="max-w-[220px]">
+                <IssueKeyCombobox
+                  value={editValue}
+                  onChange={setEditValue}
+                  onBlur={() => {
+                    const trimmed = editValue.trim()
+                    if (trimmed && trimmed !== displayKey) {
+                      onIssueKeyChange(trimmed)
+                    }
+                    setEditing(false)
+                  }}
+                  compact
+                  placeholder="e.g. PROJ-123"
+                  className="h-7"
+                />
+              </div>
+            ) : displayKey ? (
+              <button
+                type="button"
+                onClick={() => { setEditValue(displayKey); setEditing(true) }}
+                className="cursor-pointer hover:opacity-80 transition-opacity"
+              >
+                <JiraBadge issueKey={displayKey} />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => { setEditValue(''); setEditing(true) }}
+                className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <Link className="w-3 h-3" strokeWidth={1.5} />
+                Link Jira
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -44,7 +83,7 @@ export function ManualItemCard({ item, onEdit, onDelete, syncRecord, onSyncToTem
       {/* Actions */}
       <div className="flex items-center gap-1 opacity-0 group-hover/item:opacity-100 transition-opacity shrink-0">
         {onSyncToTempo && (
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onSyncToTempo} title={isSynced ? 'Re-sync to Tempo' : 'Sync to Tempo'}>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onSyncToTempo} title={isSynced ? 'Re-export to Tempo' : 'Export to Tempo'}>
             {isSynced ? <RefreshCw className="w-3 h-3" strokeWidth={1.5} /> : <Upload className="w-3 h-3" strokeWidth={1.5} />}
           </Button>
         )}

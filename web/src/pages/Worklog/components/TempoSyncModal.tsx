@@ -3,6 +3,7 @@ import { Check, AlertCircle, Loader2 } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -11,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { tempo } from '@/services'
+import { IssueKeyCombobox } from './IssueKeyCombobox'
 import type { TempoSyncTarget, SyncWorklogsResponse } from '@/types'
 
 interface TempoSyncModalProps {
@@ -61,9 +63,10 @@ export function TempoSyncModal({
       const result = await tempo.validateIssue(key)
       setIssueValid(result.valid)
       setIssueSummary(result.valid ? (result.summary ?? '') : result.message)
-    } catch {
+    } catch (err) {
+      console.error('Issue validation error:', key, err)
       setIssueValid(false)
-      setIssueSummary('Validation failed')
+      setIssueSummary(String(err))
     } finally {
       setValidating(false)
     }
@@ -81,7 +84,10 @@ export function TempoSyncModal({
     <Dialog open={!!target} onOpenChange={(open) => { if (!open) onClose() }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Sync to Tempo</DialogTitle>
+          <DialogTitle>Export to Jira Tempo</DialogTitle>
+          <DialogDescription className="sr-only">
+            Export a single worklog entry to Tempo
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
@@ -101,17 +107,15 @@ export function TempoSyncModal({
           <div className="space-y-1.5">
             <Label htmlFor="issue-key">Issue Key</Label>
             <div className="flex items-center gap-2">
-              <Input
-                id="issue-key"
+              <IssueKeyCombobox
                 value={issueKey}
-                onChange={(e) => { setIssueKey(e.target.value); setIssueValid(null) }}
+                onChange={(v) => { setIssueKey(v); setIssueValid(null) }}
                 onBlur={validateIssue}
                 placeholder="e.g. PROJ-123"
-                className="flex-1"
               />
               {validating && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
-              {issueValid === true && <Check className="w-4 h-4 text-green-600" />}
-              {issueValid === false && <AlertCircle className="w-4 h-4 text-destructive" />}
+              {issueValid === true && <span title={issueSummary}><Check className="w-4 h-4 text-green-600" /></span>}
+              {issueValid === false && <span title={issueSummary}><AlertCircle className="w-4 h-4 text-destructive" /></span>}
             </div>
             {issueSummary && (
               <p className={`text-xs ${issueValid ? 'text-muted-foreground' : 'text-destructive'}`}>
@@ -155,9 +159,9 @@ export function TempoSyncModal({
                   : 'bg-red-50 text-red-800 border border-red-200'
             }`}>
               {syncResult.dry_run ? (
-                <p>Preview: {syncResult.total_entries} entry ready to sync ({hours}h to {issueKey})</p>
+                <p>Preview: {syncResult.total_entries} entry ready to export ({hours}h to {issueKey})</p>
               ) : syncResult.success ? (
-                <p>Synced successfully! {syncResult.successful} worklog uploaded.</p>
+                <p>Exported successfully! {syncResult.successful} worklog uploaded.</p>
               ) : (
                 <p>Failed: {syncResult.results[0]?.error_message ?? 'Unknown error'}</p>
               )}
@@ -175,7 +179,7 @@ export function TempoSyncModal({
           </Button>
           <Button onClick={handleSync} disabled={!canSync}>
             {syncing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-            Sync
+            Export
           </Button>
         </DialogFooter>
       </DialogContent>

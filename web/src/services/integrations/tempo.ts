@@ -11,6 +11,9 @@ import type {
   SyncWorklogsResponse,
   GetWorklogsRequest,
   ValidateIssueResponse,
+  JiraIssueDetail,
+  SearchIssuesRequest,
+  SearchIssuesResponse,
 } from '@/types'
 
 /**
@@ -24,7 +27,7 @@ export async function testConnection(): Promise<TempoSuccessResponse> {
  * Validate a Jira issue key
  */
 export async function validateIssue(issueKey: string): Promise<ValidateIssueResponse> {
-  return invokeAuth<ValidateIssueResponse>('validate_jira_issue', { issue_key: issueKey })
+  return invokeAuth<ValidateIssueResponse>('validate_jira_issue', { issueKey })
 }
 
 /**
@@ -46,4 +49,18 @@ export async function uploadWorklog(request: WorklogEntryRequest): Promise<Workl
  */
 export async function getWorklogs(request: GetWorklogsRequest): Promise<unknown[]> {
   return invokeAuth<unknown[]>('get_tempo_worklogs', { request })
+}
+
+/**
+ * Search Jira issues by summary or key
+ */
+export async function searchIssues(request: SearchIssuesRequest): Promise<SearchIssuesResponse> {
+  return invokeAuth<SearchIssuesResponse>('search_jira_issues', { request })
+}
+
+/**
+ * Batch get full issue details for multiple issue keys
+ */
+export async function batchGetIssues(issueKeys: string[]): Promise<JiraIssueDetail[]> {
+  return invokeAuth<JiraIssueDetail[]>('batch_get_jira_issues', { issueKeys })
 }
