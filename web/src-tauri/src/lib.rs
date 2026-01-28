@@ -11,7 +11,7 @@ pub use recap_core::services as core_services;
 
 use tauri::{
     menu::{Menu, MenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    tray::{MouseButton, MouseButtonState, TrayIconEvent},
     Emitter, Manager, RunEvent, WindowEvent,
 };
 
@@ -171,46 +171,42 @@ pub fn run() {
             let quit_item = MenuItem::with_id(app, "quit", "結束 Recap", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &sync_item, &separator, &status_item, &separator2, &quit_item])?;
 
-            // Create tray icon with ID for later access
-            let _tray = TrayIconBuilder::with_id("main-tray")
-                .icon(app.default_window_icon().unwrap().clone())
-                .icon_as_template(true)
-                .menu(&menu)
-                .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
+            // Get the tray icon created by tauri.conf.json and attach menu + events
+            let tray = app.tray_by_id("main-tray").expect("tray icon not found");
+            tray.set_menu(Some(menu))?;
+            tray.set_show_menu_on_left_click(false)?;
+            tray.on_menu_event(|app, event| match event.id.as_ref() {
+                "show" => {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
                     }
-                    "sync_now" => {
-                        // Emit event to frontend to trigger sync
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.emit("tray-sync-now", ());
-                        }
-                        log::info!("Tray: Sync now triggered");
+                }
+                "sync_now" => {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.emit("tray-sync-now", ());
                     }
-                    "quit" => {
-                        app.exit(0);
+                    log::info!("Tray: Sync now triggered");
+                }
+                "quit" => {
+                    app.exit(0);
+                }
+                _ => {}
+            });
+            tray.on_tray_icon_event(|tray, event| {
+                if let TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } = event
+                {
+                    let app = tray.app_handle();
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
                     }
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                })
-                .build(app)?;
+                }
+            });
 
             Ok(())
         })
