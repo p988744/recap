@@ -5,8 +5,6 @@
 import { invokeAuth } from '../client'
 import type {
   TempoSuccessResponse,
-  WorklogEntryRequest,
-  WorklogEntryResponse,
   SyncWorklogsRequest,
   SyncWorklogsResponse,
   GetWorklogsRequest,
@@ -35,13 +33,6 @@ export async function validateIssue(issueKey: string): Promise<ValidateIssueResp
  */
 export async function syncWorklogs(request: SyncWorklogsRequest): Promise<SyncWorklogsResponse> {
   return invokeAuth<SyncWorklogsResponse>('sync_worklogs_to_tempo', { request })
-}
-
-/**
- * Upload a single worklog entry
- */
-export async function uploadWorklog(request: WorklogEntryRequest): Promise<WorklogEntryResponse> {
-  return invokeAuth<WorklogEntryResponse>('upload_single_worklog', { request })
 }
 
 /**

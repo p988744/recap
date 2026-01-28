@@ -104,8 +104,6 @@ export type {
   GitLabProjectInfo,
   // Tempo
   TempoSuccessResponse,
-  WorklogEntryRequest,
-  WorklogEntryResponse,
   SyncWorklogsRequest,
   SyncWorklogsResponse,
   GetWorklogsRequest,

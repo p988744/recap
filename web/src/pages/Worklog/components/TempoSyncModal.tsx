@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Check, AlertCircle, Loader2, Sparkles } from 'lucide-react'
+import { Check, AlertCircle, Loader2 } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label'
 import { tempo } from '@/services'
 import * as jiraIssueCache from '@/services/jiraIssueCache'
 import { IssueKeyCombobox } from './IssueKeyCombobox'
+import { SummarizationProgress } from './SummarizationProgress'
 import type { TempoSyncTarget, SyncWorklogsResponse } from '@/types'
 
 interface TempoSyncModalProps {
@@ -174,21 +175,8 @@ export function TempoSyncModal({
           </div>
 
           {/* Summarization progress */}
-          {summarizeLog.length > 0 && !showResult && (
-            <div className="rounded-md p-3 text-xs bg-amber-50 text-amber-800 border border-amber-200 space-y-1">
-              <div className="flex items-center gap-1.5 font-medium">
-                <Sparkles className="w-3.5 h-3.5" />
-                LLM Processing
-              </div>
-              {summarizeLog.map((msg, i) => (
-                <div key={i} className="flex items-center gap-1.5">
-                  {i === summarizeLog.length - 1 && (summarizing || syncing) && (
-                    <Loader2 className="w-3 h-3 animate-spin shrink-0" />
-                  )}
-                  <span>{msg}</span>
-                </div>
-              ))}
-            </div>
+          {!showResult && (
+            <SummarizationProgress log={summarizeLog} active={summarizing || syncing} />
           )}
 
           {/* Result */}

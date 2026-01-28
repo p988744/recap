@@ -347,21 +347,18 @@ pub async fn sync_worklogs_to_tempo(
     )
     .map_err(|e| e.to_string())?;
 
-    // Batch-summarize all descriptions upfront (LLM or fallback)
-    let raw_descs: Vec<String> = request.entries.iter().map(|e| e.description.clone()).collect();
-    let clean_descs = summarize_descriptions(&db.pool, &claims.sub, &raw_descs).await;
-
     let mut results = Vec::new();
     let mut successful = 0;
     let mut failed = 0;
 
-    for (i, entry_req) in request.entries.iter().enumerate() {
-        let clean_desc = clean_descs.get(i).cloned().unwrap_or_default();
+    for entry_req in request.entries.iter() {
+        // Descriptions are already summarized by frontend (via summarize_tempo_description)
+        let desc = entry_req.description.clone();
         let entry = WorklogEntry {
             issue_key: entry_req.issue_key.clone(),
             date: entry_req.date.clone(),
             time_spent_seconds: entry_req.minutes * 60,
-            description: clean_desc.clone(),
+            description: desc.clone(),
             account_id: None,
         };
 
@@ -372,7 +369,7 @@ pub async fn sync_worklogs_to_tempo(
                 date: entry_req.date.clone(),
                 minutes: entry_req.minutes,
                 hours: entry_req.minutes as f64 / 60.0,
-                description: clean_desc,
+                description: desc,
                 status: "pending".to_string(),
                 error_message: None,
             });
@@ -447,81 +444,6 @@ pub async fn sync_worklogs_to_tempo(
         results,
         dry_run: request.dry_run,
     })
-}
-
-/// Upload a single worklog entry
-#[tauri::command]
-pub async fn upload_single_worklog(
-    state: State<'_, AppState>,
-    token: String,
-    request: WorklogEntryRequest,
-) -> Result<WorklogEntryResponse, String> {
-    let claims = verify_token(&token).map_err(|e| e.to_string())?;
-    let db = state.db.lock().await;
-
-    let (jira_url, jira_email, jira_pat, tempo_token) = get_user_config(&db.pool, &claims.sub).await?;
-
-    let use_tempo = tempo_token.is_some();
-
-    let mut uploader = WorklogUploader::new(
-        &jira_url,
-        &jira_pat.unwrap(),
-        jira_email.as_deref(),
-        "pat",
-        tempo_token.as_deref(),
-    )
-    .map_err(|e| e.to_string())?;
-
-    let clean_descs = summarize_descriptions(&db.pool, &claims.sub, &[request.description.clone()]).await;
-    let clean_desc = clean_descs.into_iter().next().unwrap_or_default();
-    let entry = WorklogEntry {
-        issue_key: request.issue_key.clone(),
-        date: request.date.clone(),
-        time_spent_seconds: request.minutes * 60,
-        description: clean_desc,
-        account_id: None,
-    };
-
-    match uploader.upload_worklog(entry, use_tempo).await {
-        Ok(result) => {
-            let worklog_id = result.id.clone().or(result.tempo_worklog_id.map(|id| id.to_string()));
-
-            // Update synced_to_tempo status in database
-            if let Some(ref id) = worklog_id {
-                let _ = sqlx::query(
-                    r#"
-                    UPDATE work_items
-                    SET synced_to_tempo = 1,
-                        tempo_worklog_id = ?,
-                        synced_at = CURRENT_TIMESTAMP,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE user_id = ?
-                      AND jira_issue_key = ?
-                      AND date = ?
-                      AND synced_to_tempo = 0
-                    "#,
-                )
-                .bind(id)
-                .bind(&claims.sub)
-                .bind(&request.issue_key)
-                .bind(&request.date)
-                .execute(&db.pool)
-                .await;
-            }
-
-            Ok(WorklogEntryResponse {
-                id: worklog_id,
-                issue_key: request.issue_key,
-                date: request.date,
-                minutes: request.minutes,
-                hours: request.minutes as f64 / 60.0,
-                description: request.description,
-                status: "success".to_string(),
-                error_message: None,
-            })
-        }
-        Err(e) => Err(e.to_string()),
-    }
 }
 
 /// Get worklogs from Tempo for a date range

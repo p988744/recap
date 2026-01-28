@@ -1,5 +1,5 @@
 import { Fragment, useState, useEffect, useCallback } from 'react'
-import { Check, AlertCircle, Loader2, Sparkles } from 'lucide-react'
+import { Check, AlertCircle, Loader2 } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -13,6 +13,8 @@ import { Input } from '@/components/ui/input'
 import { tempo } from '@/services'
 import * as jiraIssueCache from '@/services/jiraIssueCache'
 import { IssueKeyCombobox } from './IssueKeyCombobox'
+import { SummarizationProgress } from './SummarizationProgress'
+import { useSummarizeAction } from '../hooks/useSummarizeAction'
 import type { BatchSyncRow, SyncWorklogsResponse } from '@/types'
 
 interface TempoWeekSyncModalProps {
@@ -50,16 +52,16 @@ export function TempoWeekSyncModal({
 }: TempoWeekSyncModalProps) {
   const [rows, setRows] = useState<BatchSyncRow[]>([])
   const [validation, setValidation] = useState<ValidationState>({})
-  const [summarizing, setSummarizing] = useState(false)
-  const [summarizeLog, setSummarizeLog] = useState<string[]>([])
+
+  const { summarizing, summarizeLog, resetLog, handleAction } = useSummarizeAction({ rows, onSync })
 
   useEffect(() => {
     if (open) {
       setRows(initialRows)
       setValidation({})
-      setSummarizeLog([])
+      resetLog()
     }
-  }, [open, initialRows])
+  }, [open, initialRows, resetLog])
 
   const updateRow = useCallback((index: number, field: keyof BatchSyncRow, value: string | number) => {
     setRows((prev) =>
@@ -110,43 +112,7 @@ export function TempoWeekSyncModal({
     return acc
   }, {})
 
-  // Flatten grouped structure: sorted dates with their row indices
   const sortedDates = Object.keys(groupedByDate).sort()
-
-  const handleAction = useCallback(async (dryRun: boolean) => {
-    const filled = rows.filter((r) => r.issueKey.trim() !== '')
-    if (filled.length === 0) return
-
-    // Step 1: Summarize descriptions via LLM
-    setSummarizing(true)
-    setSummarizeLog([`Summarizing ${filled.length} descriptions with LLM...`])
-    const summarizedRows = [...rows]
-    let successCount = 0
-    let fallbackCount = 0
-
-    for (let i = 0; i < summarizedRows.length; i++) {
-      const row = summarizedRows[i]
-      if (!row.issueKey.trim() || !row.description.trim()) continue
-      try {
-        const summary = await tempo.summarizeDescription(row.description)
-        summarizedRows[i] = { ...row, description: summary }
-        successCount++
-        setSummarizeLog(prev => [...prev, `✓ ${row.projectName}: "${summary}"`])
-      } catch {
-        fallbackCount++
-        setSummarizeLog(prev => [...prev, `⚠ ${row.projectName}: fallback`])
-      }
-    }
-
-    setSummarizeLog(prev => [...prev,
-      `Done: ${successCount} summarized, ${fallbackCount} fallback`,
-      dryRun ? 'Generating preview...' : 'Uploading to Tempo...',
-    ])
-    setSummarizing(false)
-
-    // Step 2: Send to sync
-    await onSync(summarizedRows, dryRun)
-  }, [rows, onSync])
 
   const totalHours = rows.reduce((sum, r) => sum + r.hours, 0)
   const filledRows = rows.filter((r) => r.issueKey.trim() !== '')
@@ -259,21 +225,8 @@ export function TempoWeekSyncModal({
           )}
 
           {/* Summarization progress */}
-          {summarizeLog.length > 0 && !showResult && (
-            <div className="rounded-md p-3 text-xs bg-amber-50 text-amber-800 border border-amber-200 space-y-1 max-h-32 overflow-y-auto">
-              <div className="flex items-center gap-1.5 font-medium">
-                <Sparkles className="w-3.5 h-3.5" />
-                LLM Processing
-              </div>
-              {summarizeLog.map((msg, i) => (
-                <div key={i} className="flex items-center gap-1.5">
-                  {i === summarizeLog.length - 1 && (summarizing || syncing) && (
-                    <Loader2 className="w-3 h-3 animate-spin shrink-0" />
-                  )}
-                  <span>{msg}</span>
-                </div>
-              ))}
-            </div>
+          {!showResult && (
+            <SummarizationProgress log={summarizeLog} active={summarizing || syncing} />
           )}
 
           {/* Result */}

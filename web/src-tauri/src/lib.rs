@@ -90,7 +90,6 @@ pub fn run() {
             commands::tempo::test_tempo_connection,
             commands::tempo::validate_jira_issue,
             commands::tempo::sync_worklogs_to_tempo,
-            commands::tempo::upload_single_worklog,
             commands::tempo::get_tempo_worklogs,
             commands::tempo::search_jira_issues,
             commands::tempo::batch_get_jira_issues,
