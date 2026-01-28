@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
-import { X, GitBranch, Bot, FolderOpen } from 'lucide-react'
+import { GitBranch, Bot, FolderOpen } from 'lucide-react'
 import { Card } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { projects as projectsService } from '@/services'
 import type { ProjectDetail, ProjectDirectories } from '@/types'
 
@@ -44,36 +50,15 @@ export function ProjectSourcePanel({ projectName, onClose }: ProjectSourcePanelP
   const totalSessions = claudeDirs.reduce((sum, d) => sum + d.session_count, 0)
 
   return (
-    <>
-      {/* Backdrop */}
-      {isOpen && (
-        <div
-          className="fixed inset-0 bg-black/20 z-40 transition-opacity"
-          onClick={onClose}
-        />
-      )}
-
-      {/* Panel */}
-      <div
-        className={`fixed top-0 right-0 h-full w-[420px] max-w-[90vw] bg-background border-l border-border z-50 shadow-xl
-          transform transition-transform duration-200 ease-out
-          ${isOpen ? 'translate-x-0' : 'translate-x-full'}`}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-          <h3 className="font-display text-lg text-foreground truncate">
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose() }}>
+      <DialogContent className="max-w-md max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="truncate">
             {detail?.display_name || detail?.project_name || projectName || ''}
-          </h3>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded hover:bg-foreground/10 transition-colors shrink-0 ml-2"
-          >
-            <X className="w-4 h-4 text-muted-foreground" />
-          </button>
-        </div>
+          </DialogTitle>
+        </DialogHeader>
 
-        {/* Content */}
-        <div className="overflow-y-auto h-[calc(100%-57px)] px-5 py-5 space-y-5">
+        <div className="space-y-4 pt-2">
           {loading ? (
             <div className="flex items-center justify-center h-32">
               <div className="w-5 h-5 border border-border border-t-charcoal/60 rounded-full animate-spin" />
@@ -127,8 +112,8 @@ export function ProjectSourcePanel({ projectName, onClose }: ProjectSourcePanelP
             </>
           ) : null}
         </div>
-      </div>
-    </>
+      </DialogContent>
+    </Dialog>
   )
 }
 
