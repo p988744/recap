@@ -483,6 +483,45 @@ impl Database {
             .execute(&self.pool)
             .await?;
 
+        // Create project_issue_mappings table for Tempo sync
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS project_issue_mappings (
+                project_path TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                jira_issue_key TEXT NOT NULL,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (project_path, user_id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Create worklog_sync_records table for tracking Tempo sync status
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS worklog_sync_records (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                project_path TEXT NOT NULL,
+                date TEXT NOT NULL,
+                jira_issue_key TEXT NOT NULL,
+                hours REAL NOT NULL,
+                description TEXT,
+                tempo_worklog_id TEXT,
+                synced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, project_path, date)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_sync_records_user_date ON worklog_sync_records(user_id, date)")
+            .execute(&self.pool)
+            .await?;
+
         log::info!("Database migrations completed");
         Ok(())
     }

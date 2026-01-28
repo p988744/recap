@@ -1,18 +1,64 @@
+import { useMemo } from 'react'
 import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/lib/auth'
-import { useWorklog } from './hooks'
-import { DateRangeBar, DaySection } from './components'
+import { useWorklog, useTempoSync } from './hooks'
+import { DateRangeBar, DaySection, TempoSyncModal, TempoBatchSyncModal } from './components'
 import {
   CreateModal,
   EditModal,
   DeleteModal,
 } from '../WorkItems/components/Modals'
+import type { BatchSyncRow } from '@/types'
 
 export function WorklogPage() {
   const { isAuthenticated } = useAuth()
 
   const wl = useWorklog(isAuthenticated)
+
+  const ts = useTempoSync(
+    isAuthenticated,
+    wl.startDate,
+    wl.endDate,
+    wl.days,
+    wl.fetchOverview,
+  )
+
+  // Build batch sync rows for the selected day
+  const batchRows: BatchSyncRow[] = useMemo(() => {
+    if (!ts.batchSyncDate) return []
+    const day = wl.days.find((d) => d.date === ts.batchSyncDate)
+    if (!day) return []
+
+    const rows: BatchSyncRow[] = []
+    for (const p of day.projects) {
+      // Skip already synced projects
+      const existing = ts.getSyncRecord(p.project_path, day.date)
+      if (existing) continue
+      rows.push({
+        projectPath: p.project_path,
+        projectName: p.project_name,
+        issueKey: ts.getMappedIssueKey(p.project_path),
+        hours: p.total_hours,
+        description: p.daily_summary ?? '',
+        isManual: false,
+      })
+    }
+    for (const m of day.manual_items) {
+      const existing = ts.getSyncRecord(`manual:${m.id}`, day.date)
+      if (existing) continue
+      rows.push({
+        projectPath: `manual:${m.id}`,
+        projectName: m.title,
+        issueKey: ts.getMappedIssueKey(`manual:${m.id}`),
+        hours: m.hours,
+        description: m.description ?? m.title,
+        isManual: true,
+        manualItemId: m.id,
+      })
+    }
+    return rows
+  }, [ts.batchSyncDate, wl.days, ts])
 
   // Loading state
   if (wl.loading) {
@@ -91,12 +137,15 @@ export function WorklogPage() {
               onAddManualItem={wl.openCreateModal}
               onEditManualItem={wl.openEditManualItem}
               onDeleteManualItem={wl.confirmDeleteManualItem}
+              getSyncRecord={ts.getSyncRecord}
+              onSyncProject={ts.openSyncModal}
+              onSyncDay={ts.openBatchSyncModal}
             />
           ))
         )}
       </section>
 
-      {/* Modals — reuse from WorkItems */}
+      {/* CRUD Modals — reuse from WorkItems */}
       <CreateModal
         open={wl.showCreateModal}
         onOpenChange={(open) => { if (!open) wl.closeCreateModal() }}
@@ -121,6 +170,27 @@ export function WorklogPage() {
         itemToDelete={wl.itemToDelete}
         onConfirm={wl.handleDelete}
         onCancel={wl.closeDeleteConfirm}
+      />
+
+      {/* Tempo Sync Modals */}
+      <TempoSyncModal
+        target={ts.syncTarget}
+        defaultIssueKey={ts.syncTarget ? ts.getMappedIssueKey(ts.syncTarget.projectPath) : ''}
+        syncing={ts.syncing}
+        syncResult={ts.syncResult}
+        onSync={ts.executeSingleSync}
+        onClose={ts.closeSyncModal}
+      />
+
+      <TempoBatchSyncModal
+        open={!!ts.batchSyncDate}
+        date={ts.batchSyncDate ?? ''}
+        weekday={ts.batchSyncWeekday}
+        initialRows={batchRows}
+        syncing={ts.syncing}
+        syncResult={ts.syncResult}
+        onSync={ts.executeBatchSync}
+        onClose={ts.closeBatchSyncModal}
       />
     </div>
   )

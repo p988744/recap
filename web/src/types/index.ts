@@ -139,6 +139,17 @@ export type {
   WorklogOverviewResponse,
 } from './worklog'
 
+// Worklog Sync types
+export type {
+  ProjectIssueMapping,
+  WorklogSyncRecord,
+  SaveMappingRequest,
+  GetSyncRecordsRequest,
+  SaveSyncRecordRequest,
+  TempoSyncTarget,
+  BatchSyncRow,
+} from './worklog-sync'
+
 // LLM Usage types
 export type {
   LlmUsageStats,

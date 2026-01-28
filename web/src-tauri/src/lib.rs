@@ -116,6 +116,11 @@ pub fn run() {
             // Worklog
             commands::snapshots::get_worklog_overview,
             commands::snapshots::get_hourly_breakdown,
+            // Worklog Sync
+            commands::worklog_sync::get_project_issue_mappings,
+            commands::worklog_sync::save_project_issue_mapping,
+            commands::worklog_sync::get_worklog_sync_records,
+            commands::worklog_sync::save_worklog_sync_record,
             // LLM Usage
             commands::llm_usage::get_llm_usage_stats,
             commands::llm_usage::get_llm_usage_daily,

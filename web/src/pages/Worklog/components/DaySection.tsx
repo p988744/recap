@@ -1,7 +1,8 @@
-import { Plus } from 'lucide-react'
+import { Plus, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { WorklogDay } from '@/types/worklog'
 import type { HourlyBreakdownItem } from '@/types/worklog'
+import type { WorklogSyncRecord, TempoSyncTarget } from '@/types'
 import { ProjectCard } from './ProjectCard'
 import { ManualItemCard } from './ManualItemCard'
 
@@ -14,6 +15,9 @@ interface DaySectionProps {
   onAddManualItem: (date: string) => void
   onEditManualItem: (id: string) => void
   onDeleteManualItem: (id: string) => void
+  getSyncRecord?: (projectPath: string, date: string) => WorklogSyncRecord | undefined
+  onSyncProject?: (target: TempoSyncTarget) => void
+  onSyncDay?: (date: string, weekday: string) => void
 }
 
 export function DaySection({
@@ -25,6 +29,9 @@ export function DaySection({
   onAddManualItem,
   onEditManualItem,
   onDeleteManualItem,
+  getSyncRecord,
+  onSyncProject,
+  onSyncDay,
 }: DaySectionProps) {
   const isEmpty = day.projects.length === 0 && day.manual_items.length === 0
 
@@ -38,21 +45,34 @@ export function DaySection({
           </h2>
           <span className="text-xs text-muted-foreground">{day.weekday}</span>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-          onClick={() => onAddManualItem(day.date)}
-        >
-          <Plus className="w-3 h-3 mr-1" strokeWidth={1.5} />
-          新增
-        </Button>
+        <div className="flex items-center gap-1">
+          {onSyncDay && !isEmpty && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+              onClick={() => onSyncDay(day.date, day.weekday)}
+            >
+              <Upload className="w-3 h-3 mr-1" strokeWidth={1.5} />
+              Sync Day
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+            onClick={() => onAddManualItem(day.date)}
+          >
+            <Plus className="w-3 h-3 mr-1" strokeWidth={1.5} />
+            Add
+          </Button>
+        </div>
       </div>
 
       {/* Content */}
       {isEmpty ? (
         <div className="py-6 text-center">
-          <p className="text-sm text-muted-foreground">尚無工作紀錄</p>
+          <p className="text-sm text-muted-foreground">No records</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -70,6 +90,20 @@ export function DaySection({
                 hourlyData={isExpanded ? hourlyData : []}
                 hourlyLoading={isExpanded ? hourlyLoading : false}
                 onToggleHourly={() => onToggleHourly(day.date, project.project_path)}
+                syncRecord={getSyncRecord?.(project.project_path, day.date)}
+                onSyncToTempo={
+                  onSyncProject
+                    ? () =>
+                        onSyncProject({
+                          projectPath: project.project_path,
+                          projectName: project.project_name,
+                          date: day.date,
+                          weekday: day.weekday,
+                          hours: project.total_hours,
+                          description: project.daily_summary ?? '',
+                        })
+                    : undefined
+                }
               />
             )
           })}
@@ -81,6 +115,20 @@ export function DaySection({
               item={item}
               onEdit={() => onEditManualItem(item.id)}
               onDelete={() => onDeleteManualItem(item.id)}
+              syncRecord={getSyncRecord?.(`manual:${item.id}`, day.date)}
+              onSyncToTempo={
+                onSyncProject
+                  ? () =>
+                      onSyncProject({
+                        projectPath: `manual:${item.id}`,
+                        projectName: item.title,
+                        date: day.date,
+                        weekday: day.weekday,
+                        hours: item.hours,
+                        description: item.description ?? item.title,
+                      })
+                  : undefined
+              }
             />
           ))}
         </div>
