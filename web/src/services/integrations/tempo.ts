@@ -64,3 +64,11 @@ export async function searchIssues(request: SearchIssuesRequest): Promise<Search
 export async function batchGetIssues(issueKeys: string[]): Promise<JiraIssueDetail[]> {
   return invokeAuth<JiraIssueDetail[]>('batch_get_jira_issues', { issueKeys })
 }
+
+/**
+ * Summarize a single worklog description using LLM (with fallback)
+ */
+export async function summarizeDescription(description: string): Promise<string> {
+  const res = await invokeAuth<{ summary: string }>('summarize_tempo_description', { description })
+  return res.summary
+}

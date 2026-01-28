@@ -1,5 +1,5 @@
 import { Fragment, useState, useEffect, useCallback } from 'react'
-import { Check, AlertCircle, Loader2 } from 'lucide-react'
+import { Check, AlertCircle, Loader2, Sparkles } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -11,6 +11,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { tempo } from '@/services'
+import * as jiraIssueCache from '@/services/jiraIssueCache'
 import { IssueKeyCombobox } from './IssueKeyCombobox'
 import type { BatchSyncRow, SyncWorklogsResponse } from '@/types'
 
@@ -49,11 +50,14 @@ export function TempoWeekSyncModal({
 }: TempoWeekSyncModalProps) {
   const [rows, setRows] = useState<BatchSyncRow[]>([])
   const [validation, setValidation] = useState<ValidationState>({})
+  const [summarizing, setSummarizing] = useState(false)
+  const [summarizeLog, setSummarizeLog] = useState<string[]>([])
 
   useEffect(() => {
     if (open) {
       setRows(initialRows)
       setValidation({})
+      setSummarizeLog([])
     }
   }, [open, initialRows])
 
@@ -109,12 +113,44 @@ export function TempoWeekSyncModal({
   // Flatten grouped structure: sorted dates with their row indices
   const sortedDates = Object.keys(groupedByDate).sort()
 
+  const handleAction = useCallback(async (dryRun: boolean) => {
+    const filled = rows.filter((r) => r.issueKey.trim() !== '')
+    if (filled.length === 0) return
+
+    // Step 1: Summarize descriptions via LLM
+    setSummarizing(true)
+    setSummarizeLog([`Summarizing ${filled.length} descriptions with LLM...`])
+    const summarizedRows = [...rows]
+    let successCount = 0
+    let fallbackCount = 0
+
+    for (let i = 0; i < summarizedRows.length; i++) {
+      const row = summarizedRows[i]
+      if (!row.issueKey.trim() || !row.description.trim()) continue
+      try {
+        const summary = await tempo.summarizeDescription(row.description)
+        summarizedRows[i] = { ...row, description: summary }
+        successCount++
+        setSummarizeLog(prev => [...prev, `✓ ${row.projectName}: "${summary}"`])
+      } catch {
+        fallbackCount++
+        setSummarizeLog(prev => [...prev, `⚠ ${row.projectName}: fallback`])
+      }
+    }
+
+    setSummarizeLog(prev => [...prev,
+      `Done: ${successCount} summarized, ${fallbackCount} fallback`,
+      dryRun ? 'Generating preview...' : 'Uploading to Tempo...',
+    ])
+    setSummarizing(false)
+
+    // Step 2: Send to sync
+    await onSync(summarizedRows, dryRun)
+  }, [rows, onSync])
+
   const totalHours = rows.reduce((sum, r) => sum + r.hours, 0)
   const filledRows = rows.filter((r) => r.issueKey.trim() !== '')
-  const canSync = filledRows.length > 0 && !syncing
-
-  const handlePreview = () => onSync(rows, true)
-  const handleSync = () => onSync(rows, false)
+  const canSync = filledRows.length > 0 && !syncing && !summarizing
 
   const showResult = syncResult !== null
 
@@ -222,6 +258,24 @@ export function TempoWeekSyncModal({
             </div>
           )}
 
+          {/* Summarization progress */}
+          {summarizeLog.length > 0 && !showResult && (
+            <div className="rounded-md p-3 text-xs bg-amber-50 text-amber-800 border border-amber-200 space-y-1 max-h-32 overflow-y-auto">
+              <div className="flex items-center gap-1.5 font-medium">
+                <Sparkles className="w-3.5 h-3.5" />
+                LLM Processing
+              </div>
+              {summarizeLog.map((msg, i) => (
+                <div key={i} className="flex items-center gap-1.5">
+                  {i === summarizeLog.length - 1 && (summarizing || syncing) && (
+                    <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+                  )}
+                  <span>{msg}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Result */}
           {showResult && (
             <div className={`rounded-md p-3 text-sm ${
@@ -232,7 +286,39 @@ export function TempoWeekSyncModal({
                   : 'bg-red-50 text-red-800 border border-red-200'
             }`}>
               {syncResult.dry_run ? (
-                <p>Preview: {syncResult.total_entries} entries ready ({totalHours.toFixed(1)}h total)</p>
+                <div className="space-y-2">
+                  <p className="font-medium">Preview — will send to Tempo ({syncResult.total_entries} entries, {totalHours.toFixed(1)}h):</p>
+                  <div className="bg-white/60 rounded overflow-hidden">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b">
+                          <th className="text-left px-2 py-1 font-medium text-blue-600">Issue</th>
+                          <th className="text-left px-2 py-1 font-medium text-blue-600">Date</th>
+                          <th className="text-left px-2 py-1 font-medium text-blue-600">Time</th>
+                          <th className="text-left px-2 py-1 font-medium text-blue-600">Description</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {syncResult.results.map((r, i) => {
+                          const cached = jiraIssueCache.get(r.issue_key)
+                          return (
+                            <tr key={i} className="border-b last:border-0">
+                              <td className="px-2 py-1">
+                                <span className="font-mono">{r.issue_key}</span>
+                                {cached?.summary && (
+                                  <span className="ml-1 text-blue-600/70">{cached.summary}</span>
+                                )}
+                              </td>
+                              <td className="px-2 py-1">{r.date}</td>
+                              <td className="px-2 py-1">{r.hours}h</td>
+                              <td className="px-2 py-1 break-all">{r.description}</td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               ) : (
                 <p>
                   {syncResult.successful} exported, {syncResult.failed} failed
@@ -247,12 +333,12 @@ export function TempoWeekSyncModal({
 
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button variant="outline" onClick={handlePreview} disabled={!canSync}>
-            {syncing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+          <Button variant="outline" onClick={() => handleAction(true)} disabled={!canSync}>
+            {(summarizing || syncing) ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
             Preview All
           </Button>
-          <Button onClick={handleSync} disabled={!canSync}>
-            {syncing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+          <Button onClick={() => handleAction(false)} disabled={!canSync}>
+            {(summarizing || syncing) ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
             Export All
           </Button>
         </DialogFooter>

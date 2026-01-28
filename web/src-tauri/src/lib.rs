@@ -94,6 +94,7 @@ pub fn run() {
             commands::tempo::get_tempo_worklogs,
             commands::tempo::search_jira_issues,
             commands::tempo::batch_get_jira_issues,
+            commands::tempo::summarize_tempo_description,
             // Users
             commands::users::get_profile,
             commands::users::update_profile,

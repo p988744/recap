@@ -138,7 +138,7 @@ export function Layout() {
 
       {/* Global sync notification toast */}
       {syncValue.syncInfo && (
-        <div className="fixed top-4 right-4 p-3 bg-sage/10 border border-sage/30 text-sage text-sm rounded-lg animate-fade-up shadow-sm z-50">
+        <div className="fixed bottom-4 right-4 p-3 bg-sage text-white text-sm rounded-lg animate-fade-up shadow-md z-50">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4" strokeWidth={1.5} />
             {syncValue.syncInfo}

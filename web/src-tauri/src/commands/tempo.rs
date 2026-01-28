@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use recap_core::auth::verify_token;
+use recap_core::services::llm::{create_llm_service, parse_error_usage};
+use recap_core::services::llm_usage::save_usage_log;
 use recap_core::services::tempo::{JiraAuthType, JiraClient, TempoClient, WorklogEntry, WorklogUploader};
 
 use super::AppState;
@@ -105,6 +107,11 @@ pub struct JiraIssueDetail {
     pub issue_type: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct SummarizeDescriptionResponse {
+    pub summary: String,
+}
+
 // Helper function to get user's Jira/Tempo config
 async fn get_user_config(
     pool: &sqlx::SqlitePool,
@@ -130,10 +137,8 @@ async fn get_user_config(
 
 // Helpers
 
-/// Simplify a markdown description for Tempo upload.
-/// Strips markdown formatting, collapses to a single-line summary + condensed bullet points,
-/// and truncates to a maximum length.
-fn sanitize_description(raw: &str, max_len: usize) -> String {
+/// Simple fallback: strip markdown, keep first line, truncate.
+fn sanitize_description_simple(raw: &str, max_len: usize) -> String {
     let mut lines: Vec<String> = Vec::new();
 
     for line in raw.lines() {
@@ -142,13 +147,11 @@ fn sanitize_description(raw: &str, max_len: usize) -> String {
             continue;
         }
 
-        // Strip markdown bullet markers
         let stripped = trimmed
             .trim_start_matches("- ")
             .trim_start_matches("* ")
             .trim_start_matches("• ");
 
-        // Strip bold / italic / backtick markers
         let cleaned: String = stripped
             .replace("**", "")
             .replace('*', "")
@@ -164,15 +167,7 @@ fn sanitize_description(raw: &str, max_len: usize) -> String {
         return String::new();
     }
 
-    // First line is the summary; remaining become "; "-separated list
-    let summary = lines[0].clone();
-    if lines.len() == 1 {
-        return truncate_str(&summary, max_len);
-    }
-
-    let details = lines[1..].join("; ");
-    let full = format!("{} — {}", summary, details);
-    truncate_str(&full, max_len)
+    truncate_str(&lines[0], max_len)
 }
 
 fn truncate_str(s: &str, max_len: usize) -> String {
@@ -184,7 +179,62 @@ fn truncate_str(s: &str, max_len: usize) -> String {
 }
 
 /// Max description length for Tempo worklog
-const MAX_DESCRIPTION_LEN: usize = 255;
+const MAX_DESCRIPTION_LEN: usize = 50;
+
+/// Summarize descriptions using LLM, with fallback to simple sanitization.
+/// Returns a Vec of sanitized descriptions in the same order as inputs.
+async fn summarize_descriptions(
+    pool: &sqlx::SqlitePool,
+    user_id: &str,
+    descriptions: &[String],
+) -> Vec<String> {
+    // Try creating LLM service
+    let llm = match create_llm_service(pool, user_id).await {
+        Ok(svc) if svc.is_configured() => Some(svc),
+        _ => None,
+    };
+
+    let mut results = Vec::with_capacity(descriptions.len());
+
+    for desc in descriptions {
+        if desc.trim().is_empty() {
+            results.push(String::new());
+            continue;
+        }
+
+        // If already short enough (original fits within limit), skip LLM
+        let stripped = desc.trim();
+        if stripped.lines().count() <= 1 && stripped.chars().count() <= MAX_DESCRIPTION_LEN {
+            results.push(sanitize_description_simple(desc, MAX_DESCRIPTION_LEN));
+            continue;
+        }
+
+        // Try LLM
+        if let Some(ref llm) = llm {
+            match llm.summarize_worklog(desc).await {
+                Ok((summary, usage)) => {
+                    // Save usage log (best-effort)
+                    let _ = save_usage_log(pool, user_id, &usage).await;
+                    let trimmed = truncate_str(summary.trim(), MAX_DESCRIPTION_LEN);
+                    results.push(trimmed);
+                    continue;
+                }
+                Err(err) => {
+                    // Save error usage if available
+                    if let Some(usage) = parse_error_usage(&err) {
+                        let _ = save_usage_log(pool, user_id, &usage).await;
+                    }
+                    log::warn!("LLM worklog summary failed, falling back: {}", err);
+                }
+            }
+        }
+
+        // Fallback
+        results.push(sanitize_description_simple(desc, MAX_DESCRIPTION_LEN));
+    }
+
+    results
+}
 
 // Commands
 
@@ -297,12 +347,16 @@ pub async fn sync_worklogs_to_tempo(
     )
     .map_err(|e| e.to_string())?;
 
+    // Batch-summarize all descriptions upfront (LLM or fallback)
+    let raw_descs: Vec<String> = request.entries.iter().map(|e| e.description.clone()).collect();
+    let clean_descs = summarize_descriptions(&db.pool, &claims.sub, &raw_descs).await;
+
     let mut results = Vec::new();
     let mut successful = 0;
     let mut failed = 0;
 
-    for entry_req in &request.entries {
-        let clean_desc = sanitize_description(&entry_req.description, MAX_DESCRIPTION_LEN);
+    for (i, entry_req) in request.entries.iter().enumerate() {
+        let clean_desc = clean_descs.get(i).cloned().unwrap_or_default();
         let entry = WorklogEntry {
             issue_key: entry_req.issue_key.clone(),
             date: entry_req.date.clone(),
@@ -318,7 +372,7 @@ pub async fn sync_worklogs_to_tempo(
                 date: entry_req.date.clone(),
                 minutes: entry_req.minutes,
                 hours: entry_req.minutes as f64 / 60.0,
-                description: entry_req.description.clone(),
+                description: clean_desc,
                 status: "pending".to_string(),
                 error_message: None,
             });
@@ -418,7 +472,8 @@ pub async fn upload_single_worklog(
     )
     .map_err(|e| e.to_string())?;
 
-    let clean_desc = sanitize_description(&request.description, MAX_DESCRIPTION_LEN);
+    let clean_descs = summarize_descriptions(&db.pool, &claims.sub, &[request.description.clone()]).await;
+    let clean_desc = clean_descs.into_iter().next().unwrap_or_default();
     let entry = WorklogEntry {
         issue_key: request.issue_key.clone(),
         date: request.date.clone(),
@@ -570,4 +625,21 @@ pub async fn batch_get_jira_issues(
             issue_type: issue.fields.issue_type.map(|t| t.name),
         })
         .collect())
+}
+
+/// Summarize a single worklog description using LLM (or fallback).
+/// Used by frontend to show per-entry progress before syncing.
+#[tauri::command]
+pub async fn summarize_tempo_description(
+    state: State<'_, AppState>,
+    token: String,
+    description: String,
+) -> Result<SummarizeDescriptionResponse, String> {
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
+
+    let descs = summarize_descriptions(&db.pool, &claims.sub, &[description]).await;
+    let summary = descs.into_iter().next().unwrap_or_default();
+
+    Ok(SummarizeDescriptionResponse { summary })
 }

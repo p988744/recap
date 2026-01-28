@@ -246,6 +246,28 @@ Git Commits:
         self.complete_with_usage(&prompt, &purpose).await
     }
 
+    /// Summarize a worklog description for Tempo upload.
+    /// Produces a concise single-line summary (max ~50 chars) suitable for Tempo worklog description.
+    pub async fn summarize_worklog(&self, description: &str) -> Result<(String, LlmUsageRecord), String> {
+        let prompt = format!(
+            r#"請將以下工作日誌濃縮成一句簡短摘要（最多50字），適合作為 Tempo 工作紀錄的 description。
+
+要求：
+1. 只輸出一行文字，不要換行、不要編號、不要 markdown
+2. 使用繁體中文
+3. 用動詞開頭描述主要完成的工作
+4. 省略技術細節，保留核心成果
+
+工作日誌：
+{}
+
+直接輸出摘要，不要加任何前綴或說明。"#,
+            description.chars().take(2000).collect::<String>()
+        );
+
+        self.complete_with_usage(&prompt, "worklog_description").await
+    }
+
     /// Send completion request to LLM and return usage record
     async fn complete_with_usage(&self, prompt: &str, purpose: &str) -> Result<(String, LlmUsageRecord), String> {
         let start = Instant::now();

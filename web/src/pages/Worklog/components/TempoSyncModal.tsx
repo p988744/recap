@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Check, AlertCircle, Loader2 } from 'lucide-react'
+import { Check, AlertCircle, Loader2, Sparkles } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { tempo } from '@/services'
+import * as jiraIssueCache from '@/services/jiraIssueCache'
 import { IssueKeyCombobox } from './IssueKeyCombobox'
 import type { TempoSyncTarget, SyncWorklogsResponse } from '@/types'
 
@@ -38,6 +39,9 @@ export function TempoSyncModal({
   const [validating, setValidating] = useState(false)
   const [issueValid, setIssueValid] = useState<boolean | null>(null)
   const [issueSummary, setIssueSummary] = useState('')
+  // Summarization progress
+  const [summarizing, setSummarizing] = useState(false)
+  const [summarizeLog, setSummarizeLog] = useState<string[]>([])
 
   // Initialize form when target changes
   useEffect(() => {
@@ -47,6 +51,7 @@ export function TempoSyncModal({
       setDescription(target.description)
       setIssueValid(null)
       setIssueSummary('')
+      setSummarizeLog([])
     }
   }, [target, defaultIssueKey])
 
@@ -72,10 +77,29 @@ export function TempoSyncModal({
     }
   }, [issueKey])
 
-  const handlePreview = () => onSync(issueKey.trim(), hours, description, true)
-  const handleSync = () => onSync(issueKey.trim(), hours, description, false)
+  const handleAction = useCallback(async (dryRun: boolean) => {
+    const key = issueKey.trim()
+    if (!key || hours <= 0) return
 
-  const canSync = issueKey.trim() !== '' && hours > 0 && !syncing
+    // Step 1: Summarize description via LLM
+    setSummarizing(true)
+    setSummarizeLog(['Summarizing description with LLM...'])
+    let finalDesc = description
+    try {
+      const summary = await tempo.summarizeDescription(description)
+      finalDesc = summary
+      setSummarizeLog(prev => [...prev, `✓ "${summary}"`])
+    } catch {
+      setSummarizeLog(prev => [...prev, '⚠ LLM unavailable, using fallback'])
+    }
+
+    // Step 2: Send to sync
+    setSummarizeLog(prev => [...prev, dryRun ? 'Generating preview...' : 'Uploading to Tempo...'])
+    setSummarizing(false)
+    await onSync(key, hours, finalDesc, dryRun)
+  }, [issueKey, hours, description, onSync])
+
+  const canSync = issueKey.trim() !== '' && hours > 0 && !syncing && !summarizing
   const showResult = syncResult !== null
 
   if (!target) return null
@@ -149,6 +173,24 @@ export function TempoSyncModal({
             />
           </div>
 
+          {/* Summarization progress */}
+          {summarizeLog.length > 0 && !showResult && (
+            <div className="rounded-md p-3 text-xs bg-amber-50 text-amber-800 border border-amber-200 space-y-1">
+              <div className="flex items-center gap-1.5 font-medium">
+                <Sparkles className="w-3.5 h-3.5" />
+                LLM Processing
+              </div>
+              {summarizeLog.map((msg, i) => (
+                <div key={i} className="flex items-center gap-1.5">
+                  {i === summarizeLog.length - 1 && (summarizing || syncing) && (
+                    <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+                  )}
+                  <span>{msg}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Result */}
           {showResult && (
             <div className={`rounded-md p-3 text-sm ${
@@ -159,7 +201,47 @@ export function TempoSyncModal({
                   : 'bg-red-50 text-red-800 border border-red-200'
             }`}>
               {syncResult.dry_run ? (
-                <p>Preview: {syncResult.total_entries} entry ready to export ({hours}h to {issueKey})</p>
+                <div className="space-y-2">
+                  <p className="font-medium">Preview — will send to Tempo:</p>
+                  {(() => {
+                    const cached = jiraIssueCache.get(issueKey)
+                    return (
+                      <div className="bg-white/60 rounded p-2 space-y-1 text-xs">
+                        <div className="flex gap-2">
+                          <span className="text-blue-600 font-medium shrink-0">Issue:</span>
+                          <span className="font-mono">{issueKey}</span>
+                          {cached?.summary && (
+                            <span className="text-blue-600/70 truncate">{cached.summary}</span>
+                          )}
+                        </div>
+                        {cached?.issueType && (
+                          <div className="flex gap-2">
+                            <span className="text-blue-600 font-medium shrink-0">Type:</span>
+                            <span>{cached.issueType}</span>
+                          </div>
+                        )}
+                        {cached?.assignee && (
+                          <div className="flex gap-2">
+                            <span className="text-blue-600 font-medium shrink-0">Assignee:</span>
+                            <span>{cached.assignee}</span>
+                          </div>
+                        )}
+                        <div className="flex gap-2">
+                          <span className="text-blue-600 font-medium shrink-0">Date:</span>
+                          <span>{syncResult.results[0]?.date}</span>
+                        </div>
+                        <div className="flex gap-2">
+                          <span className="text-blue-600 font-medium shrink-0">Time:</span>
+                          <span>{hours}h ({syncResult.results[0]?.minutes}min)</span>
+                        </div>
+                        <div className="flex gap-2">
+                          <span className="text-blue-600 font-medium shrink-0">Desc:</span>
+                          <span className="break-all">{syncResult.results[0]?.description}</span>
+                        </div>
+                      </div>
+                    )
+                  })()}
+                </div>
               ) : syncResult.success ? (
                 <p>Exported successfully! {syncResult.successful} worklog uploaded.</p>
               ) : (
@@ -173,12 +255,12 @@ export function TempoSyncModal({
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="outline" onClick={handlePreview} disabled={!canSync}>
-            {syncing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+          <Button variant="outline" onClick={() => handleAction(true)} disabled={!canSync}>
+            {(summarizing || syncing) ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
             Preview
           </Button>
-          <Button onClick={handleSync} disabled={!canSync}>
-            {syncing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+          <Button onClick={() => handleAction(false)} disabled={!canSync}>
+            {(summarizing || syncing) ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
             Export
           </Button>
         </DialogFooter>
