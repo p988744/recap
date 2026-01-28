@@ -356,7 +356,7 @@ pub async fn get_worklog_overview(
     for summary in &daily_summaries {
         let date = summary.period_start.get(..10).unwrap_or(&summary.period_start).to_string();
         let project_path = summary.project_path.clone().unwrap_or_default();
-        let project_name = project_path.split('/').last().unwrap_or("unknown").to_string();
+        let project_name = std::path::Path::new(&project_path).file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string();
 
         // Parse commit/file counts from summary metadata
         let commit_count = summary.git_commits_summary.as_ref()
@@ -398,7 +398,7 @@ pub async fn get_worklog_overview(
             if day_entry.projects.iter().any(|p| &p.project_path == project_path) {
                 continue;
             }
-            let project_name = project_path.split('/').last().unwrap_or("unknown").to_string();
+            let project_name = std::path::Path::new(&project_path).file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string();
             let has_hourly = hourly_exists.iter().any(|(pp, d)| pp == project_path && d == day);
 
             day_entry.projects.push(WorklogDayProject {

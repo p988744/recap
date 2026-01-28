@@ -46,9 +46,14 @@ pub fn extract_tool_detail(tool_name: &str, input: &serde_json::Value) -> Option
             input.get("file_path")
                 .and_then(|v| v.as_str())
                 .map(|p| {
-                    let parts: Vec<&str> = p.split('/').collect();
-                    if parts.len() > 3 {
-                        format!(".../{}", parts[parts.len() - 3..].join("/"))
+                    let path = std::path::Path::new(p);
+                    let components: Vec<_> = path.components().collect();
+                    if components.len() > 3 {
+                        let tail: Vec<_> = components[components.len() - 3..]
+                            .iter()
+                            .map(|c| c.as_os_str().to_string_lossy())
+                            .collect();
+                        format!(".../{}", tail.join("/"))
                     } else {
                         p.to_string()
                     }

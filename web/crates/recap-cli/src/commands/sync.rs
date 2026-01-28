@@ -173,12 +173,10 @@ async fn get_default_user_id(db: &recap_core::Database) -> Result<String> {
 }
 
 fn find_claude_projects() -> Result<Vec<String>> {
-    let home = std::env::var("HOME")
-        .map_err(|_| anyhow::anyhow!("HOME environment variable not set"))?;
+    let home = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("Home directory not found"))?;
 
-    let claude_projects = std::path::PathBuf::from(&home)
-        .join(".claude")
-        .join("projects");
+    let claude_projects = home.join(".claude").join("projects");
 
     if !claude_projects.exists() {
         return Ok(Vec::new());
@@ -191,7 +189,8 @@ fn find_claude_projects() -> Result<Vec<String>> {
         if path.is_dir() {
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                 // Convert directory name back to path format
-                let project_path = name.replace('-', "/");
+                // On Windows paths use \, on Unix /
+                let project_path = name.replace('-', std::path::MAIN_SEPARATOR_STR);
                 projects.push(project_path);
             }
         }

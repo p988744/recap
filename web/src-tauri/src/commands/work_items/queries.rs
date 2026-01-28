@@ -265,7 +265,8 @@ pub async fn get_timeline_data(
         } else {
             item.project_path
                 .as_ref()
-                .and_then(|p| p.split('/').last())
+                .and_then(|p| std::path::Path::new(p).file_name())
+                .and_then(|n| n.to_str())
                 .unwrap_or("unknown")
                 .to_string()
         };

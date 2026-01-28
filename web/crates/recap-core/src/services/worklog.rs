@@ -369,7 +369,7 @@ pub fn build_rule_based_outcome(
     if !files_modified.is_empty() {
         let file_names: Vec<&str> = files_modified
             .iter()
-            .filter_map(|f| f.split('/').last())
+            .filter_map(|f| std::path::Path::new(f.as_str()).file_name().and_then(|n| n.to_str()))
             .take(3)
             .collect();
 

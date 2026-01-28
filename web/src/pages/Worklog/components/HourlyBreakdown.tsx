@@ -37,7 +37,7 @@ function uniqueFileNames(files: string[]): string[] {
   const seen = new Set<string>()
   const result: string[] = []
   for (const f of files) {
-    const name = f.split('/').pop() || f
+    const name = f.split(/[/\\]/).pop() || f
     if (!seen.has(name)) {
       seen.add(name)
       result.push(name)

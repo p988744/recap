@@ -31,9 +31,9 @@ pub async fn get_commit_centric_worklog(
             .unwrap_or_default()
     });
 
-    let project_name = project_path
-        .split('/')
-        .last()
+    let project_name = std::path::Path::new(&project_path)
+        .file_name()
+        .and_then(|n| n.to_str())
         .unwrap_or("unknown")
         .to_string();
 
@@ -69,9 +69,8 @@ fn find_standalone_sessions(
     let target_date = NaiveDate::parse_from_str(date, "%Y-%m-%d")
         .map_err(|e| format!("Invalid date: {}", e))?;
 
-    let claude_home = std::env::var("HOME")
-        .ok()
-        .map(|h| std::path::PathBuf::from(h).join(".claude").join("projects"));
+    let claude_home = dirs::home_dir()
+        .map(|h| h.join(".claude").join("projects"));
 
     let projects_dir = match claude_home {
         Some(dir) if dir.exists() => dir,
@@ -81,7 +80,7 @@ fn find_standalone_sessions(
     let mut standalone = Vec::new();
 
     // Find the Claude project directory for this project
-    let project_dir_name = project_path.replace('/', "-");
+    let project_dir_name = project_path.replace(['/', '\\'], "-");
 
     if let Ok(entries) = std::fs::read_dir(&projects_dir) {
         for entry in entries.flatten() {
@@ -131,7 +130,7 @@ fn find_standalone_sessions(
 
                             standalone.push(StandaloneSession {
                                 session_id: session_data.session_id,
-                                project: project_path.split('/').last().unwrap_or("unknown").to_string(),
+                                project: std::path::Path::new(&project_path).file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string(),
                                 start_time: session_data.start_time,
                                 end_time: session_data.end_time,
                                 hours: session_data.hours,

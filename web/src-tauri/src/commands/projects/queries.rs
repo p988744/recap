@@ -33,7 +33,7 @@ fn derive_project_name(item: &WorkItem) -> String {
         }
     }
     if let Some(path) = &item.project_path {
-        if let Some(last) = path.split('/').filter(|s| !s.is_empty()).last() {
+        if let Some(last) = std::path::Path::new(path).file_name().and_then(|n| n.to_str()) {
             return last.to_string();
         }
     }
@@ -442,7 +442,7 @@ pub async fn get_project_directories(
         // Encode the project_path to match Claude Code's directory naming:
         // /Users/foo/bar → -Users-foo-bar
         let encoded_prefix: Option<String> = project_path.as_ref().map(|p| {
-            p.replace('/', "-")
+            p.replace(['/', '\\'], "-")
         });
 
         // Fallback: match dirs ending with -<project_name>
