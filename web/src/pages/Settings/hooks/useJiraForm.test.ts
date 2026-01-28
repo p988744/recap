@@ -14,20 +14,23 @@ vi.mock('@/services', () => ({
 
 describe('useJiraForm', () => {
   const mockConfig = {
-    id: 'config-1',
-    user_id: 'user-1',
     daily_work_hours: 8,
     normalize_hours: true,
     timezone: null,
     week_start_day: 1,
     jira_url: 'https://company.atlassian.net',
     jira_configured: true,
+    tempo_configured: false,
     gitlab_url: null,
     gitlab_configured: false,
-    llm_provider: null,
-    llm_model: null,
+    llm_provider: '',
+    llm_model: '',
     llm_base_url: null,
+    llm_configured: false,
     auth_type: 'pat',
+    use_git_mode: false,
+    git_repos: [] as string[],
+    outlook_enabled: false,
   }
 
   beforeEach(() => {
@@ -145,7 +148,7 @@ describe('useJiraForm', () => {
   })
 
   it('should test connection successfully', async () => {
-    vi.mocked(tempo.testConnection).mockResolvedValue({ message: 'Connection successful' })
+    vi.mocked(tempo.testConnection).mockResolvedValue({ success: true, message: 'Connection successful' })
     const setMessage = vi.fn()
     const { result } = renderHook(() => useJiraForm(mockConfig))
 

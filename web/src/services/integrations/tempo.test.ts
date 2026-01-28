@@ -29,16 +29,6 @@ const mockSyncWorklogsResponse = {
   dry_run: false,
 }
 
-const mockWorklogEntryResponse = {
-  id: 'worklog-1',
-  issue_key: 'PROJ-123',
-  date: '2024-01-15',
-  minutes: 240,
-  hours: 4.0,
-  description: 'Feature development',
-  status: 'success',
-}
-
 const mockWorklogs = [
   {
     id: 'worklog-1',
@@ -175,54 +165,6 @@ describe('tempo service', () => {
       }
 
       await expect(tempo.syncWorklogs(request)).rejects.toThrow('Jira not configured')
-    })
-  })
-
-  describe('uploadWorklog', () => {
-    it('should upload a single worklog entry', async () => {
-      mockCommandValue('upload_single_worklog', mockWorklogEntryResponse)
-
-      const request = {
-        issue_key: 'PROJ-123',
-        date: '2024-01-15',
-        minutes: 240,
-        description: 'Feature development',
-      }
-      const result = await tempo.uploadWorklog(request)
-
-      expect(result.issue_key).toBe('PROJ-123')
-      expect(result.hours).toBe(4.0)
-      expect(result.status).toBe('success')
-      expect(mockInvoke).toHaveBeenCalledWith('upload_single_worklog', {
-        token: 'test-token',
-        request,
-      })
-    })
-
-    it('should throw on invalid issue', async () => {
-      mockCommandError('upload_single_worklog', 'Issue not found')
-
-      const request = {
-        issue_key: 'INVALID-999',
-        date: '2024-01-15',
-        minutes: 240,
-        description: 'Work',
-      }
-
-      await expect(tempo.uploadWorklog(request)).rejects.toThrow('Issue not found')
-    })
-
-    it('should throw on invalid hours', async () => {
-      mockCommandError('upload_single_worklog', 'Hours must be positive')
-
-      const request = {
-        issue_key: 'PROJ-123',
-        date: '2024-01-15',
-        minutes: -60,
-        description: 'Work',
-      }
-
-      await expect(tempo.uploadWorklog(request)).rejects.toThrow('Hours must be positive')
     })
   })
 

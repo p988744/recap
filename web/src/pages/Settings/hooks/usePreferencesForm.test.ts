@@ -11,20 +11,23 @@ vi.mock('@/services', () => ({
 
 describe('usePreferencesForm', () => {
   const mockConfig = {
-    id: 'config-1',
-    user_id: 'user-1',
     daily_work_hours: 8,
     normalize_hours: true,
     timezone: null as string | null,
     week_start_day: 1,
     jira_url: null,
     jira_configured: false,
+    tempo_configured: false,
     gitlab_url: null,
     gitlab_configured: false,
-    llm_provider: null,
-    llm_model: null,
+    llm_provider: '',
+    llm_model: '',
     llm_base_url: null,
-    auth_type: null,
+    llm_configured: false,
+    auth_type: '',
+    use_git_mode: false,
+    git_repos: [] as string[],
+    outlook_enabled: false,
   }
 
   beforeEach(() => {

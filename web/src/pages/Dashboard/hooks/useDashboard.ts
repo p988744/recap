@@ -61,7 +61,7 @@ export function useDashboard(isAuthenticated: boolean, token: string | null) {
   const [ganttLoading, setGanttLoading] = useState(false)
 
   // Consume app-level sync state to know when to refetch data
-  const { lastSyncTime } = useSyncContext()
+  const { dataSyncState } = useSyncContext()
 
   // Main data fetch effect — re-runs when app-level sync completes
   useEffect(() => {
@@ -84,7 +84,7 @@ export function useDashboard(isAuthenticated: boolean, token: string | null) {
       }
     }
     fetchData()
-  }, [weekRange, heatmapRange, lastSyncTime, isAuthenticated, token])
+  }, [weekRange, heatmapRange, dataSyncState, isAuthenticated, token])
 
   // Gantt timeline fetch effect
   useEffect(() => {
