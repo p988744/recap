@@ -1,7 +1,15 @@
+import { useState, useEffect } from 'react'
+import { getVersion } from '@tauri-apps/api/app'
 import { CheckCircle2 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 
 export function AboutSection() {
+  const [version, setVersion] = useState('')
+
+  useEffect(() => {
+    getVersion().then(setVersion)
+  }, [])
+
   return (
     <section className="animate-fade-up opacity-0 delay-1">
       <h2 className="font-display text-2xl text-foreground mb-6">關於</h2>
@@ -15,7 +23,7 @@ export function AboutSection() {
             </div>
             <div>
               <h3 className="font-display text-xl text-foreground">Recap</h3>
-              <p className="text-sm text-muted-foreground">v2.1.0</p>
+              <p className="text-sm text-muted-foreground">{version ? `v${version}` : ''}</p>
             </div>
           </div>
 
