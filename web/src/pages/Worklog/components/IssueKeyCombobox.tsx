@@ -30,8 +30,10 @@ export function IssueKeyCombobox({
   const [open, setOpen] = useState(false)
   const [issues, setIssues] = useState<JiraIssueItem[]>([])
   const [loading, setLoading] = useState(false)
+  const [activeIndex, setActiveIndex] = useState(-1)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const listRef = useRef<HTMLUListElement>(null)
   const suppressBlurRef = useRef(false)
   // Keep a ref to the latest onBlur so setTimeout callbacks always call the current version
   const onBlurRef = useRef(onBlur)
@@ -42,6 +44,7 @@ export function IssueKeyCombobox({
     try {
       const result = await tempo.searchIssues({ query, max_results: 10 })
       setIssues(result.issues)
+      setActiveIndex(-1)
       if (result.issues.length > 0) {
         setOpen(true)
       }
@@ -70,9 +73,17 @@ export function IssueKeyCombobox({
     }
   }, [value, searchIssues])
 
+  // Scroll active item into view
+  useEffect(() => {
+    if (activeIndex < 0 || !listRef.current) return
+    const items = listRef.current.querySelectorAll('li')
+    items[activeIndex]?.scrollIntoView({ block: 'nearest' })
+  }, [activeIndex])
+
   const handleSelect = (key: string) => {
     onChange(key)
     setOpen(false)
+    setActiveIndex(-1)
     // Use ref so the callback runs after React re-renders with the selected value
     setTimeout(() => onBlurRef.current?.(), 0)
   }
@@ -85,6 +96,7 @@ export function IssueKeyCombobox({
     }
     setTimeout(() => {
       setOpen(false)
+      setActiveIndex(-1)
       onBlurRef.current?.()
     }, 150)
   }
@@ -92,6 +104,29 @@ export function IssueKeyCombobox({
   const handleFocus = () => {
     if (value.trim() && issues.length > 0) {
       setOpen(true)
+    }
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      setOpen(false)
+      setActiveIndex(-1)
+      return
+    }
+
+    if (!open || issues.length === 0) return
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActiveIndex((prev) => (prev < issues.length - 1 ? prev + 1 : 0))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActiveIndex((prev) => (prev > 0 ? prev - 1 : issues.length - 1))
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      if (activeIndex >= 0 && activeIndex < issues.length) {
+        handleSelect(issues[activeIndex].key)
+      }
     }
   }
 
@@ -105,11 +140,13 @@ export function IssueKeyCombobox({
             onChange={(e) => onChange(e.target.value)}
             onFocus={handleFocus}
             onBlur={handleBlur}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') setOpen(false)
-            }}
+            onKeyDown={handleKeyDown}
             placeholder={placeholder}
             className={cn(compact && 'h-8 text-xs', className)}
+            role="combobox"
+            aria-expanded={open}
+            aria-activedescendant={activeIndex >= 0 ? `issue-option-${activeIndex}` : undefined}
+            aria-autocomplete="list"
           />
           {loading && (
             <Loader2 className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 animate-spin text-muted-foreground" />
@@ -128,15 +165,24 @@ export function IssueKeyCombobox({
             No issues found
           </div>
         ) : (
-          <ul className="max-h-[200px] overflow-y-auto py-1">
-            {issues.map((issue) => (
+          <ul ref={listRef} className="max-h-[200px] overflow-y-auto py-1" role="listbox">
+            {issues.map((issue, i) => (
               <li
                 key={issue.key}
-                className="flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-accent hover:text-accent-foreground"
+                id={`issue-option-${i}`}
+                role="option"
+                aria-selected={i === activeIndex}
+                className={cn(
+                  'flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer',
+                  i === activeIndex
+                    ? 'bg-accent text-accent-foreground'
+                    : 'hover:bg-accent hover:text-accent-foreground',
+                )}
                 onMouseDown={() => {
                   suppressBlurRef.current = true
                   handleSelect(issue.key)
                 }}
+                onMouseEnter={() => setActiveIndex(i)}
               >
                 <span className="font-medium shrink-0">{issue.key}</span>
                 <span className="text-muted-foreground truncate">
