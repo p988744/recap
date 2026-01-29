@@ -32,6 +32,7 @@ sha2 = "0.10"
 base64 = "0.22"
 rand = "0.8"
 log = "0.4"
+async-trait = "0.1"
 
 # HTTP client (for GitLab/Jira API)
 reqwest = { version = "0.12", features = ["json"] }

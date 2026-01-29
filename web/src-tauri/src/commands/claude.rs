@@ -110,7 +110,8 @@ pub struct SyncProjectsRequest {
 }
 
 // SyncResult re-exported from services for API response
-pub use recap_core::services::ClaudeSyncResult as SyncResult;
+// Note: This uses SourceSyncResult from the new sources module for consistency
+pub use recap_core::services::SourceSyncResult as SyncResult;
 
 // Helper functions
 
@@ -619,7 +620,7 @@ pub async fn summarize_claude_session(
 }
 
 /// Sync selected projects - aggregate sessions by project+date
-/// Delegates to services::sync::sync_claude_projects for the actual implementation
+/// Delegates to the ClaudeSource adapter for the actual implementation
 #[tauri::command]
 pub async fn sync_claude_projects(
     state: State<'_, AppState>,
@@ -629,8 +630,13 @@ pub async fn sync_claude_projects(
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
     let db = state.db.lock().await;
 
-    // Delegate to service layer
-    crate::core_services::sync_claude_projects(&db.pool, &claims.sub, &request.project_paths).await
+    // Delegate to new source-based sync
+    recap_core::services::sources::claude::sync_claude_projects(
+        &db.pool,
+        &claims.sub,
+        &request.project_paths,
+    )
+    .await
 }
 
 #[cfg(test)]

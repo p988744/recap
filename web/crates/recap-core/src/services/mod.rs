@@ -7,6 +7,7 @@ pub mod llm_pricing;
 pub mod llm_usage;
 pub mod session_parser;
 pub mod snapshot;
+pub mod sources;
 pub mod sync;
 pub mod tempo;
 pub mod worklog;
@@ -43,4 +44,9 @@ pub use llm_pricing::estimate_cost;
 pub use llm_usage::{
     save_usage_log, get_usage_stats, get_usage_by_day, get_usage_by_model, get_usage_logs,
     LlmUsageStats, DailyUsage, ModelUsage, LlmUsageLog,
+};
+pub use sources::{
+    SyncSource, SourceProject, SourceSyncResult, WorkItemParams,
+    ClaudeSource, AntigravitySource, SyncConfig,
+    get_enabled_sources, upsert_work_item, UpsertResult,
 };

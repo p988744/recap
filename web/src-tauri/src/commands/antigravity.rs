@@ -3,14 +3,12 @@
 //! Tauri commands for Antigravity session operations.
 //! Uses the local Antigravity HTTP API when the app is running.
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::process::Command;
 use tauri::State;
 
 use recap_core::auth::verify_token;
-use recap_core::services::{calculate_session_hours, generate_daily_hash};
 
 use super::AppState;
 
@@ -289,36 +287,6 @@ fn convert_to_projects(api_response: ApiResponse) -> Vec<AntigravityProject> {
     projects
 }
 
-// ==================== Helper Functions ====================
-
-fn session_hours_from_timestamps(first: &Option<String>, last: &Option<String>) -> f64 {
-    match (first, last) {
-        (Some(start), Some(end)) => calculate_session_hours(start, end),
-        _ => 0.5,
-    }
-}
-
-fn build_session_description(session: &AntigravitySession, hours: f64) -> String {
-    let mut parts = vec![
-        format!("📁 Project: {}", session.cwd),
-        format!(
-            "🌿 Branch: {}",
-            session.git_branch.as_deref().unwrap_or("N/A")
-        ),
-        format!("💬 Steps: {} | ⏱️ Duration: {:.1}h", session.step_count, hours),
-    ];
-
-    if let Some(repo) = &session.git_repo {
-        parts.push(format!("🔗 Repository: {}", repo));
-    }
-
-    if let Some(summary) = &session.summary {
-        parts.push(format!("📋 Summary: {}", summary));
-    }
-
-    parts.join("\n\n")
-}
-
 // ==================== Public Request/Response Types ====================
 
 #[derive(Debug, Deserialize)]
@@ -328,68 +296,27 @@ pub struct AntigravitySyncProjectsRequest {
 
 // ==================== Internal Functions (for background sync) ====================
 
-/// List all Antigravity sessions - internal version without Tauri state
-pub async fn list_antigravity_sessions_internal() -> Result<Vec<AntigravityProject>, String> {
-    let process = find_antigravity_process()
-        .ok_or_else(|| "No Antigravity process found. The app may not be running.".to_string())?;
-
-    let api_response = fetch_all_trajectories(&process).await?;
-    let projects = convert_to_projects(api_response);
-
-    Ok(projects)
-}
-
 /// Sync Antigravity projects - internal version for background sync
+/// Note: This delegates to the new sources module for the actual sync logic.
 pub async fn sync_antigravity_projects_internal(
     pool: &sqlx::SqlitePool,
     user_id: &str,
     request: AntigravitySyncProjectsRequest,
 ) -> Result<AntigravitySyncResult, String> {
-    let process = find_antigravity_process()
-        .ok_or_else(|| "Antigravity is not running. Please start the Antigravity app.".to_string())?;
+    // Delegate to new source-based sync
+    let result = recap_core::services::sources::antigravity::sync_antigravity_projects(
+        pool,
+        user_id,
+        &request.project_paths,
+    )
+    .await?;
 
-    let api_response = fetch_all_trajectories(&process).await?;
-    let projects = convert_to_projects(api_response);
-
-    let mut sessions_processed = 0;
-    let mut sessions_skipped = 0;
-    let mut work_items_created = 0;
-    let mut work_items_updated = 0;
-
-    // Filter to requested projects
-    let requested_paths: std::collections::HashSet<_> = request.project_paths.iter().collect();
-
-    for project in projects {
-        if !requested_paths.contains(&project.path) {
-            continue;
-        }
-
-        for session in &project.sessions {
-            match process_session(pool, user_id, session).await {
-                Ok(ProcessResult::Created) => {
-                    sessions_processed += 1;
-                    work_items_created += 1;
-                }
-                Ok(ProcessResult::Updated) => {
-                    sessions_processed += 1;
-                    work_items_updated += 1;
-                }
-                Ok(ProcessResult::Skipped) => {
-                    sessions_skipped += 1;
-                }
-                Err(e) => {
-                    log::error!("Failed to process session: {}", e);
-                    sessions_skipped += 1;
-                }
-            }
-        }
-    }
-
+    // Convert SourceSyncResult to AntigravitySyncResult
     Ok(AntigravitySyncResult {
-        sessions_processed,
-        sessions_skipped,
-        work_items_created,
-        work_items_updated,
+        sessions_processed: result.sessions_processed,
+        sessions_skipped: result.sessions_skipped,
+        work_items_created: result.work_items_created,
+        work_items_updated: result.work_items_updated,
     })
 }
 
@@ -468,6 +395,7 @@ pub async fn list_antigravity_sessions(
 }
 
 /// Sync selected Antigravity projects - create work items from sessions
+/// Delegates to the AntigravitySource adapter for the actual implementation
 #[tauri::command]
 pub async fn sync_antigravity_projects(
     state: State<'_, AppState>,
@@ -477,130 +405,8 @@ pub async fn sync_antigravity_projects(
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
     let db = state.db.lock().await;
 
-    let process = find_antigravity_process()
-        .ok_or_else(|| "Antigravity is not running. Please start the Antigravity app.".to_string())?;
-
-    let api_response = fetch_all_trajectories(&process).await?;
-    let projects = convert_to_projects(api_response);
-
-    let mut sessions_processed = 0;
-    let mut sessions_skipped = 0;
-    let mut work_items_created = 0;
-    let mut work_items_updated = 0;
-
-    // Filter to requested projects
-    let requested_paths: std::collections::HashSet<_> = request.project_paths.iter().collect();
-
-    for project in projects {
-        if !requested_paths.contains(&project.path) {
-            continue;
-        }
-
-        for session in &project.sessions {
-            match process_session(&db.pool, &claims.sub, session).await {
-                Ok(ProcessResult::Created) => {
-                    sessions_processed += 1;
-                    work_items_created += 1;
-                }
-                Ok(ProcessResult::Updated) => {
-                    sessions_processed += 1;
-                    work_items_updated += 1;
-                }
-                Ok(ProcessResult::Skipped) => {
-                    sessions_skipped += 1;
-                }
-                Err(e) => {
-                    log::error!("Failed to process session: {}", e);
-                    sessions_skipped += 1;
-                }
-            }
-        }
-    }
-
-    Ok(AntigravitySyncResult {
-        sessions_processed,
-        sessions_skipped,
-        work_items_created,
-        work_items_updated,
-    })
-}
-
-enum ProcessResult {
-    Created,
-    Updated,
-    Skipped,
-}
-
-async fn process_session(
-    pool: &sqlx::SqlitePool,
-    user_id: &str,
-    session: &AntigravitySession,
-) -> Result<ProcessResult, String> {
-    if session.step_count == 0 {
-        return Ok(ProcessResult::Skipped);
-    }
-
-    let hours = session_hours_from_timestamps(&session.first_timestamp, &session.last_timestamp);
-
-    let date = session
-        .first_timestamp
-        .as_ref()
-        .and_then(|ts| ts.split('T').next())
-        .unwrap_or("2026-01-01");
-
-    let content_hash = generate_daily_hash(user_id, &session.cwd, date);
-
-    // Check if already exists
-    let existing: Option<(String,)> =
-        sqlx::query_as("SELECT id FROM work_items WHERE content_hash = ? AND user_id = ?")
-            .bind(&content_hash)
-            .bind(user_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| e.to_string())?;
-
-    if existing.is_some() {
-        return Ok(ProcessResult::Skipped);
-    }
-
-    let project_name = std::path::Path::new(&session.cwd)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("Unknown");
-
-    let title = if let Some(ref summary) = session.summary {
-        let truncated: String = summary.chars().take(80).collect();
-        format!("[{}] {}", project_name, truncated)
-    } else {
-        format!("[{}] Gemini Code session", project_name)
-    };
-
-    let id = uuid::Uuid::new_v4().to_string();
-    let now = Utc::now();
-    let description = build_session_description(session, hours);
-
-    sqlx::query(
-        r#"INSERT INTO work_items
-        (id, user_id, source, source_id, title, description, hours, date, content_hash, hours_source, hours_estimated, project_path, created_at, updated_at)
-        VALUES (?, ?, 'antigravity', ?, ?, ?, ?, ?, ?, 'session', ?, ?, ?, ?)"#
-    )
-    .bind(&id)
-    .bind(user_id)
-    .bind(&session.session_id)
-    .bind(&title)
-    .bind(&description)
-    .bind(hours)
-    .bind(date)
-    .bind(&content_hash)
-    .bind(hours)
-    .bind(&session.cwd) // project_path
-    .bind(now)
-    .bind(now)
-    .execute(pool)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    Ok(ProcessResult::Created)
+    // Delegate to internal function which uses the new source-based sync
+    sync_antigravity_projects_internal(&db.pool, &claims.sub, request).await
 }
 
 #[cfg(test)]
@@ -637,19 +443,7 @@ mod tests {
         assert_eq!(port, Some(64116));
     }
 
-    #[test]
-    fn test_session_hours_from_timestamps() {
-        let first = Some("2024-01-15T09:00:00Z".to_string());
-        let last = Some("2024-01-15T11:00:00Z".to_string());
-        let hours = session_hours_from_timestamps(&first, &last);
-        assert!((hours - 2.0).abs() < 0.1);
-    }
-
-    #[test]
-    fn test_session_hours_from_timestamps_none() {
-        let hours = session_hours_from_timestamps(&None, &None);
-        assert!((hours - 0.5).abs() < 0.01);
-    }
+    // Note: session_hours_from_timestamps tests moved to recap-core::services::sources::antigravity
 
     #[test]
     fn test_convert_to_projects() {
@@ -760,27 +554,5 @@ mod tests {
         assert_eq!(projects.len(), 0);
     }
 
-    #[test]
-    fn test_build_session_description() {
-        let session = AntigravitySession {
-            session_id: "test-123".to_string(),
-            summary: Some("Implement feature X".to_string()),
-            cwd: "/Users/test/project".to_string(),
-            git_branch: Some("feature/x".to_string()),
-            git_repo: Some("test/project".to_string()),
-            step_count: 50,
-            first_timestamp: Some("2024-01-15T09:00:00Z".to_string()),
-            last_timestamp: Some("2024-01-15T11:00:00Z".to_string()),
-            status: "IDLE".to_string(),
-        };
-
-        let desc = build_session_description(&session, 2.0);
-
-        assert!(desc.contains("📁 Project: /Users/test/project"));
-        assert!(desc.contains("🌿 Branch: feature/x"));
-        assert!(desc.contains("💬 Steps: 50"));
-        assert!(desc.contains("⏱️ Duration: 2.0h"));
-        assert!(desc.contains("🔗 Repository: test/project"));
-        assert!(desc.contains("📋 Summary: Implement feature X"));
-    }
+    // Note: build_session_description tests moved to recap-core::services::sources::antigravity
 }

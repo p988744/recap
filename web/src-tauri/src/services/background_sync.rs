@@ -2,16 +2,24 @@
 //!
 //! Provides scheduled automatic synchronization of work items from various sources.
 //! Runs in the background while the app is in the system tray.
+//!
+//! This service uses the `SyncSource` trait abstraction from `recap_core::services::sources`
+//! to dynamically discover and sync work items from multiple data sources.
 
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::{interval, Duration};
+
+use recap_core::services::sources::{SyncConfig, SourceSyncResult};
 
 // =============================================================================
 // Configuration
 // =============================================================================
 
 /// Background sync configuration
+///
+/// This struct maintains backward compatibility with the legacy field-based
+/// configuration while internally converting to the new `SyncConfig` system.
 #[derive(Debug, Clone)]
 pub struct BackgroundSyncConfig {
     /// Whether background sync is enabled
@@ -41,6 +49,21 @@ impl Default for BackgroundSyncConfig {
             sync_gitlab: false,
             sync_jira: false,
         }
+    }
+}
+
+impl BackgroundSyncConfig {
+    /// Convert to the new SyncConfig format
+    pub fn to_sync_config(&self) -> SyncConfig {
+        SyncConfig::from_legacy(
+            self.enabled,
+            self.interval_minutes,
+            self.sync_claude,
+            self.sync_antigravity,
+            self.sync_git,
+            self.sync_gitlab,
+            self.sync_jira,
+        )
     }
 }
 
@@ -78,6 +101,20 @@ pub struct SyncOperationResult {
     pub projects_scanned: i32,
     pub items_created: i32,
     pub error: Option<String>,
+}
+
+impl From<SourceSyncResult> for SyncOperationResult {
+    fn from(result: SourceSyncResult) -> Self {
+        let items_synced = (result.work_items_created + result.work_items_updated) as i32;
+        Self {
+            source: result.source,
+            success: result.error.is_none(),
+            items_synced,
+            projects_scanned: result.projects_scanned as i32,
+            items_created: result.work_items_created as i32,
+            error: result.error,
+        }
+    }
 }
 
 // =============================================================================
@@ -278,7 +315,7 @@ impl BackgroundSyncService {
         Self::perform_sync(&self.db, &self.status, &config, &uid.unwrap()).await
     }
 
-    /// Perform the actual sync operation
+    /// Perform the actual sync operation using the source registry
     async fn perform_sync(
         db: &Arc<Mutex<recap_core::Database>>,
         status: &Arc<RwLock<SyncServiceStatus>>,
@@ -301,22 +338,40 @@ impl BackgroundSyncService {
             db_guard.pool.clone()
         }; // Mutex released immediately
 
-        // Phase 1: Sync sources (uses pool directly, no Mutex)
-        if config.sync_claude {
-            let db_guard = db.lock().await;
-            let result = Self::sync_claude_sessions(&db_guard, user_id).await;
-            results.push(result);
-            drop(db_guard); // Release Mutex before next phase
+        // Convert to new SyncConfig format and get enabled sources
+        let sync_config = config.to_sync_config();
+        let sources = recap_core::services::sources::get_enabled_sources(&sync_config).await;
+
+        // Phase 1: Sync all enabled sources using the trait abstraction
+        for source in &sources {
+            log::info!("Syncing {} for user: {}", source.display_name(), user_id);
+
+            match source.sync_sessions(&pool, user_id).await {
+                Ok(source_result) => {
+                    let result = SyncOperationResult::from(source_result);
+                    log::info!(
+                        "{} sync complete: {} sessions processed, {} created, {} updated",
+                        source.display_name(),
+                        result.items_synced,
+                        result.items_created,
+                        result.projects_scanned
+                    );
+                    results.push(result);
+                }
+                Err(e) => {
+                    log::error!("{} sync error: {}", source.display_name(), e);
+                    results.push(SyncOperationResult {
+                        source: source.source_name().to_string(),
+                        success: false,
+                        error: Some(e),
+                        ..Default::default()
+                    });
+                }
+            }
         }
 
-        if config.sync_antigravity {
-            let db_guard = db.lock().await;
-            let result = Self::sync_antigravity_sessions(&db_guard, user_id).await;
-            results.push(result);
-            drop(db_guard);
-        }
-
-        if config.sync_git {
+        // Stub results for not-yet-implemented sources
+        if config.sync_git && !sync_config.is_source_enabled("git") {
             results.push(SyncOperationResult {
                 source: "git".to_string(),
                 success: true,
@@ -324,7 +379,7 @@ impl BackgroundSyncService {
             });
         }
 
-        if config.sync_gitlab {
+        if config.sync_gitlab && !sync_config.is_source_enabled("gitlab") {
             results.push(SyncOperationResult {
                 source: "gitlab".to_string(),
                 success: true,
@@ -332,7 +387,7 @@ impl BackgroundSyncService {
             });
         }
 
-        if config.sync_jira {
+        if config.sync_jira && !sync_config.is_source_enabled("jira") {
             results.push(SyncOperationResult {
                 source: "jira".to_string(),
                 success: true,
@@ -414,128 +469,6 @@ impl BackgroundSyncService {
 
         log::info!("Background sync completed: {} sources processed", results.len());
         results
-    }
-
-    /// Sync Claude Code sessions using project discovery with git root resolution
-    async fn sync_claude_sessions(db: &recap_core::Database, user_id: &str) -> SyncOperationResult {
-        log::info!("Syncing Claude sessions for user: {}", user_id);
-
-        // Discover all projects using multi-strategy discovery + git root grouping
-        let projects = recap_core::services::SyncService::discover_project_paths();
-
-        if projects.is_empty() {
-            return SyncOperationResult {
-                source: "claude".to_string(),
-                success: true,
-                ..Default::default()
-            };
-        }
-
-        log::info!("Discovered {} Claude projects", projects.len());
-        for project in &projects {
-            log::debug!(
-                "  Project: {} ({}) - {} dirs",
-                project.name,
-                project.canonical_path,
-                project.claude_dirs.len()
-            );
-        }
-
-        match recap_core::services::sync_discovered_projects(&db.pool, user_id, &projects).await {
-            Ok(result) => {
-                let items_synced = (result.work_items_created + result.work_items_updated) as i32;
-                SyncOperationResult {
-                    source: "claude".to_string(),
-                    success: true,
-                    items_synced,
-                    projects_scanned: result.projects_scanned as i32,
-                    items_created: result.work_items_created as i32,
-                    error: None,
-                }
-            }
-            Err(e) => {
-                log::error!("Claude sync error: {}", e);
-                SyncOperationResult {
-                    source: "claude".to_string(),
-                    success: false,
-                    error: Some(e),
-                    ..Default::default()
-                }
-            }
-        }
-    }
-
-    /// Sync Antigravity (Gemini Code) sessions via HTTP API
-    async fn sync_antigravity_sessions(db: &recap_core::Database, user_id: &str) -> SyncOperationResult {
-        log::info!("Syncing Antigravity sessions for user: {}", user_id);
-
-        // Use the antigravity module to list and sync projects
-        match crate::commands::antigravity::list_antigravity_sessions_internal().await {
-            Ok(projects) => {
-                if projects.is_empty() {
-                    log::info!("No Antigravity projects found (app may not be running)");
-                    return SyncOperationResult {
-                        source: "antigravity".to_string(),
-                        success: true,
-                        ..Default::default()
-                    };
-                }
-
-                log::info!("Discovered {} Antigravity projects", projects.len());
-
-                // Sync the projects
-                let project_paths: Vec<String> = projects.iter().map(|p| p.path.clone()).collect();
-                let request = crate::commands::antigravity::AntigravitySyncProjectsRequest { project_paths };
-
-                match crate::commands::antigravity::sync_antigravity_projects_internal(&db.pool, user_id, request).await {
-                    Ok(result) => {
-                        let items_synced = (result.work_items_created + result.work_items_updated) as i32;
-                        log::info!(
-                            "Antigravity sync complete: {} sessions processed, {} created, {} updated",
-                            result.sessions_processed,
-                            result.work_items_created,
-                            result.work_items_updated
-                        );
-                        SyncOperationResult {
-                            source: "antigravity".to_string(),
-                            success: true,
-                            items_synced,
-                            projects_scanned: projects.len() as i32,
-                            items_created: result.work_items_created as i32,
-                            error: None,
-                        }
-                    }
-                    Err(e) => {
-                        log::error!("Antigravity sync error: {}", e);
-                        SyncOperationResult {
-                            source: "antigravity".to_string(),
-                            success: false,
-                            error: Some(e),
-                            ..Default::default()
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                // Not an error if Antigravity is simply not running
-                if e.contains("not running") || e.contains("No Antigravity process") {
-                    log::debug!("Antigravity not running, skipping sync");
-                    SyncOperationResult {
-                        source: "antigravity".to_string(),
-                        success: true,
-                        ..Default::default()
-                    }
-                } else {
-                    log::error!("Antigravity list error: {}", e);
-                    SyncOperationResult {
-                        source: "antigravity".to_string(),
-                        success: false,
-                        error: Some(e),
-                        ..Default::default()
-                    }
-                }
-            }
-        }
     }
 
     /// Calculate the next sync timestamp
