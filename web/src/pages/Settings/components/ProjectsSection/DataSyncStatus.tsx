@@ -1,7 +1,8 @@
 import { Loader2, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import type { BackgroundSyncStatus } from '@/services/background-sync'
+import { Progress } from '@/components/ui/progress'
+import type { BackgroundSyncStatus, SyncProgress } from '@/services/background-sync'
 import { ClaudeIcon } from './icons/ClaudeIcon'
 import { GeminiIcon } from './icons/GeminiIcon'
 
@@ -12,6 +13,7 @@ interface DataSyncStatusProps {
   enabled: boolean
   dataSyncState: PhaseState
   summaryState: PhaseState
+  syncProgress: SyncProgress | null
   onTriggerSync: () => void
 }
 
@@ -79,11 +81,19 @@ function SourceSyncRow({
   )
 }
 
+const phaseLabels: Record<SyncProgress['phase'], string> = {
+  sources: '同步資料來源',
+  snapshots: '捕獲快照',
+  compaction: '處理摘要',
+  complete: '完成',
+}
+
 export function DataSyncStatus({
   status,
   enabled,
   dataSyncState,
   summaryState,
+  syncProgress,
   onTriggerSync,
 }: DataSyncStatusProps) {
   if (!status) {
@@ -102,6 +112,13 @@ export function DataSyncStatus({
   // When syncing, Claude Code syncs first, then Antigravity
   const claudeState = dataSyncState
   const antigravityState = dataSyncState === 'syncing' ? 'idle' : dataSyncState
+
+  // Calculate progress percentage
+  const progressPercent = syncProgress
+    ? syncProgress.total > 0
+      ? Math.round((syncProgress.current / syncProgress.total) * 100)
+      : syncProgress.phase === 'complete' ? 100 : 0
+    : 0
 
   return (
     <Card className="p-4">
@@ -157,8 +174,27 @@ export function DataSyncStatus({
         />
       </div>
 
-      {/* Summary processing */}
-      {summaryState !== 'idle' && (
+      {/* Progress bar during sync */}
+      {syncProgress && syncProgress.phase !== 'complete' && (
+        <div className="mt-3 pt-3 border-t border-border space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-muted-foreground">
+              {phaseLabels[syncProgress.phase]}
+              {syncProgress.current_source && `: ${syncProgress.current_source}`}
+            </span>
+            <span className="font-mono text-foreground">
+              {syncProgress.current}/{syncProgress.total}
+            </span>
+          </div>
+          <Progress value={progressPercent} className="h-1.5" />
+          <p className="text-xs text-muted-foreground truncate">
+            {syncProgress.message}
+          </p>
+        </div>
+      )}
+
+      {/* Summary processing (when no detailed progress) */}
+      {!syncProgress && summaryState !== 'idle' && (
         <div className="mt-2 pt-2 border-t border-border">
           <div className="flex items-center justify-between text-sm">
             <span className="text-muted-foreground">摘要處理</span>

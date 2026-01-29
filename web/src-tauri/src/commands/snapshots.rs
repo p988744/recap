@@ -123,6 +123,17 @@ pub struct CompactionResultResponse {
     pub errors: Vec<String>,
 }
 
+/// Response type for force recompact result
+#[derive(Debug, Serialize)]
+pub struct ForceRecompactResponse {
+    pub summaries_deleted: usize,
+    pub hourly_compacted: usize,
+    pub daily_compacted: usize,
+    pub weekly_compacted: usize,
+    pub monthly_compacted: usize,
+    pub errors: Vec<String>,
+}
+
 /// Get work summaries at a given scale and date range.
 #[tauri::command]
 pub async fn get_work_summaries(
@@ -750,6 +761,52 @@ pub async fn trigger_compaction(
         weekly_compacted: result.weekly_compacted,
         monthly_compacted: result.monthly_compacted,
         errors: result.errors,
+    })
+}
+
+/// Force recompact all work summaries.
+///
+/// This operation deletes existing work_summaries and regenerates them from
+/// snapshot_raw_data. Use this when you've made changes to the compaction logic
+/// and want to retroactively apply them to historical data.
+///
+/// Original data (work_items, snapshot_raw_data) is preserved.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn force_recompact(
+    state: State<'_, AppState>,
+    token: String,
+    from_date: Option<String>,
+    to_date: Option<String>,
+    scales: Option<Vec<String>>,
+) -> Result<ForceRecompactResponse, String> {
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
+
+    let llm = recap_core::services::llm::create_llm_service(&db.pool, &claims.sub)
+        .await
+        .ok();
+
+    let options = recap_core::services::compaction::ForceRecompactOptions {
+        from_date,
+        to_date,
+        scales: scales.unwrap_or_default(),
+    };
+
+    let result = recap_core::services::compaction::force_recompact(
+        &db.pool,
+        llm.as_ref(),
+        &claims.sub,
+        options,
+    )
+    .await?;
+
+    Ok(ForceRecompactResponse {
+        summaries_deleted: result.summaries_deleted,
+        hourly_compacted: result.compaction_result.hourly_compacted,
+        daily_compacted: result.compaction_result.daily_compacted,
+        weekly_compacted: result.compaction_result.weekly_compacted,
+        monthly_compacted: result.compaction_result.monthly_compacted,
+        errors: result.compaction_result.errors,
     })
 }
 

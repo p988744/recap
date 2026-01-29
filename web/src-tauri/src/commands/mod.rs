@@ -6,8 +6,10 @@
 pub mod antigravity;
 pub mod auth;
 pub mod background_sync;
+pub mod batch_compaction;
 pub mod claude;
 pub mod config;
+pub mod danger_zone;
 pub mod gitlab;
 pub mod llm_usage;
 pub mod notification;

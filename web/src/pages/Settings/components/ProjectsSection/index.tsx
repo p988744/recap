@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Plus } from 'lucide-react'
 import { projects as projectsService } from '@/services'
 import type { ProjectInfo } from '@/types'
-import type { BackgroundSyncStatus } from '@/services/background-sync'
+import type { BackgroundSyncStatus, SyncProgress } from '@/services/background-sync'
 import { ProjectList } from './ProjectList'
 import { ProjectSourcePanel } from './ProjectSourcePanel'
 import { ClaudePathSetting } from './ClaudePathSetting'
@@ -17,6 +17,7 @@ interface ProjectsSectionProps {
   syncEnabled?: boolean
   dataSyncState?: PhaseState
   summaryState?: PhaseState
+  syncProgress?: SyncProgress | null
   onTriggerSync?: () => void
 }
 
@@ -25,6 +26,7 @@ export function ProjectsSection({
   syncEnabled = false,
   dataSyncState = 'idle',
   summaryState = 'idle',
+  syncProgress = null,
   onTriggerSync,
 }: ProjectsSectionProps) {
   const [projectList, setProjectList] = useState<ProjectInfo[]>([])
@@ -99,6 +101,7 @@ export function ProjectsSection({
           enabled={syncEnabled}
           dataSyncState={dataSyncState}
           summaryState={summaryState}
+          syncProgress={syncProgress}
           onTriggerSync={onTriggerSync}
         />
       )}

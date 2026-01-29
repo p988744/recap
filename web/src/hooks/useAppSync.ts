@@ -13,8 +13,8 @@
  */
 import { createContext, useContext, useEffect, useCallback, useState, useRef } from 'react'
 import { listen } from '@tauri-apps/api/event'
-import { backgroundSync, sync, tray, notification } from '@/services'
-import type { BackgroundSyncStatus } from '@/services/background-sync'
+import { backgroundSync, tray, notification } from '@/services'
+import type { BackgroundSyncStatus, SyncProgress } from '@/services/background-sync'
 
 // =============================================================================
 // Context
@@ -27,6 +27,8 @@ export interface SyncContextValue {
   summaryState: 'idle' | 'syncing' | 'done'
   /** Backend sync status (single source of truth for timing & config) */
   backendStatus: BackgroundSyncStatus | null
+  /** Detailed sync progress */
+  syncProgress: SyncProgress | null
   /** Transient info message after sync (auto-clears) */
   syncInfo: string
   /** Trigger a full sync (work items + snapshots + compaction) */
@@ -62,6 +64,7 @@ export function useAppSync(isAuthenticated: boolean, token: string | null): Sync
   const [dataSyncState, setDataSyncState] = useState<'idle' | 'syncing' | 'done'>('idle')
   const [summaryState, setSummaryState] = useState<'idle' | 'syncing' | 'done'>('idle')
   const [backendStatus, setBackendStatus] = useState<BackgroundSyncStatus | null>(null)
+  const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null)
   const [syncInfo, setSyncInfo] = useState('')
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -75,17 +78,35 @@ export function useAppSync(isAuthenticated: boolean, token: string | null): Sync
     }
   }, [])
 
-  // Full sync: Phase 1 (data) + Phase 2 (summary)
+  // Full sync: Uses unified sync with progress
   const performFullSync = useCallback(async () => {
     if (!isAuthenticated || !token) return
 
     await tray.setSyncing(true).catch(() => {})
+    setSyncProgress(null)
 
     try {
-      // Phase 1: 資料同步 — Sync Claude sessions → work items
+      // Use unified sync with progress
       setDataSyncState('syncing')
-      const result = await sync.autoSync()
+      setSummaryState('syncing')
+
+      const result = await backgroundSync.triggerSyncWithProgress((progress) => {
+        setSyncProgress(progress)
+
+        // Update phase states based on progress
+        if (progress.phase === 'sources') {
+          setDataSyncState('syncing')
+        } else if (progress.phase === 'snapshots' || progress.phase === 'compaction') {
+          setDataSyncState('done')
+          setSummaryState('syncing')
+        } else if (progress.phase === 'complete') {
+          setDataSyncState('done')
+          setSummaryState('done')
+        }
+      })
+
       setDataSyncState('done')
+      setSummaryState('done')
 
       const failedResults = result.results.filter((r) => !r.success)
       if (failedResults.length > 0) {
@@ -95,16 +116,9 @@ export function useAppSync(isAuthenticated: boolean, token: string | null): Sync
 
       // Surface sync info for UI
       if (result.total_items > 0) {
-        setSyncInfo(`已掃描 ${result.projects_scanned} 個專案，發現 ${result.items_created} 筆新資料`)
+        setSyncInfo(`同步完成，共處理 ${result.total_items} 筆資料`)
         setTimeout(() => setSyncInfo(''), 4000)
       }
-
-      // Phase 2: 摘要處理 — Capture snapshots + run compaction
-      setSummaryState('syncing')
-      await backgroundSync.triggerSync().catch((err) => {
-        console.warn('Background sync trigger failed:', err)
-      })
-      setSummaryState('done')
 
       // Refresh from backend (single source of truth)
       await refreshStatus()
@@ -112,9 +126,13 @@ export function useAppSync(isAuthenticated: boolean, token: string | null): Sync
       if (status?.last_sync_at) {
         await tray.updateSyncStatus(status.last_sync_at, false).catch(() => {})
       }
+
+      // Clear progress after a short delay
+      setTimeout(() => setSyncProgress(null), 1000)
     } catch {
       setDataSyncState('done')
       setSummaryState('done')
+      setSyncProgress(null)
       await tray.setSyncing(false).catch(() => {})
     }
   }, [isAuthenticated, token, refreshStatus])
@@ -170,5 +188,5 @@ export function useAppSync(isAuthenticated: boolean, token: string | null): Sync
     }
   }, [dataSyncState, summaryState, performFullSync])
 
-  return { dataSyncState, summaryState, backendStatus, syncInfo, performFullSync, refreshStatus }
+  return { dataSyncState, summaryState, backendStatus, syncProgress, syncInfo, performFullSync, refreshStatus }
 }

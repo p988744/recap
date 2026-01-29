@@ -112,6 +112,7 @@ pub fn run() {
             commands::background_sync::start_background_sync,
             commands::background_sync::stop_background_sync,
             commands::background_sync::trigger_background_sync,
+            commands::background_sync::trigger_sync_with_progress,
             // Notifications
             commands::notification::send_sync_notification,
             commands::notification::send_auth_notification,
@@ -120,6 +121,7 @@ pub fn run() {
             commands::snapshots::get_work_summaries,
             commands::snapshots::get_snapshot_detail,
             commands::snapshots::trigger_compaction,
+            commands::snapshots::force_recompact,
             // Worklog
             commands::snapshots::get_worklog_overview,
             commands::snapshots::get_hourly_breakdown,
@@ -145,6 +147,17 @@ pub fn run() {
             commands::projects::queries::update_antigravity_session_path,
             commands::projects::queries::add_manual_project,
             commands::projects::queries::remove_manual_project,
+            // Danger Zone
+            commands::danger_zone::clear_synced_data,
+            commands::danger_zone::factory_reset,
+            commands::danger_zone::force_recompact_with_progress,
+            // Batch Compaction (OpenAI Batch API)
+            commands::batch_compaction::check_batch_availability,
+            commands::batch_compaction::get_pending_hourly_compactions,
+            commands::batch_compaction::get_batch_job_status,
+            commands::batch_compaction::submit_batch_compaction,
+            commands::batch_compaction::refresh_batch_status,
+            commands::batch_compaction::process_completed_batch_job,
         ])
         .setup(|app| {
             // Setup logging

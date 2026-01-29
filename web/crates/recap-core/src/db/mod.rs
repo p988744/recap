@@ -528,6 +528,70 @@ impl Database {
             .execute(&self.pool)
             .await?;
 
+        // Create llm_batch_jobs table for tracking OpenAI Batch API jobs
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS llm_batch_jobs (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                openai_batch_id TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                purpose TEXT NOT NULL,
+                total_requests INTEGER NOT NULL DEFAULT 0,
+                completed_requests INTEGER NOT NULL DEFAULT 0,
+                failed_requests INTEGER NOT NULL DEFAULT 0,
+                input_file_id TEXT,
+                output_file_id TEXT,
+                error_file_id TEXT,
+                error_message TEXT,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                submitted_at DATETIME,
+                completed_at DATETIME,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_batch_jobs_user ON llm_batch_jobs(user_id, status)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_batch_jobs_openai ON llm_batch_jobs(openai_batch_id)")
+            .execute(&self.pool)
+            .await?;
+
+        // Create llm_batch_requests table for mapping batch requests to compaction targets
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS llm_batch_requests (
+                id TEXT PRIMARY KEY,
+                batch_job_id TEXT NOT NULL,
+                custom_id TEXT NOT NULL,
+                project_path TEXT NOT NULL,
+                hour_bucket TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                response TEXT,
+                error_message TEXT,
+                prompt_tokens INTEGER,
+                completion_tokens INTEGER,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                completed_at DATETIME,
+                FOREIGN KEY (batch_job_id) REFERENCES llm_batch_jobs(id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_batch_requests_job ON llm_batch_requests(batch_job_id)")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("CREATE UNIQUE INDEX IF NOT EXISTS idx_batch_requests_custom ON llm_batch_requests(batch_job_id, custom_id)")
+            .execute(&self.pool)
+            .await?;
+
         log::info!("Database migrations completed");
         Ok(())
     }

@@ -36,6 +36,7 @@ export function useSyncForm() {
     refreshStatus,
     dataSyncState,
     summaryState,
+    syncProgress,
   } = useSyncContext()
 
   // Merge frontend phase states into backend status for UI
@@ -139,6 +140,8 @@ export function useSyncForm() {
     // Phase states (for split display)
     dataSyncState,
     summaryState,
+    // Detailed progress
+    syncProgress,
     // UI State
     loading: state.loading,
     saving: state.saving,
