@@ -12,7 +12,7 @@ use super::AppState;
 /// Progress event payload for recompaction
 #[derive(Debug, Clone, Serialize)]
 pub struct RecompactProgress {
-    pub phase: String,           // "deleting", "hourly", "daily", "monthly", "complete"
+    pub phase: String,           // "counting", "scanning", "hourly", "daily", "monthly", "complete"
     pub current: usize,
     pub total: usize,
     pub message: String,
@@ -302,7 +302,7 @@ pub async fn force_recompact_with_progress(
         });
     };
 
-    // Phase 1: Count existing summaries
+    // Phase 1: Count existing summaries (for reference, will be replaced progressively)
     emit_progress("counting", 0, 100, "正在統計現有摘要...");
 
     let summaries_count: (i64,) = sqlx::query_as(
@@ -313,18 +313,13 @@ pub async fn force_recompact_with_progress(
     .await
     .map_err(|e| e.to_string())?;
 
-    // Phase 2: Delete existing summaries
-    emit_progress("deleting", 0, 100, &format!("正在刪除 {} 筆現有摘要...", summaries_count.0));
+    emit_progress("counting", 100, 100, &format!("找到 {} 筆現有摘要，將逐步替換", summaries_count.0));
 
-    sqlx::query("DELETE FROM work_summaries WHERE user_id = ?")
-        .bind(&claims.sub)
-        .execute(&pool)
-        .await
-        .map_err(|e| e.to_string())?;
+    // Note: No deletion phase - we use progressive replacement (upsert)
+    // Each compaction operation will replace the existing summary if it exists
+    // This ensures that if the process fails mid-way, unprocessed items still have their old summaries
 
-    emit_progress("deleting", 100, 100, "已刪除現有摘要");
-
-    // Phase 3: Find all uncompacted hourly snapshots
+    // Phase 2: Find all hourly snapshots to recompact
     emit_progress("scanning", 0, 100, "正在掃描快照資料...");
 
     let hourly_items: Vec<(String, String)> = sqlx::query_as(
@@ -467,7 +462,7 @@ pub async fn force_recompact_with_progress(
     );
 
     log::info!(
-        "Force recompact for user {}: deleted {} summaries, created {} hourly + {} daily + {} monthly",
+        "Force recompact for user {}: replaced {} existing summaries, created {} hourly + {} daily + {} monthly",
         claims.sub,
         summaries_count.0,
         hourly_compacted,

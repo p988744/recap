@@ -19,7 +19,7 @@ export interface DangerousOperationResult {
 
 /** Progress event for recompaction */
 export interface RecompactProgress {
-  phase: 'counting' | 'deleting' | 'scanning' | 'hourly' | 'daily' | 'monthly' | 'complete'
+  phase: 'counting' | 'scanning' | 'hourly' | 'daily' | 'monthly' | 'complete'
   current: number
   total: number
   message: string

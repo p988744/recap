@@ -134,8 +134,7 @@ export const taskTypeLabels: Record<string, string> = {
 }
 
 export const phaseLabels: Record<RecompactProgress['phase'], string> = {
-  counting: '統計中',
-  deleting: '刪除舊摘要',
+  counting: '統計現有摘要',
   scanning: '掃描快照',
   hourly: '處理小時摘要',
   daily: '處理每日摘要',
