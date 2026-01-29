@@ -332,6 +332,31 @@ pub async fn get_worklog_overview(
     .await
     .map_err(|e| e.to_string())?;
 
+    // 4b. Fetch Antigravity work items (grouped by date and project_path)
+    let antigravity_items: Vec<recap_core::WorkItem> = sqlx::query_as(
+        r#"SELECT * FROM work_items
+           WHERE user_id = ? AND source = 'antigravity' AND date >= ? AND date <= ?
+           ORDER BY date DESC"#,
+    )
+    .bind(&claims.sub)
+    .bind(&start_date)
+    .bind(&end_date)
+    .fetch_all(&db.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // Group Antigravity items by (date, project_path)
+    let mut antigravity_stats: std::collections::HashMap<(String, String), (f64, String)> = std::collections::HashMap::new();
+    for item in &antigravity_items {
+        let date = item.date.to_string();
+        let project_path = item.project_path.clone().unwrap_or_default();
+        let entry = antigravity_stats.entry((date, project_path)).or_insert((0.0, String::new()));
+        entry.0 += item.hours;
+        if entry.1.is_empty() {
+            entry.1 = item.description.clone().unwrap_or_else(|| item.title.clone());
+        }
+    }
+
     // 5. Build the response: group by date
     let mut days_map: std::collections::BTreeMap<String, WorklogDay> = std::collections::BTreeMap::new();
 
@@ -410,6 +435,39 @@ pub async fn get_worklog_overview(
                 total_hours: *hours,
                 has_hourly_data: has_hourly,
             });
+        }
+    }
+
+    // Add Antigravity projects (or merge with existing projects)
+    for ((date, project_path), (hours, summary)) in &antigravity_stats {
+        if project_path.is_empty() {
+            continue;
+        }
+        get_or_create_day(&mut days_map, date);
+        if let Some(day_entry) = days_map.get_mut(date.as_str()) {
+            // Check if project already exists (from Claude Code data)
+            if let Some(existing) = day_entry.projects.iter_mut().find(|p| &p.project_path == project_path) {
+                // Merge: add Antigravity hours to existing project
+                existing.total_hours += hours;
+                // Mark as having hourly data (Antigravity items will show in breakdown)
+                existing.has_hourly_data = true;
+            } else {
+                // New project (only has Antigravity data)
+                let project_name = std::path::Path::new(&project_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                day_entry.projects.push(WorklogDayProject {
+                    project_path: project_path.clone(),
+                    project_name,
+                    daily_summary: Some(summary.clone()),
+                    total_commits: 0,
+                    total_files: 0,
+                    total_hours: *hours,
+                    has_hourly_data: true, // Antigravity items will show in breakdown
+                });
+            }
         }
     }
 
@@ -586,7 +644,8 @@ pub async fn get_hourly_breakdown(
     }).collect();
 
     // Also query Antigravity work items for the same date and project
-    let antigravity_items: Vec<recap_core::WorkItem> = sqlx::query_as(
+    // First try exact path match, then fall back to matching by project name
+    let mut antigravity_items: Vec<recap_core::WorkItem> = sqlx::query_as(
         r#"SELECT * FROM work_items
            WHERE user_id = ? AND source = 'antigravity' AND date = ? AND project_path = ?
            ORDER BY created_at DESC"#,
@@ -597,6 +656,29 @@ pub async fn get_hourly_breakdown(
     .fetch_all(&db.pool)
     .await
     .map_err(|e| e.to_string())?;
+
+    // If no exact match, try matching by project name (last path component)
+    if antigravity_items.is_empty() {
+        let project_name = std::path::Path::new(&project_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        if !project_name.is_empty() {
+            // Use LIKE to match paths ending with the project name
+            let pattern = format!("%/{}", project_name);
+            antigravity_items = sqlx::query_as(
+                r#"SELECT * FROM work_items
+                   WHERE user_id = ? AND source = 'antigravity' AND date = ? AND project_path LIKE ?
+                   ORDER BY created_at DESC"#,
+            )
+            .bind(&claims.sub)
+            .bind(&date)
+            .bind(&pattern)
+            .fetch_all(&db.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+    }
 
     // Add Antigravity items to the breakdown
     for item in antigravity_items {
