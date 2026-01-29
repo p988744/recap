@@ -477,7 +477,7 @@ pub async fn get_hourly_breakdown(
         .collect();
 
     if !summaries.is_empty() {
-        return Ok(summaries.into_iter().map(|s| {
+        let mut items: Vec<HourlyBreakdownItem> = summaries.into_iter().map(|s| {
             let hour_start = extract_local_hour(&s.period_start);
             let hour_end = extract_local_hour(&s.period_end);
             let files: Vec<String> = s.key_activities.as_ref()
@@ -509,8 +509,12 @@ pub async fn get_hourly_breakdown(
                 summary: s.summary.clone(),
                 files_modified: files,
                 git_commits: commits,
+                source: "claude_code".to_string(),
             }
-        }).collect());
+        }).collect();
+        // Sort by hour_start descending (newest first)
+        items.sort_by(|a, b| b.hour_start.cmp(&a.hour_start));
+        return Ok(items);
     }
 
     // Fallback: build from raw snapshots
@@ -544,7 +548,7 @@ pub async fn get_hourly_breakdown(
         .filter(|s| extract_local_date(&s.hour_bucket) == date)
         .collect();
 
-    Ok(snapshots.into_iter().map(|s| {
+    let mut items: Vec<HourlyBreakdownItem> = snapshots.into_iter().map(|s| {
         let hour_start = extract_local_hour(&s.hour_bucket);
         let hour_end = next_hour(&hour_start);
 
@@ -577,8 +581,45 @@ pub async fn get_hourly_breakdown(
             summary,
             files_modified: files,
             git_commits: commits,
+            source: "claude_code".to_string(),
         }
-    }).collect())
+    }).collect();
+
+    // Also query Antigravity work items for the same date and project
+    let antigravity_items: Vec<recap_core::WorkItem> = sqlx::query_as(
+        r#"SELECT * FROM work_items
+           WHERE user_id = ? AND source = 'antigravity' AND date = ? AND project_path = ?
+           ORDER BY created_at DESC"#,
+    )
+    .bind(&claims.sub)
+    .bind(&date)
+    .bind(&project_path)
+    .fetch_all(&db.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // Add Antigravity items to the breakdown
+    for item in antigravity_items {
+        // Extract hour from created_at if available, otherwise use a placeholder
+        let hour_start = item.created_at.format("%H:00").to_string();
+        let hour_end = next_hour(&hour_start);
+
+        items.push(HourlyBreakdownItem {
+            hour_start,
+            hour_end,
+            summary: item.description.unwrap_or_else(|| item.title.clone()),
+            files_modified: Vec::new(),
+            git_commits: Vec::new(),
+            source: "antigravity".to_string(),
+        });
+    }
+
+    // Sort by source first (claude_code before antigravity), then by hour_start descending
+    items.sort_by(|a, b| {
+        // Primary: sort by hour_start descending
+        b.hour_start.cmp(&a.hour_start)
+    });
+    Ok(items)
 }
 
 /// Hourly breakdown item
@@ -589,6 +630,8 @@ pub struct HourlyBreakdownItem {
     pub summary: String,
     pub files_modified: Vec<String>,
     pub git_commits: Vec<GitCommitRef>,
+    /// Data source: "claude_code" or "antigravity"
+    pub source: String,
 }
 
 /// Git commit reference

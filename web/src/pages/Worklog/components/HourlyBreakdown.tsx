@@ -1,13 +1,36 @@
+import { useMemo } from 'react'
 import { Clock, GitCommit, FileCode } from 'lucide-react'
 import type { HourlyBreakdownItem } from '@/types/worklog'
 import { MarkdownSummary } from '@/components/MarkdownSummary'
+import { ClaudeIcon } from '@/pages/Settings/components/ProjectsSection/icons/ClaudeIcon'
+import { GeminiIcon } from '@/pages/Settings/components/ProjectsSection/icons/GeminiIcon'
 
 interface HourlyBreakdownProps {
   items: HourlyBreakdownItem[]
   loading: boolean
 }
 
+const SOURCE_CONFIG: Record<string, { icon: React.ReactNode; label: string; headerBgClass: string }> = {
+  claude_code: {
+    icon: <ClaudeIcon className="w-3.5 h-3.5" />,
+    label: 'Claude Code',
+    headerBgClass: 'bg-amber-50 dark:bg-amber-900/20',
+  },
+  antigravity: {
+    icon: <GeminiIcon className="w-3.5 h-3.5" />,
+    label: 'Antigravity',
+    headerBgClass: 'bg-blue-50 dark:bg-blue-900/20',
+  },
+}
+
 export function HourlyBreakdown({ items, loading }: HourlyBreakdownProps) {
+  // Group items by source
+  const { claudeItems, antigravityItems } = useMemo(() => {
+    const claudeItems = items.filter(item => item.source === 'claude_code')
+    const antigravityItems = items.filter(item => item.source === 'antigravity')
+    return { claudeItems, antigravityItems }
+  }, [items])
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-6">
@@ -26,9 +49,36 @@ export function HourlyBreakdown({ items, loading }: HourlyBreakdownProps) {
 
   return (
     <div className="divide-y divide-border">
-      {items.map((item, i) => (
-        <HourlyCard key={i} item={item} />
-      ))}
+      {/* Claude Code section */}
+      {claudeItems.length > 0 && (
+        <SourceSection source="claude_code" items={claudeItems} />
+      )}
+      {/* Antigravity section */}
+      {antigravityItems.length > 0 && (
+        <SourceSection source="antigravity" items={antigravityItems} />
+      )}
+    </div>
+  )
+}
+
+function SourceSection({ source, items }: { source: string; items: HourlyBreakdownItem[] }) {
+  const config = SOURCE_CONFIG[source]
+  if (!config) return null
+
+  return (
+    <div>
+      {/* Source header */}
+      <div className={`flex items-center gap-1.5 px-4 py-2 pl-11 ${config.headerBgClass}`}>
+        {config.icon}
+        <span className="text-xs font-medium text-foreground/80">{config.label}</span>
+        <span className="text-xs text-muted-foreground">({items.length})</span>
+      </div>
+      {/* Items */}
+      <div className="divide-y divide-border/50">
+        {items.map((item, i) => (
+          <HourlyCard key={i} item={item} />
+        ))}
+      </div>
     </div>
   )
 }
