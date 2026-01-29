@@ -229,30 +229,25 @@ export interface ClaudeSyncResult {
 }
 
 // ============ Antigravity (Gemini Code) ============
+// Uses local HTTP API when Antigravity app is running
 
-export interface AntigravityToolUsage {
-  tool_name: string
-  count: number
-  details: string[]
+export interface AntigravityApiStatus {
+  running: boolean
+  api_url?: string
+  healthy: boolean
+  session_count?: number
 }
 
 export interface AntigravitySession {
   session_id: string
-  task_summary?: string
-  walkthrough_summary?: string
+  summary?: string
   cwd: string
   git_branch?: string
-  first_message?: string
-  message_count: number
+  git_repo?: string
+  step_count: number
   first_timestamp?: string
   last_timestamp?: string
-  file_path: string
-  file_size: number
-  artifact_count: number
-  tool_usage: AntigravityToolUsage[]
-  files_modified: string[]
-  commands_run: string[]
-  user_messages: string[]
+  status: string
 }
 
 export interface AntigravityProject {

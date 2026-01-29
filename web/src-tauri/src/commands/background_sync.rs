@@ -18,6 +18,7 @@ pub struct UpdateBackgroundSyncConfigRequest {
     pub interval_minutes: Option<u32>,
     pub sync_git: Option<bool>,
     pub sync_claude: Option<bool>,
+    pub sync_antigravity: Option<bool>,
     pub sync_gitlab: Option<bool>,
     pub sync_jira: Option<bool>,
 }
@@ -28,6 +29,7 @@ pub struct BackgroundSyncConfigResponse {
     pub interval_minutes: u32,
     pub sync_git: bool,
     pub sync_claude: bool,
+    pub sync_antigravity: bool,
     pub sync_gitlab: bool,
     pub sync_jira: bool,
 }
@@ -39,6 +41,7 @@ impl From<BackgroundSyncConfig> for BackgroundSyncConfigResponse {
             interval_minutes: config.interval_minutes,
             sync_git: config.sync_git,
             sync_claude: config.sync_claude,
+            sync_antigravity: config.sync_antigravity,
             sync_gitlab: config.sync_gitlab,
             sync_jira: config.sync_jira,
         }
@@ -125,6 +128,7 @@ pub async fn update_background_sync_config(
         interval_minutes: config.interval_minutes.unwrap_or(current.interval_minutes),
         sync_git: config.sync_git.unwrap_or(current.sync_git),
         sync_claude: config.sync_claude.unwrap_or(current.sync_claude),
+        sync_antigravity: config.sync_antigravity.unwrap_or(current.sync_antigravity),
         sync_gitlab: config.sync_gitlab.unwrap_or(current.sync_gitlab),
         sync_jira: config.sync_jira.unwrap_or(current.sync_jira),
     };
@@ -220,6 +224,7 @@ mod tests {
             interval_minutes: 15,
             sync_git: true,
             sync_claude: true,
+            sync_antigravity: true,
             sync_gitlab: false,
             sync_jira: false,
         };

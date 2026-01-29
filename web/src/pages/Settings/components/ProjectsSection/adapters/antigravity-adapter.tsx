@@ -5,7 +5,8 @@ import { GeminiIcon } from '../icons/GeminiIcon'
 /**
  * Antigravity (Gemini Code) adapter.
  *
- * Uses the antigravity service to scan and sync Gemini Code sessions.
+ * Uses the local Antigravity HTTP API when the app is running.
+ * Requires Antigravity desktop app to be open.
  */
 export function createAntigravityAdapter(): DataSourceAdapter {
   return {
@@ -27,9 +28,9 @@ export function createAntigravityAdapter(): DataSourceAdapter {
         sessionCount: p.sessions.length,
         sessions: p.sessions.map((s) => ({
           id: s.session_id,
-          summary: s.task_summary || s.walkthrough_summary || s.first_message || 'Gemini session',
+          summary: s.summary || 'Gemini session',
           timestamp: s.first_timestamp,
-          detail: `${s.artifact_count} artifacts, ${s.message_count} messages`,
+          detail: `${s.step_count} steps${s.git_branch ? `, ${s.git_branch}` : ''}`,
         })),
       }))
     },

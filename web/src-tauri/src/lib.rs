@@ -64,6 +64,7 @@ pub fn run() {
             commands::claude::sync_claude_projects,
             // Antigravity (Gemini Code)
             commands::antigravity::check_antigravity_installed,
+            commands::antigravity::check_antigravity_api_status,
             commands::antigravity::list_antigravity_sessions,
             commands::antigravity::sync_antigravity_projects,
             // Reports - queries

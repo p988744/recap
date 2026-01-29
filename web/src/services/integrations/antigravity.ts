@@ -4,6 +4,7 @@
 
 import { invokeAuth } from '../client'
 import type {
+  AntigravityApiStatus,
   AntigravityProject,
   AntigravitySyncProjectsRequest,
   AntigravitySyncResult,
@@ -14,6 +15,13 @@ import type {
  */
 export async function checkInstalled(): Promise<boolean> {
   return invokeAuth<boolean>('check_antigravity_installed')
+}
+
+/**
+ * Check Antigravity API status - returns URL and health check result
+ */
+export async function checkApiStatus(): Promise<AntigravityApiStatus> {
+  return invokeAuth<AntigravityApiStatus>('check_antigravity_api_status')
 }
 
 /**

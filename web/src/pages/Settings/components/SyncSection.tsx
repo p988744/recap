@@ -1,11 +1,10 @@
 import { useMemo } from 'react'
-import { Save, Loader2, RefreshCw, Clock, CheckCircle2, AlertCircle } from 'lucide-react'
+import { Save, Loader2, Clock } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import type { SettingsMessage } from '../hooks/useSettings'
-import type { BackgroundSyncStatus } from '@/services/background-sync'
 
 // =============================================================================
 // Constants
@@ -44,24 +43,17 @@ const WEEK_DAYS = [
 // Types
 // =============================================================================
 
-type PhaseState = 'idle' | 'syncing' | 'done'
-
 interface SyncSectionProps {
   // Sync Config
   enabled: boolean
   setEnabled: (v: boolean) => void
   intervalMinutes: number
   setIntervalMinutes: (v: number) => void
-  // Sync Status
-  status: BackgroundSyncStatus | null
-  dataSyncState: PhaseState
-  summaryState: PhaseState
   // Sync UI
   loading: boolean
   saving: boolean
   // Sync Actions
   onSave: (setMessage: (msg: SettingsMessage | null) => void) => Promise<void>
-  onTriggerSync: (setMessage: (msg: SettingsMessage | null) => void) => Promise<void>
   // Preferences
   dailyHours: number
   setDailyHours: (v: number) => void
@@ -75,38 +67,6 @@ interface SyncSectionProps {
   onSavePreferences: (setMessage: (msg: SettingsMessage | null) => void) => Promise<void>
   // Shared
   setMessage: (msg: SettingsMessage | null) => void
-}
-
-// =============================================================================
-// Helpers
-// =============================================================================
-
-function formatTime(isoString: string | null): string {
-  if (!isoString) return '-'
-  try {
-    const date = new Date(isoString)
-    return date.toLocaleTimeString('zh-TW', {
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  } catch {
-    return '-'
-  }
-}
-
-function formatDateTime(isoString: string | null): string {
-  if (!isoString) return '-'
-  try {
-    const date = new Date(isoString)
-    return date.toLocaleString('zh-TW', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  } catch {
-    return '-'
-  }
 }
 
 // =============================================================================
@@ -147,110 +107,6 @@ function Toggle({
   )
 }
 
-function PhaseStatus({ label, state }: { label: string; state: PhaseState }) {
-  return (
-    <div className="flex items-center justify-between py-2">
-      <span className="text-sm text-muted-foreground">{label}</span>
-      <div className="flex items-center gap-1.5">
-        {state === 'syncing' ? (
-          <>
-            <Loader2 className="w-3.5 h-3.5 animate-spin text-foreground" />
-            <span className="text-sm font-medium">處理中</span>
-          </>
-        ) : state === 'done' ? (
-          <>
-            <CheckCircle2 className="w-3.5 h-3.5 text-sage" />
-            <span className="text-sm text-sage">完成</span>
-          </>
-        ) : (
-          <span className="text-sm text-muted-foreground">待執行</span>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function StatusCard({
-  status,
-  enabled,
-  dataSyncState,
-  summaryState,
-}: {
-  status: BackgroundSyncStatus | null
-  enabled: boolean
-  dataSyncState: PhaseState
-  summaryState: PhaseState
-}) {
-  if (!status) {
-    return (
-      <div className="p-4 bg-foreground/5 text-sm text-muted-foreground">
-        載入中...
-      </div>
-    )
-  }
-
-  const isSyncing = status.is_syncing
-  const isActive = enabled && (status.is_running || !!status.last_sync_at)
-  const hasError = status.last_error
-
-  return (
-    <div className="space-y-3">
-      {/* Overall Status Badge */}
-      <div className="flex items-center gap-2">
-        {isSyncing ? (
-          <>
-            <Loader2 className="w-4 h-4 animate-spin text-foreground" />
-            <span className="text-sm font-medium">同步中...</span>
-          </>
-        ) : isActive ? (
-          <>
-            <CheckCircle2 className="w-4 h-4 text-sage" />
-            <span className="text-sm font-medium text-sage">運行中</span>
-          </>
-        ) : (
-          <>
-            <AlertCircle className="w-4 h-4 text-muted-foreground" />
-            <span className="text-sm text-muted-foreground">已停止</span>
-          </>
-        )}
-      </div>
-
-      {/* Phase Breakdown */}
-      <div className="divide-y divide-border">
-        <PhaseStatus label="資料同步" state={dataSyncState} />
-        <PhaseStatus label="摘要處理" state={summaryState} />
-      </div>
-
-      {/* Status Details */}
-      <div className="grid grid-cols-2 gap-4 text-sm">
-        <div>
-          <p className="text-muted-foreground">上次同步</p>
-          <p className="font-mono">{formatDateTime(status.last_sync_at)}</p>
-        </div>
-        <div>
-          <p className="text-muted-foreground">下次同步</p>
-          <p className="font-mono">{formatTime(status.next_sync_at)}</p>
-        </div>
-      </div>
-
-      {/* Last Result */}
-      {status.last_result && (
-        <div className="text-sm">
-          <p className="text-muted-foreground">上次結果</p>
-          <p>{status.last_result}</p>
-        </div>
-      )}
-
-      {/* Error Message */}
-      {hasError && (
-        <div className="p-2 bg-destructive/10 text-destructive text-sm border-l-2 border-destructive">
-          {status.last_error}
-        </div>
-      )}
-    </div>
-  )
-}
-
 // =============================================================================
 // Main Component
 // =============================================================================
@@ -260,13 +116,9 @@ export function SyncSection({
   setEnabled,
   intervalMinutes,
   setIntervalMinutes,
-  status,
-  dataSyncState,
-  summaryState,
   loading,
   saving,
   onSave,
-  onTriggerSync,
   dailyHours,
   setDailyHours,
   normalizeHours,
@@ -301,27 +153,6 @@ export function SyncSection({
   return (
     <section className="animate-fade-up opacity-0 delay-1">
       <h2 className="font-display text-2xl text-foreground mb-6">系統設定</h2>
-
-      {/* Sync Status Card */}
-      <Card className="p-6 mb-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-medium">同步狀態</h3>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onTriggerSync(setMessage)}
-            disabled={status?.is_syncing}
-          >
-            {status?.is_syncing ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <RefreshCw className="w-4 h-4" />
-            )}
-            立即同步
-          </Button>
-        </div>
-        <StatusCard status={status} enabled={enabled} dataSyncState={dataSyncState} summaryState={summaryState} />
-      </Card>
 
       {/* Sync Configuration Card */}
       <Card className="p-6 mb-6">

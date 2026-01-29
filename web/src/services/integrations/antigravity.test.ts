@@ -7,49 +7,32 @@ import {
 } from '@/test/mocks/tauri'
 import * as antigravity from './antigravity'
 
-// Mock fixtures
+// Mock fixtures - updated to match new HTTP API response structure
 const mockAntigravityProject = {
   path: '/home/user/projects/test-project',
   name: 'test-project',
   sessions: [
     {
       session_id: 'ag-session-1',
-      task_summary: 'Implement user authentication',
-      walkthrough_summary: null,
+      summary: 'Implement user authentication',
       cwd: '/home/user/projects/test-project',
       git_branch: 'main',
-      first_message: 'Help me add login functionality',
-      message_count: 15,
+      git_repo: 'user/test-project',
+      step_count: 150,
       first_timestamp: '2024-01-15T09:00:00+08:00',
       last_timestamp: '2024-01-15T12:00:00+08:00',
-      file_path: '/home/user/.gemini/antigravity/test-project/session-1.jsonl',
-      file_size: 1024,
-      artifact_count: 5,
-      tool_usage: [
-        { tool_name: 'read_file', count: 10, details: ['src/auth.rs'] },
-        { tool_name: 'edit_file', count: 5, details: ['src/login.rs'] },
-      ],
-      files_modified: ['src/auth.rs', 'src/login.rs'],
-      commands_run: ['cargo test', 'cargo build'],
-      user_messages: ['Help me add login functionality'],
+      status: 'CASCADE_RUN_STATUS_IDLE',
     },
     {
       session_id: 'ag-session-2',
-      task_summary: 'Fix authentication bug',
-      walkthrough_summary: null,
+      summary: 'Fix authentication bug',
       cwd: '/home/user/projects/test-project',
       git_branch: 'fix/auth',
-      first_message: 'The login is not working correctly',
-      message_count: 8,
+      git_repo: 'user/test-project',
+      step_count: 80,
       first_timestamp: '2024-01-15T14:00:00+08:00',
       last_timestamp: '2024-01-15T16:00:00+08:00',
-      file_path: '/home/user/.gemini/antigravity/test-project/session-2.jsonl',
-      file_size: 512,
-      artifact_count: 2,
-      tool_usage: [{ tool_name: 'edit_file', count: 3, details: ['src/auth.rs'] }],
-      files_modified: ['src/auth.rs'],
-      commands_run: ['cargo test'],
-      user_messages: ['The login is not working correctly'],
+      status: 'CASCADE_RUN_STATUS_IDLE',
     },
   ],
 }
@@ -77,7 +60,7 @@ describe('antigravity service', () => {
   })
 
   describe('checkInstalled', () => {
-    it('should return true when Antigravity is installed', async () => {
+    it('should return true when Antigravity is running', async () => {
       mockCommandValue('check_antigravity_installed', true)
 
       const result = await antigravity.checkInstalled()
@@ -86,7 +69,7 @@ describe('antigravity service', () => {
       expect(mockInvoke).toHaveBeenCalledWith('check_antigravity_installed', { token: 'test-token' })
     })
 
-    it('should return false when Antigravity is not installed', async () => {
+    it('should return false when Antigravity is not running', async () => {
       mockCommandValue('check_antigravity_installed', false)
 
       const result = await antigravity.checkInstalled()
@@ -95,14 +78,14 @@ describe('antigravity service', () => {
     })
 
     it('should throw on error', async () => {
-      mockCommandError('check_antigravity_installed', 'Failed to check Antigravity installation')
+      mockCommandError('check_antigravity_installed', 'Failed to check Antigravity process')
 
-      await expect(antigravity.checkInstalled()).rejects.toThrow('Failed to check Antigravity installation')
+      await expect(antigravity.checkInstalled()).rejects.toThrow('Failed to check Antigravity process')
     })
   })
 
   describe('listProjects', () => {
-    it('should list all Antigravity projects', async () => {
+    it('should list all Antigravity projects from API', async () => {
       mockCommandValue('list_antigravity_sessions', mockAntigravityProjects)
 
       const result = await antigravity.listProjects()
@@ -121,10 +104,10 @@ describe('antigravity service', () => {
       expect(result).toHaveLength(0)
     })
 
-    it('should throw on error', async () => {
-      mockCommandError('list_antigravity_sessions', 'Antigravity directory not found')
+    it('should throw when Antigravity is not running', async () => {
+      mockCommandError('list_antigravity_sessions', 'Antigravity is not running. Please start the Antigravity app.')
 
-      await expect(antigravity.listProjects()).rejects.toThrow('Antigravity directory not found')
+      await expect(antigravity.listProjects()).rejects.toThrow('Antigravity is not running')
     })
 
     it('should return sessions with correct metadata', async () => {
@@ -133,9 +116,11 @@ describe('antigravity service', () => {
       const result = await antigravity.listProjects()
 
       expect(result[0].sessions[0].session_id).toBe('ag-session-1')
-      expect(result[0].sessions[0].task_summary).toBe('Implement user authentication')
-      expect(result[0].sessions[0].artifact_count).toBe(5)
-      expect(result[0].sessions[0].tool_usage).toHaveLength(2)
+      expect(result[0].sessions[0].summary).toBe('Implement user authentication')
+      expect(result[0].sessions[0].step_count).toBe(150)
+      expect(result[0].sessions[0].git_branch).toBe('main')
+      expect(result[0].sessions[0].git_repo).toBe('user/test-project')
+      expect(result[0].sessions[0].status).toBe('CASCADE_RUN_STATUS_IDLE')
     })
   })
 
@@ -174,14 +159,14 @@ describe('antigravity service', () => {
       expect(result.sessions_skipped).toBe(2)
     })
 
-    it('should throw on invalid project path', async () => {
-      mockCommandError('sync_antigravity_projects', 'Project path not found')
+    it('should throw when Antigravity is not running', async () => {
+      mockCommandError('sync_antigravity_projects', 'Antigravity is not running. Please start the Antigravity app.')
 
       const request = {
         project_paths: ['/invalid/path'],
       }
 
-      await expect(antigravity.sync(request)).rejects.toThrow('Project path not found')
+      await expect(antigravity.sync(request)).rejects.toThrow('Antigravity is not running')
     })
 
     it('should sync multiple projects', async () => {

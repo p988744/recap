@@ -123,7 +123,7 @@ export type {
   SyncProjectsRequest,
   ClaudeSyncResult,
   // Antigravity (Gemini Code)
-  AntigravityToolUsage,
+  AntigravityApiStatus,
   AntigravitySession,
   AntigravityProject,
   AntigravitySyncProjectsRequest,

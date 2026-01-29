@@ -1,132 +1,98 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Check, RotateCcw } from 'lucide-react'
+import { CheckCircle2, XCircle, RefreshCw, Loader2 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
-import { projects as projectsService } from '@/services'
+import { antigravity } from '@/services/integrations'
+import type { AntigravityApiStatus } from '@/types'
 import { GeminiIcon } from './icons/GeminiIcon'
 
 export function AntigravityPathSetting() {
-  const [path, setPath] = useState('')
-  const [isDefault, setIsDefault] = useState(true)
-  const [editing, setEditing] = useState(false)
-  const [editValue, setEditValue] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [status, setStatus] = useState<AntigravityApiStatus | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [checking, setChecking] = useState(false)
 
-  const fetchPath = useCallback(async () => {
+  const checkStatus = useCallback(async () => {
     try {
-      const data = await projectsService.getAntigravitySessionPath()
-      setPath(data.path)
-      setIsDefault(data.is_default)
+      setChecking(true)
+      const data = await antigravity.checkApiStatus()
+      setStatus(data)
     } catch (err) {
-      console.error('Failed to fetch Antigravity session path:', err)
+      console.error('Failed to check Antigravity API status:', err)
+      setStatus({
+        running: false,
+        healthy: false,
+      })
+    } finally {
+      setLoading(false)
+      setChecking(false)
     }
   }, [])
 
   useEffect(() => {
-    fetchPath()
-  }, [fetchPath])
+    checkStatus()
+  }, [checkStatus])
 
-  const handleSave = useCallback(async () => {
-    setSaving(true)
-    setError(null)
-    try {
-      await projectsService.updateAntigravitySessionPath(editValue || null)
-      await fetchPath()
-      setEditing(false)
-    } catch (err) {
-      setError(String(err))
-    } finally {
-      setSaving(false)
-    }
-  }, [editValue, fetchPath])
+  if (loading) {
+    return (
+      <Card className="p-4">
+        <div className="flex items-center gap-2.5">
+          <GeminiIcon className="w-4 h-4 text-blue-500" />
+          <span className="text-sm font-medium text-foreground">Antigravity API</span>
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground ml-auto" />
+        </div>
+      </Card>
+    )
+  }
 
-  const handleReset = useCallback(async () => {
-    setSaving(true)
-    setError(null)
-    try {
-      await projectsService.updateAntigravitySessionPath(null)
-      await fetchPath()
-      setEditing(false)
-    } catch (err) {
-      setError(String(err))
-    } finally {
-      setSaving(false)
-    }
-  }, [fetchPath])
+  const isHealthy = status?.running && status?.healthy
 
   return (
     <Card className="p-4">
       <div className="flex items-center gap-2.5 mb-2">
         <GeminiIcon className="w-4 h-4 text-blue-500" />
-        <span className="text-sm font-medium text-foreground">Antigravity Session 路徑</span>
-        {isDefault && (
-          <span className="text-[10px] text-muted-foreground/60 bg-foreground/5 px-1.5 py-0.5 rounded">
-            預設
+        <span className="text-sm font-medium text-foreground">Antigravity API</span>
+        {isHealthy ? (
+          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-sage/10 text-sage">
+            <CheckCircle2 className="w-2.5 h-2.5" />
+            連線正常
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-destructive/10 text-destructive">
+            <XCircle className="w-2.5 h-2.5" />
+            未連線
           </span>
         )}
+        <button
+          onClick={checkStatus}
+          disabled={checking}
+          className="ml-auto p-1 rounded hover:bg-foreground/5 transition-colors disabled:opacity-50"
+          title="重新檢查"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 text-muted-foreground ${checking ? 'animate-spin' : ''}`} />
+        </button>
       </div>
 
-      {editing ? (
-        <div className="ml-[26px] space-y-2">
-          <input
-            type="text"
-            value={editValue}
-            onChange={(e) => setEditValue(e.target.value)}
-            placeholder="~/.gemini/antigravity"
-            className="w-full text-xs px-2.5 py-1.5 rounded border border-border bg-background text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-foreground/20"
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleSave()
-              if (e.key === 'Escape') setEditing(false)
-            }}
-          />
-          {error && (
-            <p className="text-xs text-red-500">{error}</p>
-          )}
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="flex items-center gap-1 text-xs text-foreground hover:text-foreground/80 transition-colors disabled:opacity-50"
-            >
-              <Check className="w-3 h-3" />
-              儲存
-            </button>
-            <button
-              onClick={() => setEditing(false)}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              取消
-            </button>
-            {!isDefault && (
-              <button
-                onClick={handleReset}
-                disabled={saving}
-                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors ml-auto disabled:opacity-50"
-              >
-                <RotateCcw className="w-3 h-3" />
-                重設為預設
-              </button>
+      <div className="ml-[26px] space-y-1.5">
+        {isHealthy && status?.api_url ? (
+          <>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-muted-foreground/60 w-16">API 端點</span>
+              <code className="text-xs text-foreground font-mono bg-foreground/5 px-1.5 py-0.5 rounded">
+                {status.api_url}
+              </code>
+            </div>
+            {status.session_count !== undefined && (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-muted-foreground/60 w-16">Session 數</span>
+                <span className="text-xs text-foreground">{status.session_count}</span>
+              </div>
             )}
-          </div>
-        </div>
-      ) : (
-        <div className="ml-[26px]">
-          <button
-            onClick={() => {
-              setEditValue(path)
-              setEditing(true)
-              setError(null)
-            }}
-            className="text-xs text-muted-foreground hover:text-foreground break-all leading-relaxed transition-colors text-left"
-          >
-            {path}
-          </button>
-          <p className="text-[10px] text-muted-foreground/50 mt-1">
-            點擊修改路徑。此路徑用於掃描 Antigravity 專案 session。請使用絕對路徑。
+          </>
+        ) : (
+          <p className="text-[10px] text-muted-foreground/50">
+            請先開啟 Antigravity 應用程式，才能取得 API 資料並同步工作記錄。
           </p>
-        </div>
-      )}
+        )}
+      </div>
     </Card>
   )
 }

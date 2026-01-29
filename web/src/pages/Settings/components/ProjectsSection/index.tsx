@@ -2,13 +2,31 @@ import { useCallback, useEffect, useState } from 'react'
 import { Plus } from 'lucide-react'
 import { projects as projectsService } from '@/services'
 import type { ProjectInfo } from '@/types'
+import type { BackgroundSyncStatus } from '@/services/background-sync'
 import { ProjectList } from './ProjectList'
 import { ProjectSourcePanel } from './ProjectSourcePanel'
 import { ClaudePathSetting } from './ClaudePathSetting'
 import { AntigravityPathSetting } from './AntigravityPathSetting'
 import { AddProjectDialog } from './AddProjectDialog'
+import { DataSyncStatus } from './DataSyncStatus'
 
-export function ProjectsSection() {
+type PhaseState = 'idle' | 'syncing' | 'done'
+
+interface ProjectsSectionProps {
+  syncStatus?: BackgroundSyncStatus | null
+  syncEnabled?: boolean
+  dataSyncState?: PhaseState
+  summaryState?: PhaseState
+  onTriggerSync?: () => void
+}
+
+export function ProjectsSection({
+  syncStatus = null,
+  syncEnabled = false,
+  dataSyncState = 'idle',
+  summaryState = 'idle',
+  onTriggerSync,
+}: ProjectsSectionProps) {
   const [projectList, setProjectList] = useState<ProjectInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedProject, setSelectedProject] = useState<string | null>(null)
@@ -74,8 +92,19 @@ export function ProjectsSection() {
         管理專案設定。隱藏的專案不會出現在儀表板、報告和統計中。
       </p>
 
+      {/* Data sync status */}
+      {onTriggerSync && (
+        <DataSyncStatus
+          status={syncStatus}
+          enabled={syncEnabled}
+          dataSyncState={dataSyncState}
+          summaryState={summaryState}
+          onTriggerSync={onTriggerSync}
+        />
+      )}
+
       {/* Data source path settings */}
-      <div className="space-y-3">
+      <div className="mt-4 space-y-3">
         <ClaudePathSetting />
         <AntigravityPathSetting />
       </div>

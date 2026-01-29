@@ -1,24 +1,28 @@
 //! Antigravity (Gemini Code) session commands
 //!
 //! Tauri commands for Antigravity session operations.
-//! Antigravity sessions are stored in ~/.gemini/antigravity/
+//! Uses the local Antigravity HTTP API when the app is running.
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs;
-use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::process::Command;
 use tauri::State;
 
 use recap_core::auth::verify_token;
-use recap_core::services::{
-    calculate_session_hours, extract_tool_detail, generate_daily_hash, is_meaningful_message,
-};
+use recap_core::services::{calculate_session_hours, generate_daily_hash};
 
 use super::AppState;
 
-// Types
+// ==================== Public Types ====================
+
+#[derive(Debug, Serialize)]
+pub struct AntigravityApiStatus {
+    pub running: bool,
+    pub api_url: Option<String>,
+    pub healthy: bool,
+    pub session_count: Option<usize>,
+}
 
 #[derive(Debug, Serialize)]
 pub struct AntigravityProject {
@@ -28,74 +32,18 @@ pub struct AntigravityProject {
 }
 
 #[derive(Debug, Serialize, Clone)]
-pub struct AntigravityToolUsage {
-    pub tool_name: String,
-    pub count: usize,
-    pub details: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
 pub struct AntigravitySession {
     pub session_id: String,
-    pub task_summary: Option<String>,
-    pub walkthrough_summary: Option<String>,
+    pub summary: Option<String>,
     pub cwd: String,
     pub git_branch: Option<String>,
-    pub first_message: Option<String>,
-    pub message_count: usize,
+    pub git_repo: Option<String>,
+    pub step_count: usize,
     pub first_timestamp: Option<String>,
     pub last_timestamp: Option<String>,
-    pub file_path: String,
-    pub file_size: u64,
-    pub artifact_count: usize,
-    pub tool_usage: Vec<AntigravityToolUsage>,
-    pub files_modified: Vec<String>,
-    pub commands_run: Vec<String>,
-    pub user_messages: Vec<String>,
+    pub status: String,
 }
 
-/// Message structure for Antigravity session files
-#[derive(Debug, Deserialize)]
-struct AntigravityMessage {
-    #[serde(rename = "sessionId")]
-    session_id: Option<String>,
-    timestamp: Option<String>,
-    cwd: Option<String>,
-    #[serde(rename = "gitBranch")]
-    git_branch: Option<String>,
-    #[serde(rename = "taskSummary")]
-    task_summary: Option<String>,
-    #[serde(rename = "walkthroughSummary")]
-    walkthrough_summary: Option<String>,
-    message: Option<MessageContent>,
-    artifact: Option<ArtifactContent>,
-}
-
-#[derive(Debug, Deserialize)]
-struct MessageContent {
-    role: Option<String>,
-    content: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ArtifactContent {
-    #[serde(rename = "type")]
-    artifact_type: Option<String>,
-    path: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ToolUseContent {
-    #[serde(rename = "type")]
-    content_type: Option<String>,
-    name: Option<String>,
-    input: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SyncProjectsRequest {
-    pub project_paths: Vec<String>,
-}
 
 #[derive(Debug, Serialize)]
 pub struct AntigravitySyncResult {
@@ -105,386 +53,225 @@ pub struct AntigravitySyncResult {
     pub work_items_updated: usize,
 }
 
-// Helper functions
+// ==================== API Response Types ====================
 
-/// Get the default Antigravity home path (used for tests and fallback)
-fn get_default_antigravity_home() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".gemini").join("antigravity"))
+#[derive(Debug, Deserialize)]
+struct ApiResponse {
+    #[serde(rename = "trajectorySummaries")]
+    trajectory_summaries: Option<HashMap<String, TrajectorySummary>>,
 }
 
-/// Get Antigravity home path from database (custom) or default
-async fn get_antigravity_home_for_user(
-    pool: &sqlx::SqlitePool,
-    user_id: &str,
-) -> Option<PathBuf> {
-    // Try to get custom path from database
-    let custom_path: Option<String> = sqlx::query_as::<_, (Option<String>,)>(
-        "SELECT antigravity_session_path FROM users WHERE id = ?",
-    )
-    .bind(user_id)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten()
-    .and_then(|(path,)| path);
-
-    // Use custom path if set, otherwise default
-    custom_path
-        .map(PathBuf::from)
-        .or_else(get_default_antigravity_home)
+#[derive(Debug, Deserialize, Clone)]
+struct TrajectorySummary {
+    summary: Option<String>,
+    #[serde(rename = "stepCount")]
+    step_count: Option<usize>,
+    #[serde(rename = "createdTime")]
+    created_time: Option<String>,
+    #[serde(rename = "lastModifiedTime")]
+    last_modified_time: Option<String>,
+    status: Option<String>,
+    workspaces: Option<Vec<Workspace>>,
 }
 
-/// Helper to calculate session hours with Option handling
-fn session_hours_from_options(first: &Option<String>, last: &Option<String>) -> f64 {
-    match (first, last) {
-        (Some(start), Some(end)) => calculate_session_hours(start, end),
-        _ => 0.5,
+#[derive(Debug, Deserialize, Clone)]
+struct Workspace {
+    #[serde(rename = "workspaceFolderAbsoluteUri")]
+    workspace_folder_absolute_uri: Option<String>,
+    #[serde(rename = "branchName")]
+    branch_name: Option<String>,
+    repository: Option<Repository>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct Repository {
+    #[serde(rename = "computedName")]
+    computed_name: Option<String>,
+    #[serde(rename = "gitOriginUrl")]
+    git_origin_url: Option<String>,
+}
+
+// ==================== Process Discovery ====================
+
+/// Information about a running Antigravity process
+struct AntigravityProcess {
+    csrf_token: String,
+    port: u16,
+}
+
+/// Find the running Antigravity language server process and extract connection info
+fn find_antigravity_process() -> Option<AntigravityProcess> {
+    // Run ps command to find the process
+    let output = Command::new("ps")
+        .args(["aux"])
+        .output()
+        .ok()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Find the language_server process line
+    for line in stdout.lines() {
+        if line.contains("language_server_macos") || line.contains("language_server_linux") {
+            // Extract CSRF token
+            let csrf_token = extract_csrf_token(line)?;
+
+            // Extract server_port directly from command line (more reliable than lsof)
+            let port = extract_server_port(line)?;
+
+            return Some(AntigravityProcess { csrf_token, port });
+        }
     }
+
+    None
 }
 
-fn parse_session_file(path: &PathBuf) -> Option<AntigravitySession> {
-    let file = fs::File::open(path).ok()?;
-    let file_size = file.metadata().ok()?.len();
-    let reader = BufReader::new(file);
+/// Extract server_port from process command line
+/// First tries --server_port, then falls back to --extension_server_port + 1
+fn extract_server_port(line: &str) -> Option<u16> {
+    let parts: Vec<&str> = line.split_whitespace().collect();
 
-    let mut session_id: Option<String> = None;
-    let mut cwd: Option<String> = None;
-    let mut git_branch: Option<String> = None;
-    let mut task_summary: Option<String> = None;
-    let mut walkthrough_summary: Option<String> = None;
-    let mut first_message: Option<String> = None;
-    let mut first_timestamp: Option<String> = None;
-    let mut last_timestamp: Option<String> = None;
-    let mut meaningful_message_count: usize = 0;
-    let mut artifact_count: usize = 0;
-
-    let mut tool_counts: HashMap<String, usize> = HashMap::new();
-    let mut tool_details: HashMap<String, Vec<String>> = HashMap::new();
-    let mut files_modified: Vec<String> = Vec::new();
-    let mut commands_run: Vec<String> = Vec::new();
-    let mut user_messages: Vec<String> = Vec::new();
-
-    for line in reader.lines().flatten() {
-        if let Ok(msg) = serde_json::from_str::<AntigravityMessage>(&line) {
-            if session_id.is_none() {
-                session_id = msg.session_id;
-            }
-            if cwd.is_none() {
-                cwd = msg.cwd;
-            }
-            if git_branch.is_none() {
-                git_branch = msg.git_branch;
-            }
-            if task_summary.is_none() {
-                task_summary = msg.task_summary;
-            }
-            if walkthrough_summary.is_none() {
-                walkthrough_summary = msg.walkthrough_summary;
-            }
-
-            if let Some(ts) = &msg.timestamp {
-                if first_timestamp.is_none() {
-                    first_timestamp = Some(ts.clone());
-                }
-                last_timestamp = Some(ts.clone());
-            }
-
-            // Count artifacts
-            if msg.artifact.is_some() {
-                artifact_count += 1;
-                if let Some(ref artifact) = msg.artifact {
-                    if let Some(ref path) = artifact.path {
-                        if !files_modified.contains(path) && files_modified.len() < 20 {
-                            files_modified.push(path.clone());
-                        }
-                    }
-                }
-            }
-
-            if let Some(ref message) = msg.message {
-                if message.role.as_deref() == Some("user") {
-                    if let Some(content) = &message.content {
-                        if let serde_json::Value::String(s) = content {
-                            if is_meaningful_message(s) {
-                                meaningful_message_count += 1;
-                                if first_message.is_none() {
-                                    first_message = Some(s.chars().take(200).collect());
-                                }
-                                if user_messages.len() < 10 {
-                                    let truncated: String = s.chars().take(100).collect();
-                                    if !user_messages.contains(&truncated) {
-                                        user_messages.push(truncated);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if message.role.as_deref() == Some("assistant")
-                    || message.role.as_deref() == Some("model")
-                {
-                    if let Some(content) = &message.content {
-                        if let serde_json::Value::Array(arr) = content {
-                            for item in arr {
-                                if let Ok(tool_use) =
-                                    serde_json::from_value::<ToolUseContent>(item.clone())
-                                {
-                                    let is_tool_use = tool_use.content_type.as_deref()
-                                        == Some("tool_use")
-                                        || tool_use.content_type.as_deref()
-                                            == Some("function_call");
-
-                                    if is_tool_use {
-                                        if let Some(tool_name) = &tool_use.name {
-                                            *tool_counts.entry(tool_name.clone()).or_insert(0) += 1;
-
-                                            if let Some(input) = &tool_use.input {
-                                                let detail = extract_tool_detail(tool_name, input);
-                                                if let Some(d) = detail {
-                                                    let details = tool_details
-                                                        .entry(tool_name.clone())
-                                                        .or_default();
-                                                    if details.len() < 10 && !details.contains(&d) {
-                                                        details.push(d.clone());
-
-                                                        match tool_name.as_str() {
-                                                            "Edit" | "Write" | "Read"
-                                                            | "edit_file" | "write_file"
-                                                            | "read_file" => {
-                                                                if !files_modified.contains(&d)
-                                                                    && files_modified.len() < 20
-                                                                {
-                                                                    files_modified.push(d);
-                                                                }
-                                                            }
-                                                            "Bash" | "run_command"
-                                                            | "execute_command" => {
-                                                                if commands_run.len() < 10 {
-                                                                    commands_run.push(d);
-                                                                }
-                                                            }
-                                                            _ => {}
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+    // First try explicit --server_port
+    for (i, part) in parts.iter().enumerate() {
+        if *part == "--server_port" {
+            if let Some(port) = parts.get(i + 1).and_then(|p| p.parse().ok()) {
+                return Some(port);
             }
         }
     }
 
-    // Generate session ID from filename if not found in content
-    if session_id.is_none() {
-        let filename = path.file_stem()?.to_str()?;
-        session_id = Some(filename.to_string());
-    }
-
-    Some(AntigravitySession {
-        session_id: session_id.unwrap_or_else(|| "unknown".to_string()),
-        task_summary,
-        walkthrough_summary,
-        cwd: cwd.unwrap_or_default(),
-        git_branch,
-        first_message,
-        message_count: meaningful_message_count,
-        first_timestamp,
-        last_timestamp,
-        file_path: path.to_string_lossy().to_string(),
-        file_size,
-        artifact_count,
-        tool_usage: tool_counts
-            .into_iter()
-            .map(|(name, count)| AntigravityToolUsage {
-                tool_name: name.clone(),
-                count,
-                details: tool_details.remove(&name).unwrap_or_default(),
-            })
-            .collect(),
-        files_modified,
-        commands_run,
-        user_messages,
-    })
-}
-
-fn build_session_description(session: &AntigravitySession, hours: f64) -> String {
-    let mut desc_parts = vec![
-        format!("📁 Project: {}", session.cwd),
-        format!(
-            "🌿 Branch: {}",
-            session.git_branch.as_deref().unwrap_or("N/A")
-        ),
-        format!(
-            "💬 Messages: {} | ⏱️ Duration: {:.1}h",
-            session.message_count, hours
-        ),
-    ];
-
-    if session.artifact_count > 0 {
-        desc_parts.push(format!("📦 Artifacts: {}", session.artifact_count));
-    }
-
-    if !session.files_modified.is_empty() {
-        let files: Vec<_> = session.files_modified.iter().take(10).collect();
-        let files_str = files
-            .iter()
-            .map(|f| format!("  • {}", f))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let more = if session.files_modified.len() > 10 {
-            format!(" (+{} more)", session.files_modified.len() - 10)
-        } else {
-            String::new()
-        };
-        desc_parts.push(format!(
-            "📝 Files Modified ({}{}):\n{}",
-            files.len(),
-            more,
-            files_str
-        ));
-    }
-
-    if !session.tool_usage.is_empty() {
-        let tools_summary: Vec<_> = session
-            .tool_usage
-            .iter()
-            .filter(|t| t.count > 0)
-            .map(|t| format!("{}: {}", t.tool_name, t.count))
-            .collect();
-        if !tools_summary.is_empty() {
-            desc_parts.push(format!("🔧 Tools: {}", tools_summary.join(", ")));
+    // Fall back to --extension_server_port + 1
+    // When --random_port is used, server_port = extension_server_port + 1
+    for (i, part) in parts.iter().enumerate() {
+        if *part == "--extension_server_port" {
+            if let Some(ext_port) = parts.get(i + 1).and_then(|p| p.parse::<u16>().ok()) {
+                return Some(ext_port + 1);
+            }
         }
     }
 
-    if !session.commands_run.is_empty() {
-        let cmds: Vec<_> = session.commands_run.iter().take(5).collect();
-        let cmds_str = cmds
-            .iter()
-            .map(|c| format!("  $ {}", c))
-            .collect::<Vec<_>>()
-            .join("\n");
-        desc_parts.push(format!("💻 Commands:\n{}", cmds_str));
-    }
-
-    if let Some(ref summary) = session.task_summary {
-        desc_parts.push(format!("📋 Task Summary: {}", summary));
-    } else if !session.user_messages.is_empty() {
-        let first_msg = &session.user_messages[0];
-        let truncated = if first_msg.len() > 150 {
-            format!("{}...", &first_msg.chars().take(150).collect::<String>())
-        } else {
-            first_msg.clone()
-        };
-        desc_parts.push(format!("📋 Initial Request: {}", truncated));
-    }
-
-    desc_parts.join("\n\n")
+    None
 }
 
-// Commands
-
-/// Check if Antigravity is installed (directory exists)
-#[tauri::command]
-pub async fn check_antigravity_installed(
-    state: State<'_, AppState>,
-    token: String,
-) -> Result<bool, String> {
-    let claims = verify_token(&token).map_err(|e| e.to_string())?;
-    let db = state.db.lock().await;
-
-    let antigravity_home = get_antigravity_home_for_user(&db.pool, &claims.sub).await;
-    Ok(antigravity_home.map(|p| p.exists()).unwrap_or(false))
+/// Extract CSRF token from process command line
+fn extract_csrf_token(line: &str) -> Option<String> {
+    // Look for --csrf_token argument
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    for (i, part) in parts.iter().enumerate() {
+        if *part == "--csrf_token" {
+            return parts.get(i + 1).map(|s| s.to_string());
+        }
+    }
+    None
 }
 
-/// List all Antigravity sessions from local machine
-#[tauri::command]
-pub async fn list_antigravity_sessions(
-    state: State<'_, AppState>,
-    token: String,
-) -> Result<Vec<AntigravityProject>, String> {
-    let claims = verify_token(&token).map_err(|e| e.to_string())?;
-    let db = state.db.lock().await;
 
-    let antigravity_home = get_antigravity_home_for_user(&db.pool, &claims.sub)
+// ==================== API Client ====================
+
+/// Call the Antigravity API to get all sessions
+async fn fetch_all_trajectories(process: &AntigravityProcess) -> Result<ApiResponse, String> {
+    let url = format!(
+        "https://localhost:{}/exa.language_server_pb.LanguageServerService/GetAllCascadeTrajectories",
+        process.port
+    );
+
+    // Create a client that accepts self-signed certificates
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let response = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Connect-Protocol-Version", "1")
+        .header("X-Codeium-Csrf-Token", &process.csrf_token)
+        .body("{}")
+        .send()
         .await
-        .ok_or_else(|| "Antigravity home directory not found".to_string())?;
+        .map_err(|e| format!("API request failed: {}", e))?;
 
-    if !antigravity_home.exists() {
-        return Ok(Vec::new());
+    if !response.status().is_success() {
+        return Err(format!("API returned error status: {}", response.status()));
     }
 
-    let mut projects: Vec<AntigravityProject> = Vec::new();
+    let api_response: ApiResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse API response: {}", e))?;
 
-    // Scan for project directories
-    let entries = fs::read_dir(&antigravity_home).map_err(|e| e.to_string())?;
+    Ok(api_response)
+}
 
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
+/// Convert API response to our project/session structure
+fn convert_to_projects(api_response: ApiResponse) -> Vec<AntigravityProject> {
+    let mut projects_map: HashMap<String, Vec<AntigravitySession>> = HashMap::new();
 
-        let dir_name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
-
-        // Skip hidden directories
-        if dir_name.starts_with('.') {
-            continue;
-        }
-
-        let mut sessions: Vec<AntigravitySession> = Vec::new();
-
-        // Scan for session files (.jsonl)
-        if let Ok(files) = fs::read_dir(&path) {
-            for file_entry in files.flatten() {
-                let file_path = file_entry.path();
-                if file_path
-                    .extension()
-                    .map(|e| e == "jsonl")
-                    .unwrap_or(false)
-                {
-                    if let Some(session) = parse_session_file(&file_path) {
-                        sessions.push(session);
-                    }
+    if let Some(trajectories) = api_response.trajectory_summaries {
+        for (session_id, trajectory) in trajectories {
+            // Extract workspace info
+            let (cwd, git_branch, git_repo) = if let Some(workspaces) = &trajectory.workspaces {
+                if let Some(ws) = workspaces.first() {
+                    let path = ws
+                        .workspace_folder_absolute_uri
+                        .as_ref()
+                        .map(|u| u.trim_start_matches("file://").to_string())
+                        .unwrap_or_default();
+                    let branch = ws.branch_name.clone();
+                    let repo = ws.repository.as_ref().and_then(|r| r.computed_name.clone());
+                    (path, branch, repo)
+                } else {
+                    (String::new(), None, None)
                 }
+            } else {
+                (String::new(), None, None)
+            };
+
+            // Skip sessions without a workspace
+            if cwd.is_empty() {
+                continue;
             }
+
+            let session = AntigravitySession {
+                session_id,
+                summary: trajectory.summary,
+                cwd: cwd.clone(),
+                git_branch,
+                git_repo,
+                step_count: trajectory.step_count.unwrap_or(0),
+                first_timestamp: trajectory.created_time,
+                last_timestamp: trajectory.last_modified_time,
+                status: trajectory.status.unwrap_or_else(|| "UNKNOWN".to_string()),
+            };
+
+            projects_map.entry(cwd).or_default().push(session);
         }
+    }
 
-        // Sort sessions by last timestamp (newest first)
-        sessions.sort_by(|a, b| {
-            b.last_timestamp
-                .as_ref()
-                .unwrap_or(&String::new())
-                .cmp(a.last_timestamp.as_ref().unwrap_or(&String::new()))
-        });
+    // Convert to Vec<AntigravityProject>
+    let mut projects: Vec<AntigravityProject> = projects_map
+        .into_iter()
+        .map(|(path, mut sessions)| {
+            // Sort sessions by last modified time (newest first)
+            sessions.sort_by(|a, b| {
+                b.last_timestamp
+                    .as_ref()
+                    .unwrap_or(&String::new())
+                    .cmp(a.last_timestamp.as_ref().unwrap_or(&String::new()))
+            });
 
-        if !sessions.is_empty() {
-            let project_path = sessions
-                .first()
-                .map(|s| s.cwd.clone())
-                .unwrap_or_else(|| dir_name.replace('-', "/"));
-            let project_name = std::path::Path::new(&project_path)
+            let name = std::path::Path::new(&path)
                 .file_name()
                 .and_then(|n| n.to_str())
-                .unwrap_or(&dir_name)
+                .unwrap_or("Unknown")
                 .to_string();
 
-            projects.push(AntigravityProject {
-                path: project_path,
-                name: project_name,
+            AntigravityProject {
+                path,
+                name,
                 sessions,
-            });
-        }
-    }
+            }
+        })
+        .collect();
 
     // Sort projects by latest session timestamp
     projects.sort_by(|a, b| {
@@ -499,112 +286,232 @@ pub async fn list_antigravity_sessions(
         b_latest.cmp(&a_latest)
     });
 
+    projects
+}
+
+// ==================== Helper Functions ====================
+
+fn session_hours_from_timestamps(first: &Option<String>, last: &Option<String>) -> f64 {
+    match (first, last) {
+        (Some(start), Some(end)) => calculate_session_hours(start, end),
+        _ => 0.5,
+    }
+}
+
+fn build_session_description(session: &AntigravitySession, hours: f64) -> String {
+    let mut parts = vec![
+        format!("📁 Project: {}", session.cwd),
+        format!(
+            "🌿 Branch: {}",
+            session.git_branch.as_deref().unwrap_or("N/A")
+        ),
+        format!("💬 Steps: {} | ⏱️ Duration: {:.1}h", session.step_count, hours),
+    ];
+
+    if let Some(repo) = &session.git_repo {
+        parts.push(format!("🔗 Repository: {}", repo));
+    }
+
+    if let Some(summary) = &session.summary {
+        parts.push(format!("📋 Summary: {}", summary));
+    }
+
+    parts.join("\n\n")
+}
+
+// ==================== Public Request/Response Types ====================
+
+#[derive(Debug, Deserialize)]
+pub struct AntigravitySyncProjectsRequest {
+    pub project_paths: Vec<String>,
+}
+
+// ==================== Internal Functions (for background sync) ====================
+
+/// List all Antigravity sessions - internal version without Tauri state
+pub async fn list_antigravity_sessions_internal() -> Result<Vec<AntigravityProject>, String> {
+    let process = find_antigravity_process()
+        .ok_or_else(|| "No Antigravity process found. The app may not be running.".to_string())?;
+
+    let api_response = fetch_all_trajectories(&process).await?;
+    let projects = convert_to_projects(api_response);
+
     Ok(projects)
 }
 
-/// Sync selected Antigravity projects - aggregate sessions by project+date
-#[tauri::command]
-pub async fn sync_antigravity_projects(
-    state: State<'_, AppState>,
-    token: String,
-    request: SyncProjectsRequest,
+/// Sync Antigravity projects - internal version for background sync
+pub async fn sync_antigravity_projects_internal(
+    pool: &sqlx::SqlitePool,
+    user_id: &str,
+    request: AntigravitySyncProjectsRequest,
 ) -> Result<AntigravitySyncResult, String> {
-    let claims = verify_token(&token).map_err(|e| e.to_string())?;
-    let db = state.db.lock().await;
+    let process = find_antigravity_process()
+        .ok_or_else(|| "Antigravity is not running. Please start the Antigravity app.".to_string())?;
 
-    let antigravity_home = get_antigravity_home_for_user(&db.pool, &claims.sub)
-        .await
-        .ok_or_else(|| "Antigravity home directory not found".to_string())?;
+    let api_response = fetch_all_trajectories(&process).await?;
+    let projects = convert_to_projects(api_response);
 
     let mut sessions_processed = 0;
     let mut sessions_skipped = 0;
     let mut work_items_created = 0;
     let mut work_items_updated = 0;
 
-    // For each requested project path, find matching sessions
-    for project_path in &request.project_paths {
-        // Find the directory that corresponds to this project
-        let encoded_path = project_path.replace(['/', '\\'], "-");
-        let project_dir = antigravity_home.join(&encoded_path);
+    // Filter to requested projects
+    let requested_paths: std::collections::HashSet<_> = request.project_paths.iter().collect();
 
-        if !project_dir.exists() {
-            // Try scanning all directories to find matching project
-            if let Ok(entries) = fs::read_dir(&antigravity_home) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if !path.is_dir() {
-                        continue;
-                    }
+    for project in projects {
+        if !requested_paths.contains(&project.path) {
+            continue;
+        }
 
-                    // Scan sessions in this directory
-                    if let Ok(files) = fs::read_dir(&path) {
-                        for file_entry in files.flatten() {
-                            let file_path = file_entry.path();
-                            if file_path
-                                .extension()
-                                .map(|e| e == "jsonl")
-                                .unwrap_or(false)
-                            {
-                                if let Some(session) = parse_session_file(&file_path) {
-                                    // Check if this session belongs to the requested project
-                                    if session.cwd == *project_path
-                                        || session.cwd.ends_with(project_path)
-                                    {
-                                        match process_session(&db.pool, &claims.sub, &session).await
-                                        {
-                                            Ok(ProcessResult::Created) => {
-                                                sessions_processed += 1;
-                                                work_items_created += 1;
-                                            }
-                                            Ok(ProcessResult::Updated) => {
-                                                sessions_processed += 1;
-                                                work_items_updated += 1;
-                                            }
-                                            Ok(ProcessResult::Skipped) => {
-                                                sessions_skipped += 1;
-                                            }
-                                            Err(e) => {
-                                                log::error!("Failed to process session: {}", e);
-                                                sessions_skipped += 1;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+        for session in &project.sessions {
+            match process_session(pool, user_id, session).await {
+                Ok(ProcessResult::Created) => {
+                    sessions_processed += 1;
+                    work_items_created += 1;
+                }
+                Ok(ProcessResult::Updated) => {
+                    sessions_processed += 1;
+                    work_items_updated += 1;
+                }
+                Ok(ProcessResult::Skipped) => {
+                    sessions_skipped += 1;
+                }
+                Err(e) => {
+                    log::error!("Failed to process session: {}", e);
+                    sessions_skipped += 1;
                 }
             }
-        } else {
-            // Process sessions from the known directory
-            if let Ok(files) = fs::read_dir(&project_dir) {
-                for file_entry in files.flatten() {
-                    let file_path = file_entry.path();
-                    if file_path
-                        .extension()
-                        .map(|e| e == "jsonl")
-                        .unwrap_or(false)
-                    {
-                        if let Some(session) = parse_session_file(&file_path) {
-                            match process_session(&db.pool, &claims.sub, &session).await {
-                                Ok(ProcessResult::Created) => {
-                                    sessions_processed += 1;
-                                    work_items_created += 1;
-                                }
-                                Ok(ProcessResult::Updated) => {
-                                    sessions_processed += 1;
-                                    work_items_updated += 1;
-                                }
-                                Ok(ProcessResult::Skipped) => {
-                                    sessions_skipped += 1;
-                                }
-                                Err(e) => {
-                                    log::error!("Failed to process session: {}", e);
-                                    sessions_skipped += 1;
-                                }
-                            }
-                        }
-                    }
+        }
+    }
+
+    Ok(AntigravitySyncResult {
+        sessions_processed,
+        sessions_skipped,
+        work_items_created,
+        work_items_updated,
+    })
+}
+
+// ==================== Tauri Commands ====================
+
+/// Check if Antigravity is running (process exists)
+#[tauri::command]
+pub async fn check_antigravity_installed(
+    _state: State<'_, AppState>,
+    token: String,
+) -> Result<bool, String> {
+    let _claims = verify_token(&token).map_err(|e| e.to_string())?;
+    Ok(find_antigravity_process().is_some())
+}
+
+/// Check Antigravity API status - returns URL and health check result
+#[tauri::command]
+pub async fn check_antigravity_api_status(
+    _state: State<'_, AppState>,
+    token: String,
+) -> Result<AntigravityApiStatus, String> {
+    let _claims = verify_token(&token).map_err(|e| e.to_string())?;
+
+    let process = match find_antigravity_process() {
+        Some(p) => p,
+        None => {
+            return Ok(AntigravityApiStatus {
+                running: false,
+                api_url: None,
+                healthy: false,
+                session_count: None,
+            });
+        }
+    };
+
+    let api_url = format!("https://localhost:{}", process.port);
+
+    // Try to fetch sessions to verify API is healthy
+    match fetch_all_trajectories(&process).await {
+        Ok(response) => {
+            let session_count = response
+                .trajectory_summaries
+                .as_ref()
+                .map(|t| t.len());
+            Ok(AntigravityApiStatus {
+                running: true,
+                api_url: Some(api_url),
+                healthy: true,
+                session_count,
+            })
+        }
+        Err(_) => Ok(AntigravityApiStatus {
+            running: true,
+            api_url: Some(api_url),
+            healthy: false,
+            session_count: None,
+        }),
+    }
+}
+
+/// List all Antigravity sessions from the running app
+#[tauri::command]
+pub async fn list_antigravity_sessions(
+    _state: State<'_, AppState>,
+    token: String,
+) -> Result<Vec<AntigravityProject>, String> {
+    let _claims = verify_token(&token).map_err(|e| e.to_string())?;
+
+    let process = find_antigravity_process()
+        .ok_or_else(|| "Antigravity is not running. Please start the Antigravity app.".to_string())?;
+
+    let api_response = fetch_all_trajectories(&process).await?;
+    let projects = convert_to_projects(api_response);
+
+    Ok(projects)
+}
+
+/// Sync selected Antigravity projects - create work items from sessions
+#[tauri::command]
+pub async fn sync_antigravity_projects(
+    state: State<'_, AppState>,
+    token: String,
+    request: AntigravitySyncProjectsRequest,
+) -> Result<AntigravitySyncResult, String> {
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
+
+    let process = find_antigravity_process()
+        .ok_or_else(|| "Antigravity is not running. Please start the Antigravity app.".to_string())?;
+
+    let api_response = fetch_all_trajectories(&process).await?;
+    let projects = convert_to_projects(api_response);
+
+    let mut sessions_processed = 0;
+    let mut sessions_skipped = 0;
+    let mut work_items_created = 0;
+    let mut work_items_updated = 0;
+
+    // Filter to requested projects
+    let requested_paths: std::collections::HashSet<_> = request.project_paths.iter().collect();
+
+    for project in projects {
+        if !requested_paths.contains(&project.path) {
+            continue;
+        }
+
+        for session in &project.sessions {
+            match process_session(&db.pool, &claims.sub, session).await {
+                Ok(ProcessResult::Created) => {
+                    sessions_processed += 1;
+                    work_items_created += 1;
+                }
+                Ok(ProcessResult::Updated) => {
+                    sessions_processed += 1;
+                    work_items_updated += 1;
+                }
+                Ok(ProcessResult::Skipped) => {
+                    sessions_skipped += 1;
+                }
+                Err(e) => {
+                    log::error!("Failed to process session: {}", e);
+                    sessions_skipped += 1;
                 }
             }
         }
@@ -629,11 +536,11 @@ async fn process_session(
     user_id: &str,
     session: &AntigravitySession,
 ) -> Result<ProcessResult, String> {
-    if session.message_count == 0 {
+    if session.step_count == 0 {
         return Ok(ProcessResult::Skipped);
     }
 
-    let hours = session_hours_from_options(&session.first_timestamp, &session.last_timestamp);
+    let hours = session_hours_from_timestamps(&session.first_timestamp, &session.last_timestamp);
 
     let date = session
         .first_timestamp
@@ -661,14 +568,8 @@ async fn process_session(
         .and_then(|n| n.to_str())
         .unwrap_or("Unknown");
 
-    let title = if let Some(ref summary) = session.task_summary {
-        format!("[{}] {}", project_name, summary.chars().take(80).collect::<String>())
-    } else if let Some(ref msg) = session.first_message {
-        let truncated = if msg.len() > 80 {
-            format!("{}...", &msg.chars().take(80).collect::<String>())
-        } else {
-            msg.clone()
-        };
+    let title = if let Some(ref summary) = session.summary {
+        let truncated: String = summary.chars().take(80).collect();
         format!("[{}] {}", project_name, truncated)
     } else {
         format!("[{}] Gemini Code session", project_name)
@@ -704,353 +605,181 @@ async fn process_session(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-    use tempfile::NamedTempFile;
-
-    // ==================== get_default_antigravity_home Tests ====================
 
     #[test]
-    fn test_get_default_antigravity_home() {
-        let result = get_default_antigravity_home();
-        if let Some(path) = result {
-            assert!(path.to_string_lossy().contains(".gemini"));
-            assert!(path.to_string_lossy().contains("antigravity"));
-        }
+    fn test_extract_csrf_token() {
+        let line = "/Applications/Antigravity.app/Contents/Resources/app/extensions/antigravity/bin/language_server_macos_arm --enable_lsp --extension_server_port 52500 --csrf_token abc123-def456 --random_port";
+        let token = extract_csrf_token(line);
+        assert_eq!(token, Some("abc123-def456".to_string()));
     }
 
-    // ==================== session_hours_from_options Tests ====================
+    #[test]
+    fn test_extract_csrf_token_not_found() {
+        let line = "/some/other/process --flag value";
+        let token = extract_csrf_token(line);
+        assert_eq!(token, None);
+    }
 
     #[test]
-    fn test_session_hours_from_options_valid() {
-        let first = Some("2024-01-15T09:00:00+08:00".to_string());
-        let last = Some("2024-01-15T11:00:00+08:00".to_string());
-        let hours = session_hours_from_options(&first, &last);
+    fn test_extract_server_port() {
+        let line = "weifanliao 38824 /Applications/Antigravity.app/Contents/Resources/app/extensions/antigravity/bin/language_server_macos_arm --enable_lsp --extension_server_port 52500 --csrf_token abc123 --server_port 52501 --lsp_port 52507";
+        let port = extract_server_port(line);
+        assert_eq!(port, Some(52501));
+    }
+
+    #[test]
+    fn test_extract_server_port_from_extension_port() {
+        // When --random_port is used, server_port is not in command line
+        // We fall back to extension_server_port + 1
+        let line = "weifanliao 44334 /Applications/Antigravity.app/Contents/Resources/app/extensions/antigravity/bin/language_server_macos_arm --enable_lsp --extension_server_port 64115 --csrf_token abc123 --random_port";
+        let port = extract_server_port(line);
+        assert_eq!(port, Some(64116));
+    }
+
+    #[test]
+    fn test_session_hours_from_timestamps() {
+        let first = Some("2024-01-15T09:00:00Z".to_string());
+        let last = Some("2024-01-15T11:00:00Z".to_string());
+        let hours = session_hours_from_timestamps(&first, &last);
         assert!((hours - 2.0).abs() < 0.1);
     }
 
     #[test]
-    fn test_session_hours_from_options_both_none() {
-        let hours = session_hours_from_options(&None, &None);
+    fn test_session_hours_from_timestamps_none() {
+        let hours = session_hours_from_timestamps(&None, &None);
         assert!((hours - 0.5).abs() < 0.01);
     }
 
-    // ==================== parse_session_file Tests ====================
-
-    fn create_mock_antigravity_session() -> String {
-        let lines = vec![
-            r#"{"sessionId":"ag-sess-123","cwd":"/home/user/myproject","gitBranch":"main","taskSummary":"Implement user auth","timestamp":"2024-01-15T09:00:00+08:00","message":{"role":"user","content":"Help me add login functionality"}}"#,
-            r#"{"sessionId":"ag-sess-123","timestamp":"2024-01-15T09:10:00+08:00","message":{"role":"model","content":[{"type":"function_call","name":"read_file","input":{"file_path":"/home/user/myproject/src/auth.rs"}}]}}"#,
-            r#"{"sessionId":"ag-sess-123","timestamp":"2024-01-15T09:30:00+08:00","artifact":{"type":"file","path":"/home/user/myproject/src/login.rs"}}"#,
-            r#"{"sessionId":"ag-sess-123","timestamp":"2024-01-15T10:00:00+08:00","message":{"role":"user","content":"Now add logout as well"}}"#,
-        ];
-        lines.join("\n")
-    }
-
     #[test]
-    fn test_parse_session_file_discovers_metadata() {
-        let content = create_mock_antigravity_session();
-        let mut file = NamedTempFile::new().unwrap();
-        file.write_all(content.as_bytes()).unwrap();
-        let path = file.path().to_path_buf();
-
-        let session = parse_session_file(&path);
-        assert!(session.is_some());
-
-        let session = session.unwrap();
-        assert_eq!(session.session_id, "ag-sess-123");
-        assert_eq!(session.cwd, "/home/user/myproject");
-        assert_eq!(session.git_branch, Some("main".to_string()));
-        assert_eq!(session.task_summary, Some("Implement user auth".to_string()));
-    }
-
-    #[test]
-    fn test_parse_session_file_discovers_timestamps() {
-        let content = create_mock_antigravity_session();
-        let mut file = NamedTempFile::new().unwrap();
-        file.write_all(content.as_bytes()).unwrap();
-        let path = file.path().to_path_buf();
-
-        let session = parse_session_file(&path).unwrap();
-
-        assert_eq!(
-            session.first_timestamp,
-            Some("2024-01-15T09:00:00+08:00".to_string())
+    fn test_convert_to_projects() {
+        let mut trajectories = HashMap::new();
+        trajectories.insert(
+            "session-1".to_string(),
+            TrajectorySummary {
+                summary: Some("Test summary".to_string()),
+                step_count: Some(10),
+                created_time: Some("2024-01-15T09:00:00Z".to_string()),
+                last_modified_time: Some("2024-01-15T10:00:00Z".to_string()),
+                status: Some("CASCADE_RUN_STATUS_IDLE".to_string()),
+                workspaces: Some(vec![Workspace {
+                    workspace_folder_absolute_uri: Some("file:///Users/test/project".to_string()),
+                    branch_name: Some("main".to_string()),
+                    repository: Some(Repository {
+                        computed_name: Some("test/project".to_string()),
+                        git_origin_url: Some("https://github.com/test/project.git".to_string()),
+                    }),
+                }]),
+            },
         );
-        assert_eq!(
-            session.last_timestamp,
-            Some("2024-01-15T10:00:00+08:00".to_string())
+
+        let api_response = ApiResponse {
+            trajectory_summaries: Some(trajectories),
+        };
+
+        let projects = convert_to_projects(api_response);
+
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].name, "project");
+        assert_eq!(projects[0].path, "/Users/test/project");
+        assert_eq!(projects[0].sessions.len(), 1);
+        assert_eq!(projects[0].sessions[0].session_id, "session-1");
+        assert_eq!(projects[0].sessions[0].summary, Some("Test summary".to_string()));
+        assert_eq!(projects[0].sessions[0].git_branch, Some("main".to_string()));
+    }
+
+    #[test]
+    fn test_convert_to_projects_groups_by_path() {
+        let mut trajectories = HashMap::new();
+
+        // Two sessions for the same project
+        trajectories.insert(
+            "session-1".to_string(),
+            TrajectorySummary {
+                summary: Some("First session".to_string()),
+                step_count: Some(10),
+                created_time: Some("2024-01-15T09:00:00Z".to_string()),
+                last_modified_time: Some("2024-01-15T10:00:00Z".to_string()),
+                status: None,
+                workspaces: Some(vec![Workspace {
+                    workspace_folder_absolute_uri: Some("file:///Users/test/project-a".to_string()),
+                    branch_name: None,
+                    repository: None,
+                }]),
+            },
         );
+
+        trajectories.insert(
+            "session-2".to_string(),
+            TrajectorySummary {
+                summary: Some("Second session".to_string()),
+                step_count: Some(20),
+                created_time: Some("2024-01-16T09:00:00Z".to_string()),
+                last_modified_time: Some("2024-01-16T10:00:00Z".to_string()),
+                status: None,
+                workspaces: Some(vec![Workspace {
+                    workspace_folder_absolute_uri: Some("file:///Users/test/project-a".to_string()),
+                    branch_name: None,
+                    repository: None,
+                }]),
+            },
+        );
+
+        let api_response = ApiResponse {
+            trajectory_summaries: Some(trajectories),
+        };
+
+        let projects = convert_to_projects(api_response);
+
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].sessions.len(), 2);
     }
 
     #[test]
-    fn test_parse_session_file_counts_artifacts() {
-        let content = create_mock_antigravity_session();
-        let mut file = NamedTempFile::new().unwrap();
-        file.write_all(content.as_bytes()).unwrap();
-        let path = file.path().to_path_buf();
+    fn test_convert_to_projects_skips_empty_workspace() {
+        let mut trajectories = HashMap::new();
 
-        let session = parse_session_file(&path).unwrap();
+        trajectories.insert(
+            "session-no-workspace".to_string(),
+            TrajectorySummary {
+                summary: Some("No workspace".to_string()),
+                step_count: Some(5),
+                created_time: None,
+                last_modified_time: None,
+                status: None,
+                workspaces: None,
+            },
+        );
 
-        assert_eq!(session.artifact_count, 1);
-        assert!(session.files_modified.contains(&"/home/user/myproject/src/login.rs".to_string()));
+        let api_response = ApiResponse {
+            trajectory_summaries: Some(trajectories),
+        };
+
+        let projects = convert_to_projects(api_response);
+
+        assert_eq!(projects.len(), 0);
     }
 
     #[test]
-    fn test_parse_session_file_discovers_user_messages() {
-        let content = create_mock_antigravity_session();
-        let mut file = NamedTempFile::new().unwrap();
-        file.write_all(content.as_bytes()).unwrap();
-        let path = file.path().to_path_buf();
+    fn test_build_session_description() {
+        let session = AntigravitySession {
+            session_id: "test-123".to_string(),
+            summary: Some("Implement feature X".to_string()),
+            cwd: "/Users/test/project".to_string(),
+            git_branch: Some("feature/x".to_string()),
+            git_repo: Some("test/project".to_string()),
+            step_count: 50,
+            first_timestamp: Some("2024-01-15T09:00:00Z".to_string()),
+            last_timestamp: Some("2024-01-15T11:00:00Z".to_string()),
+            status: "IDLE".to_string(),
+        };
 
-        let session = parse_session_file(&path).unwrap();
-
-        assert_eq!(session.message_count, 2);
-        assert!(session
-            .first_message
-            .as_ref()
-            .unwrap()
-            .contains("login functionality"));
-    }
-
-    #[test]
-    fn test_parse_session_file_discovers_tool_usage() {
-        let content = create_mock_antigravity_session();
-        let mut file = NamedTempFile::new().unwrap();
-        file.write_all(content.as_bytes()).unwrap();
-        let path = file.path().to_path_buf();
-
-        let session = parse_session_file(&path).unwrap();
-
-        let tool_names: Vec<&str> = session
-            .tool_usage
-            .iter()
-            .map(|t| t.tool_name.as_str())
-            .collect();
-        assert!(tool_names.contains(&"read_file"));
-    }
-
-    #[test]
-    fn test_parse_session_file_handles_empty_file() {
-        let mut file = NamedTempFile::new().unwrap();
-        file.write_all(b"").unwrap();
-        let path = file.path().to_path_buf();
-
-        let session = parse_session_file(&path);
-        assert!(session.is_some());
-    }
-
-    #[test]
-    fn test_parse_session_file_handles_invalid_json() {
-        let content = "not valid json\nalso not json\n";
-        let mut file = NamedTempFile::new().unwrap();
-        file.write_all(content.as_bytes()).unwrap();
-        let path = file.path().to_path_buf();
-
-        let session = parse_session_file(&path);
-        assert!(session.is_some());
-    }
-
-    #[test]
-    fn test_parse_session_file_extracts_session_id_from_filename() {
-        let content = r#"{"timestamp":"2024-01-15T09:00:00+08:00","message":{"role":"user","content":"Test message here"}}"#;
-
-        let temp_dir = tempfile::tempdir().unwrap();
-        let file_path = temp_dir.path().join("my-session-abc123.jsonl");
-        fs::write(&file_path, content).unwrap();
-
-        let session = parse_session_file(&file_path).unwrap();
-        assert_eq!(session.session_id, "my-session-abc123");
-    }
-
-    // ==================== build_session_description Tests ====================
-
-    fn create_test_session() -> AntigravitySession {
-        AntigravitySession {
-            session_id: "test-session-123".to_string(),
-            task_summary: Some("Implement login feature".to_string()),
-            walkthrough_summary: None,
-            file_path: "/tmp/test.jsonl".to_string(),
-            cwd: "/home/user/project".to_string(),
-            git_branch: Some("main".to_string()),
-            first_timestamp: Some("2024-01-15T09:00:00+08:00".to_string()),
-            last_timestamp: Some("2024-01-15T11:00:00+08:00".to_string()),
-            first_message: Some("Help me add login".to_string()),
-            message_count: 10,
-            file_size: 1024,
-            artifact_count: 3,
-            tool_usage: vec![],
-            files_modified: vec![],
-            commands_run: vec![],
-            user_messages: vec!["Help me add login".to_string()],
-        }
-    }
-
-    #[test]
-    fn test_build_session_description_basic() {
-        let session = create_test_session();
         let desc = build_session_description(&session, 2.0);
 
-        assert!(desc.contains("📁 Project: /home/user/project"));
-        assert!(desc.contains("🌿 Branch: main"));
-        assert!(desc.contains("💬 Messages: 10"));
+        assert!(desc.contains("📁 Project: /Users/test/project"));
+        assert!(desc.contains("🌿 Branch: feature/x"));
+        assert!(desc.contains("💬 Steps: 50"));
         assert!(desc.contains("⏱️ Duration: 2.0h"));
-        assert!(desc.contains("📦 Artifacts: 3"));
-    }
-
-    #[test]
-    fn test_build_session_description_with_task_summary() {
-        let session = create_test_session();
-        let desc = build_session_description(&session, 1.5);
-
-        assert!(desc.contains("📋 Task Summary: Implement login feature"));
-    }
-
-    #[test]
-    fn test_build_session_description_with_files() {
-        let mut session = create_test_session();
-        session.files_modified = vec!["src/main.rs".to_string(), "src/lib.rs".to_string()];
-
-        let desc = build_session_description(&session, 1.5);
-
-        assert!(desc.contains("📝 Files Modified"));
-        assert!(desc.contains("src/main.rs"));
-        assert!(desc.contains("src/lib.rs"));
-    }
-
-    #[test]
-    fn test_build_session_description_no_branch() {
-        let mut session = create_test_session();
-        session.git_branch = None;
-
-        let desc = build_session_description(&session, 1.0);
-
-        assert!(desc.contains("🌿 Branch: N/A"));
-    }
-
-    // ==================== Integration Test: Project Discovery ====================
-
-    #[test]
-    fn test_discover_antigravity_projects_from_directory() {
-        use tempfile::tempdir;
-
-        let temp_dir = tempdir().unwrap();
-        let antigravity_dir = temp_dir.path();
-
-        // Create project-a with 2 sessions
-        let project_a = antigravity_dir.join("home-user-project-a");
-        fs::create_dir_all(&project_a).unwrap();
-
-        let session_a1 = r#"{"sessionId":"a1","cwd":"/home/user/project-a","timestamp":"2024-01-15T09:00:00+08:00","message":{"role":"user","content":"First session message"}}"#;
-        fs::write(project_a.join("session-1.jsonl"), session_a1).unwrap();
-
-        let session_a2 = r#"{"sessionId":"a2","cwd":"/home/user/project-a","timestamp":"2024-01-16T09:00:00+08:00","message":{"role":"user","content":"Second session message"}}"#;
-        fs::write(project_a.join("session-2.jsonl"), session_a2).unwrap();
-
-        // Create project-b with 1 session
-        let project_b = antigravity_dir.join("home-user-project-b");
-        fs::create_dir_all(&project_b).unwrap();
-
-        let session_b1 = r#"{"sessionId":"b1","cwd":"/home/user/project-b","timestamp":"2024-01-17T09:00:00+08:00","message":{"role":"user","content":"Project B session"}}"#;
-        fs::write(project_b.join("session-1.jsonl"), session_b1).unwrap();
-
-        // Scan the directory
-        let mut projects: Vec<AntigravityProject> = Vec::new();
-
-        for entry in fs::read_dir(&antigravity_dir).unwrap().flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-
-            let dir_name = path.file_name().unwrap().to_str().unwrap().to_string();
-            let mut sessions: Vec<AntigravitySession> = Vec::new();
-
-            for file_entry in fs::read_dir(&path).unwrap().flatten() {
-                let file_path = file_entry.path();
-                if file_path
-                    .extension()
-                    .map(|e| e == "jsonl")
-                    .unwrap_or(false)
-                {
-                    if let Some(session) = parse_session_file(&file_path) {
-                        sessions.push(session);
-                    }
-                }
-            }
-
-            if !sessions.is_empty() {
-                let project_path = sessions
-                    .first()
-                    .map(|s| s.cwd.clone())
-                    .unwrap_or_else(|| dir_name.replace('-', "/"));
-                let project_name = std::path::Path::new(&project_path)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or(&dir_name)
-                    .to_string();
-
-                projects.push(AntigravityProject {
-                    path: project_path,
-                    name: project_name,
-                    sessions,
-                });
-            }
-        }
-
-        assert_eq!(projects.len(), 2, "Should discover 2 projects");
-
-        let project_a_found = projects.iter().find(|p| p.name == "project-a");
-        assert!(project_a_found.is_some(), "Should find project-a");
-        assert_eq!(
-            project_a_found.unwrap().sessions.len(),
-            2,
-            "project-a should have 2 sessions"
-        );
-
-        let project_b_found = projects.iter().find(|p| p.name == "project-b");
-        assert!(project_b_found.is_some(), "Should find project-b");
-        assert_eq!(
-            project_b_found.unwrap().sessions.len(),
-            1,
-            "project-b should have 1 session"
-        );
-    }
-
-    #[test]
-    fn test_discover_projects_ignores_hidden_directories() {
-        use tempfile::tempdir;
-
-        let temp_dir = tempdir().unwrap();
-        let antigravity_dir = temp_dir.path();
-
-        // Create visible project
-        let visible_project = antigravity_dir.join("visible-project");
-        fs::create_dir_all(&visible_project).unwrap();
-        let session = r#"{"sessionId":"v1","cwd":"/visible","timestamp":"2024-01-15T09:00:00+08:00","message":{"role":"user","content":"Visible project"}}"#;
-        fs::write(visible_project.join("session.jsonl"), session).unwrap();
-
-        // Create hidden project
-        let hidden_project = antigravity_dir.join(".hidden-project");
-        fs::create_dir_all(&hidden_project).unwrap();
-        let hidden_session = r#"{"sessionId":"h1","cwd":"/hidden","timestamp":"2024-01-15T09:00:00+08:00","message":{"role":"user","content":"Hidden project"}}"#;
-        fs::write(hidden_project.join("session.jsonl"), hidden_session).unwrap();
-
-        // Scan (simulating list_antigravity_sessions logic)
-        let mut project_count = 0;
-        for entry in fs::read_dir(&antigravity_dir).unwrap().flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-
-            let dir_name = path.file_name().unwrap().to_str().unwrap();
-            if dir_name.starts_with('.') {
-                continue;
-            }
-
-            project_count += 1;
-        }
-
-        assert_eq!(project_count, 1, "Should only count visible project");
+        assert!(desc.contains("🔗 Repository: test/project"));
+        assert!(desc.contains("📋 Summary: Implement feature X"));
     }
 }

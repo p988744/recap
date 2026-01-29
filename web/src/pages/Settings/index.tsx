@@ -93,7 +93,13 @@ export function SettingsPage() {
 
         {/* Projects Section */}
         {settings.activeSection === 'projects' && (
-          <ProjectsSection />
+          <ProjectsSection
+            syncStatus={syncForm.status}
+            syncEnabled={syncForm.enabled}
+            dataSyncState={syncForm.dataSyncState}
+            summaryState={syncForm.summaryState}
+            onTriggerSync={() => syncForm.handleTriggerSync(settings.setMessage)}
+          />
         )}
 
         {/* Sync + Preferences Section */}
@@ -103,13 +109,9 @@ export function SettingsPage() {
             setEnabled={syncForm.setEnabled}
             intervalMinutes={syncForm.intervalMinutes}
             setIntervalMinutes={syncForm.setIntervalMinutes}
-            status={syncForm.status}
-            dataSyncState={syncForm.dataSyncState}
-            summaryState={syncForm.summaryState}
             loading={syncForm.loading}
             saving={syncForm.saving}
             onSave={syncForm.handleSave}
-            onTriggerSync={syncForm.handleTriggerSync}
             dailyHours={preferencesForm.dailyHours}
             setDailyHours={preferencesForm.setDailyHours}
             normalizeHours={preferencesForm.normalizeHours}

@@ -7,12 +7,12 @@ import { GeminiIcon } from './icons/GeminiIcon'
 const SOURCE_CONFIG: Record<string, { icon: React.ReactNode; label: string; badgeBgClass: string }> = {
   claude_code: {
     icon: <ClaudeIcon className="w-2.5 h-2.5" />,
-    label: 'Claude',
+    label: 'Claude Code',
     badgeBgClass: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
   },
   antigravity: {
     icon: <GeminiIcon className="w-2.5 h-2.5" />,
-    label: 'Gemini',
+    label: 'Antigravity',
     badgeBgClass: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
   },
   git: {

@@ -22,6 +22,8 @@ pub struct BackgroundSyncConfig {
     pub sync_git: bool,
     /// Sync Claude Code sessions
     pub sync_claude: bool,
+    /// Sync Antigravity (Gemini Code) sessions
+    pub sync_antigravity: bool,
     /// Sync GitLab (requires configuration)
     pub sync_gitlab: bool,
     /// Sync Jira/Tempo (requires configuration)
@@ -35,6 +37,7 @@ impl Default for BackgroundSyncConfig {
             interval_minutes: 15,
             sync_git: true,
             sync_claude: true,
+            sync_antigravity: true,
             sync_gitlab: false,
             sync_jira: false,
         }
@@ -306,6 +309,13 @@ impl BackgroundSyncService {
             drop(db_guard); // Release Mutex before next phase
         }
 
+        if config.sync_antigravity {
+            let db_guard = db.lock().await;
+            let result = Self::sync_antigravity_sessions(&db_guard, user_id).await;
+            results.push(result);
+            drop(db_guard);
+        }
+
         if config.sync_git {
             results.push(SyncOperationResult {
                 source: "git".to_string(),
@@ -450,6 +460,79 @@ impl BackgroundSyncService {
                     success: false,
                     error: Some(e),
                     ..Default::default()
+                }
+            }
+        }
+    }
+
+    /// Sync Antigravity (Gemini Code) sessions via HTTP API
+    async fn sync_antigravity_sessions(db: &recap_core::Database, user_id: &str) -> SyncOperationResult {
+        log::info!("Syncing Antigravity sessions for user: {}", user_id);
+
+        // Use the antigravity module to list and sync projects
+        match crate::commands::antigravity::list_antigravity_sessions_internal().await {
+            Ok(projects) => {
+                if projects.is_empty() {
+                    log::info!("No Antigravity projects found (app may not be running)");
+                    return SyncOperationResult {
+                        source: "antigravity".to_string(),
+                        success: true,
+                        ..Default::default()
+                    };
+                }
+
+                log::info!("Discovered {} Antigravity projects", projects.len());
+
+                // Sync the projects
+                let project_paths: Vec<String> = projects.iter().map(|p| p.path.clone()).collect();
+                let request = crate::commands::antigravity::AntigravitySyncProjectsRequest { project_paths };
+
+                match crate::commands::antigravity::sync_antigravity_projects_internal(&db.pool, user_id, request).await {
+                    Ok(result) => {
+                        let items_synced = (result.work_items_created + result.work_items_updated) as i32;
+                        log::info!(
+                            "Antigravity sync complete: {} sessions processed, {} created, {} updated",
+                            result.sessions_processed,
+                            result.work_items_created,
+                            result.work_items_updated
+                        );
+                        SyncOperationResult {
+                            source: "antigravity".to_string(),
+                            success: true,
+                            items_synced,
+                            projects_scanned: projects.len() as i32,
+                            items_created: result.work_items_created as i32,
+                            error: None,
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Antigravity sync error: {}", e);
+                        SyncOperationResult {
+                            source: "antigravity".to_string(),
+                            success: false,
+                            error: Some(e),
+                            ..Default::default()
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                // Not an error if Antigravity is simply not running
+                if e.contains("not running") || e.contains("No Antigravity process") {
+                    log::debug!("Antigravity not running, skipping sync");
+                    SyncOperationResult {
+                        source: "antigravity".to_string(),
+                        success: true,
+                        ..Default::default()
+                    }
+                } else {
+                    log::error!("Antigravity list error: {}", e);
+                    SyncOperationResult {
+                        source: "antigravity".to_string(),
+                        success: false,
+                        error: Some(e),
+                        ..Default::default()
+                    }
                 }
             }
         }
