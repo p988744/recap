@@ -107,8 +107,31 @@ pub struct AntigravitySyncResult {
 
 // Helper functions
 
-pub(crate) fn get_antigravity_home() -> Option<PathBuf> {
+/// Get the default Antigravity home path (used for tests and fallback)
+fn get_default_antigravity_home() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".gemini").join("antigravity"))
+}
+
+/// Get Antigravity home path from database (custom) or default
+async fn get_antigravity_home_for_user(
+    pool: &sqlx::SqlitePool,
+    user_id: &str,
+) -> Option<PathBuf> {
+    // Try to get custom path from database
+    let custom_path: Option<String> = sqlx::query_as::<_, (Option<String>,)>(
+        "SELECT antigravity_session_path FROM users WHERE id = ?",
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|(path,)| path);
+
+    // Use custom path if set, otherwise default
+    custom_path
+        .map(PathBuf::from)
+        .or_else(get_default_antigravity_home)
 }
 
 /// Helper to calculate session hours with Option handling
@@ -369,25 +392,28 @@ fn build_session_description(session: &AntigravitySession, hours: f64) -> String
 /// Check if Antigravity is installed (directory exists)
 #[tauri::command]
 pub async fn check_antigravity_installed(
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
     token: String,
 ) -> Result<bool, String> {
-    let _claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
 
-    let antigravity_home = get_antigravity_home();
+    let antigravity_home = get_antigravity_home_for_user(&db.pool, &claims.sub).await;
     Ok(antigravity_home.map(|p| p.exists()).unwrap_or(false))
 }
 
 /// List all Antigravity sessions from local machine
 #[tauri::command]
 pub async fn list_antigravity_sessions(
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
     token: String,
 ) -> Result<Vec<AntigravityProject>, String> {
-    let _claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
 
-    let antigravity_home =
-        get_antigravity_home().ok_or_else(|| "Antigravity home directory not found".to_string())?;
+    let antigravity_home = get_antigravity_home_for_user(&db.pool, &claims.sub)
+        .await
+        .ok_or_else(|| "Antigravity home directory not found".to_string())?;
 
     if !antigravity_home.exists() {
         return Ok(Vec::new());
@@ -486,8 +512,9 @@ pub async fn sync_antigravity_projects(
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
     let db = state.db.lock().await;
 
-    let antigravity_home =
-        get_antigravity_home().ok_or_else(|| "Antigravity home directory not found".to_string())?;
+    let antigravity_home = get_antigravity_home_for_user(&db.pool, &claims.sub)
+        .await
+        .ok_or_else(|| "Antigravity home directory not found".to_string())?;
 
     let mut sessions_processed = 0;
     let mut sessions_skipped = 0;
@@ -680,11 +707,11 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
-    // ==================== get_antigravity_home Tests ====================
+    // ==================== get_default_antigravity_home Tests ====================
 
     #[test]
-    fn test_get_antigravity_home() {
-        let result = get_antigravity_home();
+    fn test_get_default_antigravity_home() {
+        let result = get_default_antigravity_home();
         if let Some(path) = result {
             assert!(path.to_string_lossy().contains(".gemini"));
             assert!(path.to_string_lossy().contains("antigravity"));
