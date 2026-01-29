@@ -228,6 +228,50 @@ export interface ClaudeSyncResult {
   work_items_updated: number
 }
 
+// ============ Antigravity (Gemini Code) ============
+
+export interface AntigravityToolUsage {
+  tool_name: string
+  count: number
+  details: string[]
+}
+
+export interface AntigravitySession {
+  session_id: string
+  task_summary?: string
+  walkthrough_summary?: string
+  cwd: string
+  git_branch?: string
+  first_message?: string
+  message_count: number
+  first_timestamp?: string
+  last_timestamp?: string
+  file_path: string
+  file_size: number
+  artifact_count: number
+  tool_usage: AntigravityToolUsage[]
+  files_modified: string[]
+  commands_run: string[]
+  user_messages: string[]
+}
+
+export interface AntigravityProject {
+  path: string
+  name: string
+  sessions: AntigravitySession[]
+}
+
+export interface AntigravitySyncProjectsRequest {
+  project_paths: string[]
+}
+
+export interface AntigravitySyncResult {
+  sessions_processed: number
+  sessions_skipped: number
+  work_items_created: number
+  work_items_updated: number
+}
+
 // ============ Teams (Legacy) ============
 
 export interface TeamMember {

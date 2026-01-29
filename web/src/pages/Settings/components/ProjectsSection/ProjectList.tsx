@@ -1,6 +1,47 @@
-import { Eye, EyeOff, ChevronRight, Trash2 } from 'lucide-react'
+import { Eye, EyeOff, ChevronRight, Trash2, GitBranch } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import type { ProjectInfo } from '@/types'
+import { ClaudeIcon } from './icons/ClaudeIcon'
+import { GeminiIcon } from './icons/GeminiIcon'
+
+const SOURCE_CONFIG: Record<string, { icon: React.ReactNode; label: string; badgeBgClass: string }> = {
+  claude_code: {
+    icon: <ClaudeIcon className="w-2.5 h-2.5" />,
+    label: 'Claude',
+    badgeBgClass: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+  },
+  antigravity: {
+    icon: <GeminiIcon className="w-2.5 h-2.5" />,
+    label: 'Gemini',
+    badgeBgClass: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+  },
+  git: {
+    icon: <GitBranch className="w-2.5 h-2.5" />,
+    label: 'Git',
+    badgeBgClass: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
+  },
+  gitlab: {
+    icon: <GitBranch className="w-2.5 h-2.5" />,
+    label: 'GitLab',
+    badgeBgClass: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
+  },
+  manual: {
+    icon: null,
+    label: '手動',
+    badgeBgClass: 'bg-foreground/5 text-muted-foreground/60',
+  },
+}
+
+function SourceBadge({ source }: { source: string }) {
+  const config = SOURCE_CONFIG[source]
+  if (!config) return null
+  return (
+    <span className={`inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded ${config.badgeBgClass}`}>
+      {config.icon}
+      {config.label}
+    </span>
+  )
+}
 
 interface ProjectListProps {
   projects: ProjectInfo[]
@@ -34,16 +75,12 @@ export function ProjectList({ projects, onSelect, onToggleVisibility, onRemove }
               }`}
             onClick={() => onSelect(project.project_name)}
           >
-            {/* Project name */}
-            <div className="flex-1 min-w-0">
-              <span className={`text-sm ${project.hidden ? 'line-through text-muted-foreground' : 'text-foreground'}`}>
+            {/* Project name + source badge */}
+            <div className="flex-1 min-w-0 flex items-center gap-2">
+              <span className={`text-sm truncate ${project.hidden ? 'line-through text-muted-foreground' : 'text-foreground'}`}>
                 {project.display_name || project.project_name}
               </span>
-              {isManual && (
-                <span className="ml-2 text-[10px] text-muted-foreground/60 bg-foreground/5 px-1.5 py-0.5 rounded">
-                  手動新增
-                </span>
-              )}
+              <SourceBadge source={project.source} />
             </div>
 
             {/* Remove button (only for manual projects) */}

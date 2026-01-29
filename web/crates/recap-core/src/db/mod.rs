@@ -379,6 +379,12 @@ impl Database {
             .await
             .ok();
 
+        // Add antigravity_session_path column to users table (default: ~/.gemini/antigravity)
+        sqlx::query("ALTER TABLE users ADD COLUMN antigravity_session_path TEXT")
+            .execute(&self.pool)
+            .await
+            .ok();
+
         // Add timezone and week_start_day columns to users table
         sqlx::query("ALTER TABLE users ADD COLUMN timezone TEXT")
             .execute(&self.pool)

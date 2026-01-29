@@ -92,6 +92,13 @@ pub struct ClaudeSessionPathResponse {
     pub is_default: bool,
 }
 
+/// Antigravity (Gemini Code) session path response
+#[derive(Debug, Serialize)]
+pub struct AntigravitySessionPathResponse {
+    pub path: String,
+    pub is_default: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,5 +146,38 @@ mod tests {
         let json = serde_json::to_string(&detail).unwrap();
         assert!(json.contains("\"project_name\":\"recap\""));
         assert!(json.contains("\"total_items\":0"));
+    }
+
+    #[test]
+    fn test_claude_session_path_response_serialize() {
+        let response = ClaudeSessionPathResponse {
+            path: "/home/user/.claude".to_string(),
+            is_default: true,
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"path\":\"/home/user/.claude\""));
+        assert!(json.contains("\"is_default\":true"));
+    }
+
+    #[test]
+    fn test_antigravity_session_path_response_serialize() {
+        let response = AntigravitySessionPathResponse {
+            path: "/home/user/.gemini/antigravity".to_string(),
+            is_default: true,
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"path\":\"/home/user/.gemini/antigravity\""));
+        assert!(json.contains("\"is_default\":true"));
+    }
+
+    #[test]
+    fn test_antigravity_session_path_response_custom_path() {
+        let response = AntigravitySessionPathResponse {
+            path: "/custom/path/antigravity".to_string(),
+            is_default: false,
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"path\":\"/custom/path/antigravity\""));
+        assert!(json.contains("\"is_default\":false"));
     }
 }

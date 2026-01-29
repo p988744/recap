@@ -10,6 +10,7 @@ import type {
   SetProjectVisibilityRequest,
   AddManualProjectRequest,
   ClaudeSessionPathResponse,
+  AntigravitySessionPathResponse,
 } from '@/types'
 
 /**
@@ -60,6 +61,20 @@ export async function getClaudeSessionPath(): Promise<ClaudeSessionPathResponse>
  */
 export async function updateClaudeSessionPath(path: string | null): Promise<string> {
   return invokeAuth<string>('update_claude_session_path', { path })
+}
+
+/**
+ * Get the user's Antigravity (Gemini Code) session path setting
+ */
+export async function getAntigravitySessionPath(): Promise<AntigravitySessionPathResponse> {
+  return invokeAuth<AntigravitySessionPathResponse>('get_antigravity_session_path')
+}
+
+/**
+ * Update the user's Antigravity session path (null to reset to default)
+ */
+export async function updateAntigravitySessionPath(path: string | null): Promise<string> {
+  return invokeAuth<string>('update_antigravity_session_path', { path })
 }
 
 /**

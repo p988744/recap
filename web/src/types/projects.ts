@@ -69,3 +69,8 @@ export interface ClaudeSessionPathResponse {
   path: string
   is_default: boolean
 }
+
+export interface AntigravitySessionPathResponse {
+  path: string
+  is_default: boolean
+}

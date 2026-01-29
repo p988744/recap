@@ -5,6 +5,7 @@ import type { ProjectInfo } from '@/types'
 import { ProjectList } from './ProjectList'
 import { ProjectSourcePanel } from './ProjectSourcePanel'
 import { ClaudePathSetting } from './ClaudePathSetting'
+import { AntigravityPathSetting } from './AntigravityPathSetting'
 import { AddProjectDialog } from './AddProjectDialog'
 
 export function ProjectsSection() {
@@ -73,8 +74,11 @@ export function ProjectsSection() {
         管理專案設定。隱藏的專案不會出現在儀表板、報告和統計中。
       </p>
 
-      {/* Claude session path setting */}
-      <ClaudePathSetting />
+      {/* Data source path settings */}
+      <div className="space-y-3">
+        <ClaudePathSetting />
+        <AntigravityPathSetting />
+      </div>
 
       {/* Project list */}
       <div className="mt-6">

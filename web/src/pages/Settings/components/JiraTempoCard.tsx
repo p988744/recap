@@ -11,29 +11,55 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { useIntegrations } from '../../context'
+import type { ConfigResponse } from '@/types'
+import type { SettingsMessage } from '../hooks/useSettings'
 
-export function JiraTempoCardV2() {
-  const { config, setMessage, refreshConfig, jira } = useIntegrations()
-  const {
-    jiraUrl,
-    setJiraUrl,
-    jiraAuthType,
-    setJiraAuthType,
-    jiraToken,
-    setJiraToken,
-    jiraEmail,
-    setJiraEmail,
-    tempoToken,
-    setTempoToken,
-    showToken,
-    setShowToken,
-    saving,
-    testing,
-    handleSave,
-    handleTest,
-  } = jira
+interface JiraTempoCardProps {
+  config: ConfigResponse | null
+  jiraUrl: string
+  setJiraUrl: (v: string) => void
+  jiraAuthType: 'pat' | 'basic'
+  setJiraAuthType: (v: 'pat' | 'basic') => void
+  jiraToken: string
+  setJiraToken: (v: string) => void
+  jiraEmail: string
+  setJiraEmail: (v: string) => void
+  tempoToken: string
+  setTempoToken: (v: string) => void
+  showToken: boolean
+  setShowToken: (v: boolean) => void
+  saving: boolean
+  testing: boolean
+  onSave: (
+    setMessage: (msg: SettingsMessage | null) => void,
+    refreshConfig: () => Promise<ConfigResponse>
+  ) => Promise<void>
+  onTest: (setMessage: (msg: SettingsMessage | null) => void) => Promise<void>
+  setMessage: (msg: SettingsMessage | null) => void
+  refreshConfig: () => Promise<ConfigResponse>
+}
 
+export function JiraTempoCard({
+  config,
+  jiraUrl,
+  setJiraUrl,
+  jiraAuthType,
+  setJiraAuthType,
+  jiraToken,
+  setJiraToken,
+  jiraEmail,
+  setJiraEmail,
+  tempoToken,
+  setTempoToken,
+  showToken,
+  setShowToken,
+  saving,
+  testing,
+  onSave,
+  onTest,
+  setMessage,
+  refreshConfig,
+}: JiraTempoCardProps) {
   return (
     <Card className="p-6">
       <div className="flex items-center gap-3 mb-6">
@@ -145,11 +171,11 @@ export function JiraTempoCardV2() {
         </div>
 
         <div className="flex items-center gap-3 pt-4 border-t border-border">
-          <Button variant="outline" onClick={() => handleSave(setMessage, refreshConfig)} disabled={saving}>
+          <Button variant="outline" onClick={() => onSave(setMessage, refreshConfig)} disabled={saving}>
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
             儲存
           </Button>
-          <Button variant="ghost" onClick={() => handleTest(setMessage)} disabled={testing || !config?.jira_configured}>
+          <Button variant="ghost" onClick={() => onTest(setMessage)} disabled={testing || !config?.jira_configured}>
             {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
             測試連線
           </Button>

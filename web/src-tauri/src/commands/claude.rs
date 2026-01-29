@@ -852,4 +852,298 @@ mod tests {
         let result = extract_session_content(&path);
         assert!(result.is_empty());
     }
+
+    // ==================== parse_session_file Tests ====================
+
+    fn create_mock_session_jsonl() -> String {
+        let lines = vec![
+            r#"{"sessionId":"sess-123","agentId":"agent-456","slug":"test-project","cwd":"/home/user/myproject","gitBranch":"feature/auth","timestamp":"2024-01-15T09:00:00+08:00","message":{"role":"user","content":"Help me implement user authentication"}}"#,
+            r#"{"sessionId":"sess-123","timestamp":"2024-01-15T09:05:00+08:00","message":{"role":"assistant","content":[{"type":"tool_use","name":"Read","input":{"file_path":"/home/user/myproject/src/auth.rs"}}]}}"#,
+            r#"{"sessionId":"sess-123","timestamp":"2024-01-15T09:10:00+08:00","message":{"role":"user","content":"Now add JWT token validation"}}"#,
+            r#"{"sessionId":"sess-123","timestamp":"2024-01-15T10:00:00+08:00","message":{"role":"assistant","content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/home/user/myproject/src/auth.rs"}}]}}"#,
+            r#"{"sessionId":"sess-123","timestamp":"2024-01-15T10:30:00+08:00","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"cargo test"}}]}}"#,
+        ];
+        lines.join("\n")
+    }
+
+    #[test]
+    fn test_parse_session_file_discovers_session_metadata() {
+        let content = create_mock_session_jsonl();
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+        let path = file.path().to_path_buf();
+
+        let session = parse_session_file(&path);
+        assert!(session.is_some(), "Session should be parsed successfully");
+
+        let session = session.unwrap();
+        assert_eq!(session.session_id, "sess-123");
+        assert_eq!(session.agent_id, "agent-456");
+        assert_eq!(session.slug, "test-project");
+        assert_eq!(session.cwd, "/home/user/myproject");
+        assert_eq!(session.git_branch, Some("feature/auth".to_string()));
+    }
+
+    #[test]
+    fn test_parse_session_file_discovers_timestamps() {
+        let content = create_mock_session_jsonl();
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+        let path = file.path().to_path_buf();
+
+        let session = parse_session_file(&path).unwrap();
+
+        assert_eq!(session.first_timestamp, Some("2024-01-15T09:00:00+08:00".to_string()));
+        assert_eq!(session.last_timestamp, Some("2024-01-15T10:30:00+08:00".to_string()));
+    }
+
+    #[test]
+    fn test_parse_session_file_discovers_user_messages() {
+        let content = create_mock_session_jsonl();
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+        let path = file.path().to_path_buf();
+
+        let session = parse_session_file(&path).unwrap();
+
+        // Should count meaningful user messages
+        assert_eq!(session.message_count, 2);
+        // First message should be captured
+        assert!(session.first_message.as_ref().unwrap().contains("implement user authentication"));
+        // User messages should be collected
+        assert!(!session.user_messages.is_empty());
+    }
+
+    #[test]
+    fn test_parse_session_file_discovers_tool_usage() {
+        let content = create_mock_session_jsonl();
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+        let path = file.path().to_path_buf();
+
+        let session = parse_session_file(&path).unwrap();
+
+        // Should discover tool usage
+        assert!(!session.tool_usage.is_empty());
+
+        let tool_names: Vec<&str> = session.tool_usage.iter().map(|t| t.tool_name.as_str()).collect();
+        assert!(tool_names.contains(&"Read"));
+        assert!(tool_names.contains(&"Edit"));
+        assert!(tool_names.contains(&"Bash"));
+    }
+
+    #[test]
+    fn test_parse_session_file_discovers_files_modified() {
+        let content = create_mock_session_jsonl();
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+        let path = file.path().to_path_buf();
+
+        let session = parse_session_file(&path).unwrap();
+
+        // Should discover files from Read/Edit/Write tools
+        assert!(!session.files_modified.is_empty());
+        assert!(session.files_modified.iter().any(|f| f.contains("auth.rs")));
+    }
+
+    #[test]
+    fn test_parse_session_file_discovers_commands() {
+        let content = create_mock_session_jsonl();
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+        let path = file.path().to_path_buf();
+
+        let session = parse_session_file(&path).unwrap();
+
+        // Should discover commands from Bash tool
+        assert!(!session.commands_run.is_empty());
+        assert!(session.commands_run.iter().any(|c| c.contains("cargo test")));
+    }
+
+    #[test]
+    fn test_parse_session_file_handles_empty_file() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"").unwrap();
+        let path = file.path().to_path_buf();
+
+        let session = parse_session_file(&path);
+        // Empty file should still return a session with defaults
+        assert!(session.is_some());
+    }
+
+    #[test]
+    fn test_parse_session_file_handles_invalid_json() {
+        let content = "not valid json\nalso not json\n";
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+        let path = file.path().to_path_buf();
+
+        let session = parse_session_file(&path);
+        // Should handle gracefully
+        assert!(session.is_some());
+    }
+
+    #[test]
+    fn test_parse_session_file_extracts_agent_id_from_filename() {
+        // When agentId is not in the content, should extract from filename
+        let content = r#"{"sessionId":"sess-123","timestamp":"2024-01-15T09:00:00+08:00","message":{"role":"user","content":"Test message here"}}"#;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("agent-abc123.jsonl");
+        fs::write(&file_path, content).unwrap();
+
+        let session = parse_session_file(&file_path).unwrap();
+
+        // Should extract agent ID from filename "agent-abc123.jsonl" -> "abc123"
+        assert_eq!(session.agent_id, "abc123");
+    }
+
+    // ==================== Integration Test: Project Discovery ====================
+
+    #[test]
+    fn test_discover_projects_from_directory_structure() {
+        use tempfile::tempdir;
+
+        // Create mock Claude projects directory structure
+        let temp_dir = tempdir().unwrap();
+        let projects_dir = temp_dir.path().join("projects");
+        fs::create_dir_all(&projects_dir).unwrap();
+
+        // Create project-a with 2 sessions
+        let project_a = projects_dir.join("home-user-project-a");
+        fs::create_dir_all(&project_a).unwrap();
+
+        let session_a1 = r#"{"sessionId":"a1","agentId":"agent-1","cwd":"/home/user/project-a","timestamp":"2024-01-15T09:00:00+08:00","message":{"role":"user","content":"First session message"}}"#;
+        fs::write(project_a.join("agent-1.jsonl"), session_a1).unwrap();
+
+        let session_a2 = r#"{"sessionId":"a2","agentId":"agent-2","cwd":"/home/user/project-a","timestamp":"2024-01-16T09:00:00+08:00","message":{"role":"user","content":"Second session message"}}"#;
+        fs::write(project_a.join("agent-2.jsonl"), session_a2).unwrap();
+
+        // Create project-b with 1 session
+        let project_b = projects_dir.join("home-user-project-b");
+        fs::create_dir_all(&project_b).unwrap();
+
+        let session_b1 = r#"{"sessionId":"b1","agentId":"agent-3","cwd":"/home/user/project-b","timestamp":"2024-01-17T09:00:00+08:00","message":{"role":"user","content":"Project B session"}}"#;
+        fs::write(project_b.join("agent-3.jsonl"), session_b1).unwrap();
+
+        // Scan the projects directory
+        let mut projects: Vec<ClaudeProject> = Vec::new();
+
+        for entry in fs::read_dir(&projects_dir).unwrap().flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+
+            let dir_name = path.file_name().unwrap().to_str().unwrap().to_string();
+            let mut sessions: Vec<ClaudeSession> = Vec::new();
+
+            for file_entry in fs::read_dir(&path).unwrap().flatten() {
+                let file_path = file_entry.path();
+                if file_path.extension().map(|e| e == "jsonl").unwrap_or(false) {
+                    if let Some(session) = parse_session_file(&file_path) {
+                        sessions.push(session);
+                    }
+                }
+            }
+
+            if !sessions.is_empty() {
+                let project_path = sessions.first()
+                    .map(|s| s.cwd.clone())
+                    .unwrap_or_else(|| dir_name.replace('-', "/"));
+                let project_name = std::path::Path::new(&project_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(&dir_name)
+                    .to_string();
+
+                projects.push(ClaudeProject {
+                    path: project_path,
+                    name: project_name,
+                    sessions,
+                });
+            }
+        }
+
+        // Verify discovery
+        assert_eq!(projects.len(), 2, "Should discover 2 projects");
+
+        let project_a_found = projects.iter().find(|p| p.name == "project-a");
+        assert!(project_a_found.is_some(), "Should find project-a");
+        assert_eq!(project_a_found.unwrap().sessions.len(), 2, "project-a should have 2 sessions");
+
+        let project_b_found = projects.iter().find(|p| p.name == "project-b");
+        assert!(project_b_found.is_some(), "Should find project-b");
+        assert_eq!(project_b_found.unwrap().sessions.len(), 1, "project-b should have 1 session");
+    }
+
+    #[test]
+    fn test_discover_projects_ignores_hidden_directories() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let projects_dir = temp_dir.path().join("projects");
+        fs::create_dir_all(&projects_dir).unwrap();
+
+        // Create visible project
+        let visible_project = projects_dir.join("visible-project");
+        fs::create_dir_all(&visible_project).unwrap();
+        let session = r#"{"sessionId":"v1","cwd":"/visible","timestamp":"2024-01-15T09:00:00+08:00","message":{"role":"user","content":"Visible project"}}"#;
+        fs::write(visible_project.join("session.jsonl"), session).unwrap();
+
+        // Create hidden project (starts with .)
+        let hidden_project = projects_dir.join(".hidden-project");
+        fs::create_dir_all(&hidden_project).unwrap();
+        let hidden_session = r#"{"sessionId":"h1","cwd":"/hidden","timestamp":"2024-01-15T09:00:00+08:00","message":{"role":"user","content":"Hidden project"}}"#;
+        fs::write(hidden_project.join("session.jsonl"), hidden_session).unwrap();
+
+        // Scan (simulating list_claude_sessions logic)
+        let mut project_count = 0;
+        for entry in fs::read_dir(&projects_dir).unwrap().flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+
+            let dir_name = path.file_name().unwrap().to_str().unwrap();
+            if dir_name.starts_with('.') {
+                continue; // Skip hidden
+            }
+
+            project_count += 1;
+        }
+
+        assert_eq!(project_count, 1, "Should only count visible project, not hidden");
+    }
+
+    #[test]
+    fn test_discover_projects_handles_non_jsonl_files() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let project_dir = temp_dir.path().join("projects").join("my-project");
+        fs::create_dir_all(&project_dir).unwrap();
+
+        // Create valid session file
+        let session = r#"{"sessionId":"s1","cwd":"/project","timestamp":"2024-01-15T09:00:00+08:00","message":{"role":"user","content":"Valid session"}}"#;
+        fs::write(project_dir.join("session.jsonl"), session).unwrap();
+
+        // Create non-jsonl files that should be ignored
+        fs::write(project_dir.join("readme.txt"), "Some text").unwrap();
+        fs::write(project_dir.join("config.json"), "{}").unwrap();
+        fs::write(project_dir.join(".hidden"), "hidden file").unwrap();
+
+        // Scan
+        let mut session_count = 0;
+        for file_entry in fs::read_dir(&project_dir).unwrap().flatten() {
+            let file_path = file_entry.path();
+            if file_path.extension().map(|e| e == "jsonl").unwrap_or(false) {
+                if parse_session_file(&file_path).is_some() {
+                    session_count += 1;
+                }
+            }
+        }
+
+        assert_eq!(session_count, 1, "Should only parse .jsonl files");
+    }
 }

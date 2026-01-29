@@ -11,9 +11,9 @@ use recap_core::models::WorkItem;
 
 use crate::commands::AppState;
 use super::types::{
-    AddManualProjectRequest, ClaudeCodeDirEntry, ClaudeSessionPathResponse,
-    ProjectDetail, ProjectDirectories, ProjectInfo, ProjectSourceInfo,
-    ProjectStats, SetProjectVisibilityRequest, WorkItemSummary,
+    AddManualProjectRequest, AntigravitySessionPathResponse, ClaudeCodeDirEntry,
+    ClaudeSessionPathResponse, ProjectDetail, ProjectDirectories, ProjectInfo,
+    ProjectSourceInfo, ProjectStats, SetProjectVisibilityRequest, WorkItemSummary,
 };
 
 /// Extract project name from work item title "[ProjectName] ..." pattern
@@ -590,6 +590,64 @@ pub async fn update_claude_session_path(
     }
 
     sqlx::query("UPDATE users SET claude_session_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(&path)
+        .bind(&claims.sub)
+        .execute(&db.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok("ok".to_string())
+}
+
+/// Get the user's Antigravity (Gemini Code) session path setting
+#[tauri::command]
+pub async fn get_antigravity_session_path(
+    state: State<'_, AppState>,
+    token: String,
+) -> Result<AntigravitySessionPathResponse, String> {
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
+
+    let row: Option<(Option<String>,)> = sqlx::query_as(
+        "SELECT antigravity_session_path FROM users WHERE id = ?",
+    )
+    .bind(&claims.sub)
+    .fetch_optional(&db.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let custom_path = row.and_then(|(p,)| p);
+    let home = dirs::home_dir().ok_or("Cannot find home directory")?;
+    let default_path = home.join(".gemini").join("antigravity").to_string_lossy().to_string();
+
+    let is_default = custom_path.is_none() || custom_path.as_deref() == Some(&default_path);
+    let path = custom_path.unwrap_or_else(|| default_path);
+
+    Ok(AntigravitySessionPathResponse {
+        path,
+        is_default,
+    })
+}
+
+/// Update the user's Antigravity (Gemini Code) session path
+#[tauri::command]
+pub async fn update_antigravity_session_path(
+    state: State<'_, AppState>,
+    token: String,
+    path: Option<String>,
+) -> Result<String, String> {
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
+
+    // Validate path exists and is a directory
+    if let Some(ref p) = path {
+        let path_buf = std::path::PathBuf::from(p);
+        if !path_buf.is_dir() {
+            return Err(format!("Path is not a valid directory: {}", p));
+        }
+    }
+
+    sqlx::query("UPDATE users SET antigravity_session_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
         .bind(&path)
         .bind(&claims.sub)
         .execute(&db.pool)

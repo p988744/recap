@@ -1,6 +1,6 @@
 import type { ConfigResponse } from '@/types'
 import type { SettingsMessage } from '../hooks/types'
-import { JiraTempoCard } from './IntegrationsSection/JiraTempoCard'
+import { JiraTempoCard } from './JiraTempoCard'
 
 interface ExportSectionProps {
   config: ConfigResponse | null
