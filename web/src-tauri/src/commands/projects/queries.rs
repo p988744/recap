@@ -126,12 +126,18 @@ pub async fn list_projects(
                 .map(|(src, _)| src.clone())
                 .unwrap_or_else(|| "unknown".to_string());
 
+            // Collect all sources (sorted by count descending)
+            let mut all_sources: Vec<(String, i64)> = agg.sources.into_iter().collect();
+            all_sources.sort_by(|a, b| b.1.cmp(&a.1));
+            let sources: Vec<String> = all_sources.into_iter().map(|(src, _)| src).collect();
+
             let project_path = agg.project_path.or(pref_path);
 
             ProjectInfo {
                 project_name: name,
                 project_path,
                 source: primary_source,
+                sources,
                 work_item_count: agg.total_count,
                 total_hours: agg.total_hours,
                 latest_date: agg.latest_date,
@@ -151,6 +157,7 @@ pub async fn list_projects(
                 project_name: name.clone(),
                 project_path: pref_path.clone(),
                 source: "manual".to_string(),
+                sources: vec!["manual".to_string()],
                 work_item_count: 0,
                 total_hours: 0.0,
                 latest_date: None,

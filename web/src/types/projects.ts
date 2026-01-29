@@ -6,6 +6,8 @@ export interface ProjectInfo {
   project_name: string
   project_path: string | null
   source: string
+  /** All sources that contributed to this project (for showing multiple badges) */
+  sources: string[]
   work_item_count: number
   total_hours: number
   latest_date: string | null

@@ -75,12 +75,16 @@ export function ProjectList({ projects, onSelect, onToggleVisibility, onRemove }
               }`}
             onClick={() => onSelect(project.project_name)}
           >
-            {/* Project name + source badge */}
+            {/* Project name + source badges */}
             <div className="flex-1 min-w-0 flex items-center gap-2">
               <span className={`text-sm truncate ${project.hidden ? 'line-through text-muted-foreground' : 'text-foreground'}`}>
                 {project.display_name || project.project_name}
               </span>
-              <SourceBadge source={project.source} />
+              <div className="flex items-center gap-1">
+                {(project.sources || [project.source]).map((source) => (
+                  <SourceBadge key={source} source={source} />
+                ))}
+              </div>
             </div>
 
             {/* Remove button (only for manual projects) */}

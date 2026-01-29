@@ -581,8 +581,8 @@ async fn process_session(
 
     sqlx::query(
         r#"INSERT INTO work_items
-        (id, user_id, source, source_id, title, description, hours, date, content_hash, hours_source, hours_estimated, created_at, updated_at)
-        VALUES (?, ?, 'antigravity', ?, ?, ?, ?, ?, ?, 'session', ?, ?, ?)"#
+        (id, user_id, source, source_id, title, description, hours, date, content_hash, hours_source, hours_estimated, project_path, created_at, updated_at)
+        VALUES (?, ?, 'antigravity', ?, ?, ?, ?, ?, ?, 'session', ?, ?, ?, ?)"#
     )
     .bind(&id)
     .bind(user_id)
@@ -593,6 +593,7 @@ async fn process_session(
     .bind(date)
     .bind(&content_hash)
     .bind(hours)
+    .bind(&session.cwd) // project_path
     .bind(now)
     .bind(now)
     .execute(pool)

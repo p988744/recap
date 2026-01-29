@@ -10,6 +10,8 @@ pub struct ProjectInfo {
     pub project_name: String,
     pub project_path: Option<String>,
     pub source: String,
+    /// All sources that contributed to this project (for showing multiple badges)
+    pub sources: Vec<String>,
     pub work_item_count: i64,
     pub total_hours: f64,
     pub latest_date: Option<String>,
@@ -116,7 +118,8 @@ mod tests {
         let info = ProjectInfo {
             project_name: "recap".to_string(),
             project_path: Some("/home/user/recap".to_string()),
-            source: "git".to_string(),
+            source: "claude_code".to_string(),
+            sources: vec!["claude_code".to_string(), "antigravity".to_string()],
             work_item_count: 10,
             total_hours: 24.5,
             latest_date: Some("2024-01-15".to_string()),
@@ -126,6 +129,7 @@ mod tests {
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"project_name\":\"recap\""));
         assert!(json.contains("\"work_item_count\":10"));
+        assert!(json.contains("\"sources\":[\"claude_code\",\"antigravity\"]"));
     }
 
     #[test]
