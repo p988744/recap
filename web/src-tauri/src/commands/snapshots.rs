@@ -572,9 +572,13 @@ pub async fn get_hourly_breakdown(
         .filter(|s| extract_local_date(&s.period_start) == date)
         .collect();
 
-    // Build a map of commit hash -> timestamp from snapshot_raw_data
-    // This allows us to enrich commits from summaries (which lack timestamps)
-    let commit_timestamps: std::collections::HashMap<String, String> = {
+    // Build maps from snapshot_raw_data:
+    // 1. hour_bucket -> full commits (for when summaries lack commit data)
+    // 2. hash -> timestamp (for enriching summary commits)
+    let (commits_by_hour, commit_timestamps): (
+        std::collections::HashMap<String, Vec<GitCommitRef>>,
+        std::collections::HashMap<String, String>,
+    ) = {
         let all_snapshots: Vec<SnapshotRawData> = sqlx::query_as(
             r#"SELECT * FROM snapshot_raw_data
                WHERE user_id = ? AND project_path = ?
@@ -589,22 +593,34 @@ pub async fn get_hourly_breakdown(
         .await
         .unwrap_or_default();
 
-        let mut map = std::collections::HashMap::new();
+        let mut by_hour: std::collections::HashMap<String, Vec<GitCommitRef>> = std::collections::HashMap::new();
+        let mut timestamps: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+
         for snapshot in all_snapshots {
+            let hour_key = extract_local_hour(&snapshot.hour_bucket);
             if let Some(git_commits_json) = &snapshot.git_commits {
                 if let Ok(commits) = serde_json::from_str::<Vec<serde_json::Value>>(git_commits_json) {
-                    for commit in commits {
+                    for commit in &commits {
                         if let (Some(hash), Some(timestamp)) = (
                             commit.get("hash").and_then(|h| h.as_str()),
                             commit.get("timestamp").and_then(|t| t.as_str()),
                         ) {
-                            map.insert(hash.to_string(), timestamp.to_string());
+                            timestamps.insert(hash.to_string(), timestamp.to_string());
                         }
                     }
+                    // Also store full commits by hour
+                    let hour_commits: Vec<GitCommitRef> = commits.iter().filter_map(|c| {
+                        Some(GitCommitRef {
+                            hash: c.get("hash")?.as_str()?.to_string(),
+                            message: c.get("message")?.as_str()?.to_string(),
+                            timestamp: c.get("timestamp").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+                        })
+                    }).collect();
+                    by_hour.entry(hour_key).or_default().extend(hour_commits);
                 }
             }
         }
-        map
+        (by_hour, timestamps)
     };
 
     // Build Claude Code items from hourly summaries if available
@@ -615,7 +631,9 @@ pub async fn get_hourly_breakdown(
             let files: Vec<String> = s.key_activities.as_ref()
                 .and_then(|a| serde_json::from_str(a).ok())
                 .unwrap_or_default();
-            let commits: Vec<GitCommitRef> = s.git_commits_summary.as_ref()
+
+            // Try to get commits from summary first
+            let mut commits: Vec<GitCommitRef> = s.git_commits_summary.as_ref()
                 .and_then(|g| {
                     serde_json::from_str::<Vec<String>>(g).ok().map(|strings| {
                         strings.iter().filter_map(|s| {
@@ -637,6 +655,13 @@ pub async fn get_hourly_breakdown(
                     })
                 })
                 .unwrap_or_default();
+
+            // If summary has no commits, fall back to snapshot_raw_data commits for this hour
+            if commits.is_empty() {
+                if let Some(snapshot_commits) = commits_by_hour.get(&hour_start) {
+                    commits = snapshot_commits.clone();
+                }
+            }
 
             HourlyBreakdownItem {
                 hour_start,
@@ -912,7 +937,7 @@ pub struct HourlyBreakdownItem {
 }
 
 /// Git commit reference
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct GitCommitRef {
     pub hash: String,
     pub message: String,
