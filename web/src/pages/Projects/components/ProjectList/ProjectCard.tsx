@@ -46,8 +46,8 @@ export function ProjectCard({ project, isSelected, onClick }: ProjectCardProps) 
       onClick={onClick}
       className={cn(
         'w-full text-left p-3 rounded-md transition-colors',
-        'hover:bg-accent',
-        isSelected && 'bg-accent',
+        'hover:bg-muted/50',
+        isSelected && 'bg-muted',
         project.hidden && 'opacity-60'
       )}
     >

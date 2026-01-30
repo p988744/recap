@@ -12,6 +12,8 @@ export interface SyncFormState {
   // Config
   enabled: boolean
   intervalMinutes: number
+  compactionIntervalHours: number
+  autoGenerateSummaries: boolean
   // UI State
   loading: boolean
   saving: boolean
@@ -25,6 +27,8 @@ export function useSyncForm() {
   const [state, setState] = useState<SyncFormState>({
     enabled: true,
     intervalMinutes: 15,
+    compactionIntervalHours: 6,
+    autoGenerateSummaries: true,
     loading: true,
     saving: false,
   })
@@ -44,7 +48,17 @@ export function useSyncForm() {
   const status = useMemo<BackgroundSyncStatus | null>(() => {
     if (!backendStatus) {
       if (isSyncing) {
-        return { is_running: false, is_syncing: true, last_sync_at: null, next_sync_at: null, last_result: null, last_error: null }
+        return {
+          is_running: false,
+          is_syncing: true,
+          is_compacting: false,
+          last_sync_at: null,
+          last_compaction_at: null,
+          next_sync_at: null,
+          next_compaction_at: null,
+          last_result: null,
+          last_error: null,
+        }
       }
       return null
     }
@@ -63,6 +77,8 @@ export function useSyncForm() {
           ...prev,
           enabled: config.enabled,
           intervalMinutes: config.interval_minutes,
+          compactionIntervalHours: config.compaction_interval_hours,
+          autoGenerateSummaries: config.auto_generate_summaries,
           loading: false,
         }))
       } catch (err) {
@@ -82,6 +98,14 @@ export function useSyncForm() {
     setState((prev) => ({ ...prev, intervalMinutes }))
   }, [])
 
+  const setCompactionIntervalHours = useCallback((compactionIntervalHours: number) => {
+    setState((prev) => ({ ...prev, compactionIntervalHours }))
+  }, [])
+
+  const setAutoGenerateSummaries = useCallback((autoGenerateSummaries: boolean) => {
+    setState((prev) => ({ ...prev, autoGenerateSummaries }))
+  }, [])
+
   // Save config (backend handles restart/stop internally via update_config)
   const handleSave = useCallback(
     async (setMessage: (msg: SettingsMessage | null) => void) => {
@@ -90,10 +114,12 @@ export function useSyncForm() {
         await backgroundSync.updateConfig({
           enabled: state.enabled,
           interval_minutes: state.intervalMinutes,
+          compaction_interval_hours: state.compactionIntervalHours,
           sync_git: true,
           sync_claude: true,
           sync_gitlab: false,
           sync_jira: false,
+          auto_generate_summaries: state.autoGenerateSummaries,
         })
 
         // Refresh shared status so sidebar updates too
@@ -109,7 +135,7 @@ export function useSyncForm() {
         setState((prev) => ({ ...prev, saving: false }))
       }
     },
-    [state.enabled, state.intervalMinutes, refreshStatus]
+    [state.enabled, state.intervalMinutes, state.compactionIntervalHours, state.autoGenerateSummaries, refreshStatus]
   )
 
   // Trigger immediate sync via app-level sync
@@ -135,6 +161,10 @@ export function useSyncForm() {
     setEnabled,
     intervalMinutes: state.intervalMinutes,
     setIntervalMinutes,
+    compactionIntervalHours: state.compactionIntervalHours,
+    setCompactionIntervalHours,
+    autoGenerateSummaries: state.autoGenerateSummaries,
+    setAutoGenerateSummaries,
     // Status (merged: backend + frontend phase states)
     status,
     // Phase states (for split display)

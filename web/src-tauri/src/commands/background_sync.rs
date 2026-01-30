@@ -26,22 +26,26 @@ pub struct SyncProgress {
 pub struct UpdateBackgroundSyncConfigRequest {
     pub enabled: Option<bool>,
     pub interval_minutes: Option<u32>,
+    pub compaction_interval_hours: Option<u32>,
     pub sync_git: Option<bool>,
     pub sync_claude: Option<bool>,
     pub sync_antigravity: Option<bool>,
     pub sync_gitlab: Option<bool>,
     pub sync_jira: Option<bool>,
+    pub auto_generate_summaries: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct BackgroundSyncConfigResponse {
     pub enabled: bool,
     pub interval_minutes: u32,
+    pub compaction_interval_hours: u32,
     pub sync_git: bool,
     pub sync_claude: bool,
     pub sync_antigravity: bool,
     pub sync_gitlab: bool,
     pub sync_jira: bool,
+    pub auto_generate_summaries: bool,
 }
 
 impl From<BackgroundSyncConfig> for BackgroundSyncConfigResponse {
@@ -49,11 +53,13 @@ impl From<BackgroundSyncConfig> for BackgroundSyncConfigResponse {
         Self {
             enabled: config.enabled,
             interval_minutes: config.interval_minutes,
+            compaction_interval_hours: config.compaction_interval_hours,
             sync_git: config.sync_git,
             sync_claude: config.sync_claude,
             sync_antigravity: config.sync_antigravity,
             sync_gitlab: config.sync_gitlab,
             sync_jira: config.sync_jira,
+            auto_generate_summaries: config.auto_generate_summaries,
         }
     }
 }
@@ -62,8 +68,11 @@ impl From<BackgroundSyncConfig> for BackgroundSyncConfigResponse {
 pub struct BackgroundSyncStatusResponse {
     pub is_running: bool,
     pub is_syncing: bool,
+    pub is_compacting: bool,
     pub last_sync_at: Option<String>,
+    pub last_compaction_at: Option<String>,
     pub next_sync_at: Option<String>,
+    pub next_compaction_at: Option<String>,
     pub last_result: Option<String>,
     pub last_error: Option<String>,
 }
@@ -73,8 +82,11 @@ impl From<SyncServiceStatus> for BackgroundSyncStatusResponse {
         Self {
             is_running: status.is_running,
             is_syncing: status.is_syncing,
+            is_compacting: status.is_compacting,
             last_sync_at: status.last_sync_at,
+            last_compaction_at: status.last_compaction_at,
             next_sync_at: status.next_sync_at,
+            next_compaction_at: status.next_compaction_at,
             last_result: status.last_result,
             last_error: status.last_error,
         }
@@ -136,16 +148,23 @@ pub async fn update_background_sync_config(
     let new_config = BackgroundSyncConfig {
         enabled: config.enabled.unwrap_or(current.enabled),
         interval_minutes: config.interval_minutes.unwrap_or(current.interval_minutes),
+        compaction_interval_hours: config.compaction_interval_hours.unwrap_or(current.compaction_interval_hours),
         sync_git: config.sync_git.unwrap_or(current.sync_git),
         sync_claude: config.sync_claude.unwrap_or(current.sync_claude),
         sync_antigravity: config.sync_antigravity.unwrap_or(current.sync_antigravity),
         sync_gitlab: config.sync_gitlab.unwrap_or(current.sync_gitlab),
         sync_jira: config.sync_jira.unwrap_or(current.sync_jira),
+        auto_generate_summaries: config.auto_generate_summaries.unwrap_or(current.auto_generate_summaries),
     };
 
-    // Validate interval
+    // Validate data sync interval
     if ![5, 15, 30, 60].contains(&new_config.interval_minutes) {
-        return Err("間隔時間必須是 5, 15, 30 或 60 分鐘".to_string());
+        return Err("資料同步間隔必須是 5, 15, 30 或 60 分鐘".to_string());
+    }
+
+    // Validate compaction interval
+    if ![1, 3, 6, 12, 24].contains(&new_config.compaction_interval_hours) {
+        return Err("壓縮間隔必須是 1, 3, 6, 12 或 24 小時".to_string());
     }
 
     state.background_sync.update_config(new_config.clone()).await;
@@ -399,6 +418,33 @@ pub async fn trigger_sync_with_progress(
         }
     }
 
+    // Phase 4: Generate timeline summaries for completed periods
+    if config.auto_generate_summaries {
+        emit("summaries", None, 0, 100, "生成時間軸摘要...");
+
+        let time_units = ["week", "month", "quarter", "year"];
+        match crate::commands::projects::summaries::generate_all_completed_summaries(
+            &pool,
+            &user_id,
+            &time_units,
+        )
+        .await
+        {
+            Ok(count) => {
+                if count > 0 {
+                    emit("summaries", None, 100, 100, &format!("已生成 {} 個時間軸摘要", count));
+                    log::info!("Generated {} timeline summaries", count);
+                } else {
+                    emit("summaries", None, 100, 100, "時間軸摘要已是最新");
+                }
+            }
+            Err(e) => {
+                emit("summaries", None, 100, 100, &format!("摘要生成錯誤: {}", e));
+                log::warn!("Timeline summary generation error: {}", e);
+            }
+        }
+    }
+
     // Complete
     let total_items: i32 = results.iter().map(|r| r.items_synced).sum();
     emit(
@@ -434,20 +480,24 @@ mod tests {
         let config = BackgroundSyncConfig {
             enabled: true,
             interval_minutes: 15,
+            compaction_interval_hours: 6,
             sync_git: true,
             sync_claude: true,
             sync_antigravity: true,
             sync_gitlab: false,
             sync_jira: false,
+            auto_generate_summaries: true,
         };
 
         let response: BackgroundSyncConfigResponse = config.into();
         assert!(response.enabled);
         assert_eq!(response.interval_minutes, 15);
+        assert_eq!(response.compaction_interval_hours, 6);
         assert!(response.sync_git);
         assert!(response.sync_claude);
         assert!(!response.sync_gitlab);
         assert!(!response.sync_jira);
+        assert!(response.auto_generate_summaries);
     }
 
     #[test]
@@ -455,8 +505,11 @@ mod tests {
         let status = SyncServiceStatus {
             is_running: true,
             is_syncing: false,
+            is_compacting: false,
             last_sync_at: Some("2026-01-16T12:00:00Z".to_string()),
+            last_compaction_at: Some("2026-01-16T10:00:00Z".to_string()),
             next_sync_at: Some("2026-01-16T12:15:00Z".to_string()),
+            next_compaction_at: Some("2026-01-16T16:00:00Z".to_string()),
             last_result: Some("成功同步 5 筆項目".to_string()),
             last_error: None,
         };
@@ -464,7 +517,10 @@ mod tests {
         let response: BackgroundSyncStatusResponse = status.into();
         assert!(response.is_running);
         assert!(!response.is_syncing);
+        assert!(!response.is_compacting);
         assert_eq!(response.last_sync_at, Some("2026-01-16T12:00:00Z".to_string()));
+        assert_eq!(response.last_compaction_at, Some("2026-01-16T10:00:00Z".to_string()));
+        assert_eq!(response.next_compaction_at, Some("2026-01-16T16:00:00Z".to_string()));
     }
 
     #[test]

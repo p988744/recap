@@ -105,9 +105,16 @@ export function InfoTab({ projectName, detail, onUpdate: _onUpdate }: InfoTabPro
               )}
             </>
           ) : (
-            <p className="text-sm text-muted-foreground">
-              尚未填寫專案描述。點擊編輯按鈕新增。
-            </p>
+            <div className="text-center py-6">
+              <Target className="w-8 h-8 text-muted-foreground/50 mx-auto mb-3" strokeWidth={1.5} />
+              <p className="text-sm text-muted-foreground mb-3">
+                尚未填寫專案描述
+              </p>
+              <Button variant="outline" size="sm" onClick={() => setShowEditModal(true)}>
+                <Pencil className="w-3 h-3 mr-1.5" />
+                新增描述
+              </Button>
+            </div>
           )}
         </CardContent>
         </Card>

@@ -122,6 +122,8 @@ pub struct CompactionResultResponse {
     pub weekly_compacted: usize,
     pub monthly_compacted: usize,
     pub errors: Vec<String>,
+    /// Latest date that was compacted (YYYY-MM-DD format)
+    pub latest_compacted_date: Option<String>,
 }
 
 /// Response type for force recompact result
@@ -133,6 +135,8 @@ pub struct ForceRecompactResponse {
     pub weekly_compacted: usize,
     pub monthly_compacted: usize,
     pub errors: Vec<String>,
+    /// Latest date that was compacted (YYYY-MM-DD format)
+    pub latest_compacted_date: Option<String>,
 }
 
 /// Get work summaries at a given scale and date range.
@@ -970,6 +974,7 @@ pub async fn trigger_compaction(
         weekly_compacted: result.weekly_compacted,
         monthly_compacted: result.monthly_compacted,
         errors: result.errors,
+        latest_compacted_date: result.latest_compacted_date,
     })
 }
 
@@ -1016,6 +1021,7 @@ pub async fn force_recompact(
         weekly_compacted: result.compaction_result.weekly_compacted,
         monthly_compacted: result.compaction_result.monthly_compacted,
         errors: result.compaction_result.errors,
+        latest_compacted_date: result.compaction_result.latest_compacted_date,
     })
 }
 

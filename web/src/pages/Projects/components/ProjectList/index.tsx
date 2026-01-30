@@ -3,18 +3,27 @@ import { Search } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Checkbox } from '@/components/ui/checkbox'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { useProjects } from '../../hooks/useProjects'
 import { ProjectCard } from './ProjectCard'
+import type { ProjectInfo } from '@/types'
 
 interface ProjectListProps {
+  projects: ProjectInfo[]
+  isLoading: boolean
   selectedProject: string | null
   onSelectProject: (projectName: string | null) => void
+  showHidden: boolean
+  onShowHiddenChange: (showHidden: boolean) => void
 }
 
-export function ProjectList({ selectedProject, onSelectProject }: ProjectListProps) {
+export function ProjectList({
+  projects,
+  isLoading,
+  selectedProject,
+  onSelectProject,
+  showHidden,
+  onShowHiddenChange,
+}: ProjectListProps) {
   const [search, setSearch] = useState('')
-  const [showHidden, setShowHidden] = useState(false)
-  const { projects, isLoading } = useProjects({ showHidden })
 
   const filteredProjects = projects.filter(p =>
     p.project_name.toLowerCase().includes(search.toLowerCase()) ||
@@ -24,7 +33,7 @@ export function ProjectList({ selectedProject, onSelectProject }: ProjectListPro
   return (
     <div className="h-full flex flex-col bg-card rounded-lg border">
       {/* Search */}
-      <div className="p-3 border-b">
+      <div className="flex-shrink-0 p-3 border-b">
         <div className="relative">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
@@ -36,7 +45,7 @@ export function ProjectList({ selectedProject, onSelectProject }: ProjectListPro
         </div>
       </div>
 
-      {/* Project list */}
+      {/* Project list - scrollable */}
       <ScrollArea className="flex-1">
         <div className="p-2 space-y-1">
           {isLoading ? (
@@ -61,12 +70,12 @@ export function ProjectList({ selectedProject, onSelectProject }: ProjectListPro
       </ScrollArea>
 
       {/* Footer */}
-      <div className="p-3 border-t">
+      <div className="flex-shrink-0 p-3 border-t">
         <div className="flex items-center gap-2">
           <Checkbox
             id="show-hidden"
             checked={showHidden}
-            onCheckedChange={(checked) => setShowHidden(checked === true)}
+            onCheckedChange={(checked) => onShowHiddenChange(checked === true)}
           />
           <label
             htmlFor="show-hidden"

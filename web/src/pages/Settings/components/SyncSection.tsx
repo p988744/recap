@@ -49,6 +49,10 @@ interface SyncSectionProps {
   setEnabled: (v: boolean) => void
   intervalMinutes: number
   setIntervalMinutes: (v: number) => void
+  compactionIntervalHours: number
+  setCompactionIntervalHours: (v: number) => void
+  autoGenerateSummaries: boolean
+  setAutoGenerateSummaries: (v: boolean) => void
   // Sync UI
   loading: boolean
   saving: boolean
@@ -116,6 +120,10 @@ export function SyncSection({
   setEnabled,
   intervalMinutes,
   setIntervalMinutes,
+  compactionIntervalHours,
+  setCompactionIntervalHours,
+  autoGenerateSummaries,
+  setAutoGenerateSummaries,
   loading,
   saving,
   onSave,
@@ -167,9 +175,12 @@ export function SyncSection({
             description="自動定時同步工作項目"
           />
 
-          {/* Interval Selection */}
+          {/* Data Sync Interval */}
           <div className={enabled ? '' : 'opacity-50 pointer-events-none'}>
-            <Label className="mb-2 block">同步間隔</Label>
+            <Label className="mb-2 block">資料同步間隔</Label>
+            <p className="text-xs text-muted-foreground mb-2">
+              從 Claude Code、Antigravity 等來源擷取新資料
+            </p>
             <div className="flex items-center gap-2">
               <Clock className="w-4 h-4 text-muted-foreground" />
               <select
@@ -184,6 +195,40 @@ export function SyncSection({
                 <option value={60}>每小時</option>
               </select>
             </div>
+          </div>
+
+          {/* Data Compaction Interval */}
+          <div className={enabled && autoGenerateSummaries ? '' : 'opacity-50 pointer-events-none'}>
+            <Label className="mb-2 block">資料壓縮間隔</Label>
+            <p className="text-xs text-muted-foreground mb-2">
+              生成時間軸摘要（每週、每月、每季、每年）
+            </p>
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-muted-foreground" />
+              <select
+                value={compactionIntervalHours}
+                onChange={(e) => setCompactionIntervalHours(Number(e.target.value))}
+                className="px-3 py-2 bg-background border border-border text-sm focus:outline-none focus:ring-1 focus:ring-foreground"
+                disabled={!enabled || !autoGenerateSummaries}
+              >
+                <option value={1}>每小時</option>
+                <option value={3}>每 3 小時</option>
+                <option value={6}>每 6 小時</option>
+                <option value={12}>每 12 小時</option>
+                <option value={24}>每天</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Auto Generate Summaries Toggle */}
+          <div className={enabled ? '' : 'opacity-50 pointer-events-none'}>
+            <Toggle
+              checked={autoGenerateSummaries}
+              onChange={setAutoGenerateSummaries}
+              label="自動生成時間軸摘要"
+              description="同步完成後自動生成已完成週期的摘要（每週、每月、每季、每年）"
+              disabled={!enabled}
+            />
           </div>
 
           {/* Save Button */}

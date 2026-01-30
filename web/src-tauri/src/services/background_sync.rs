@@ -20,12 +20,18 @@ use recap_core::services::sources::{SyncConfig, SourceSyncResult};
 ///
 /// This struct maintains backward compatibility with the legacy field-based
 /// configuration while internally converting to the new `SyncConfig` system.
+///
+/// Tasks are separated into two categories:
+/// 1. **Data Sync** (frequent): Discovery and extraction from sources
+/// 2. **Data Compaction** (periodic): Hierarchical summary generation
 #[derive(Debug, Clone)]
 pub struct BackgroundSyncConfig {
     /// Whether background sync is enabled
     pub enabled: bool,
-    /// Sync interval in minutes (5, 15, 30, 60)
+    /// Data sync interval in minutes (5, 15, 30, 60)
     pub interval_minutes: u32,
+    /// Data compaction interval in hours (1, 3, 6, 12, 24)
+    pub compaction_interval_hours: u32,
     /// Sync local Git repositories
     pub sync_git: bool,
     /// Sync Claude Code sessions
@@ -36,6 +42,8 @@ pub struct BackgroundSyncConfig {
     pub sync_gitlab: bool,
     /// Sync Jira/Tempo (requires configuration)
     pub sync_jira: bool,
+    /// Auto-generate timeline summaries for completed periods
+    pub auto_generate_summaries: bool,
 }
 
 impl Default for BackgroundSyncConfig {
@@ -43,11 +51,13 @@ impl Default for BackgroundSyncConfig {
         Self {
             enabled: true,
             interval_minutes: 15,
+            compaction_interval_hours: 6,
             sync_git: true,
             sync_claude: true,
             sync_antigravity: true,
             sync_gitlab: false,
             sync_jira: false,
+            auto_generate_summaries: true,
         }
     }
 }
@@ -226,12 +236,18 @@ impl std::error::Error for ServiceLifecycleError {}
 pub struct SyncServiceStatus {
     /// Whether the service is currently running
     pub is_running: bool,
-    /// Whether a sync is in progress
+    /// Whether a data sync is in progress
     pub is_syncing: bool,
-    /// Last sync timestamp (ISO 8601)
+    /// Whether compaction is in progress
+    pub is_compacting: bool,
+    /// Last data sync timestamp (ISO 8601)
     pub last_sync_at: Option<String>,
+    /// Last compaction timestamp (ISO 8601)
+    pub last_compaction_at: Option<String>,
     /// Next scheduled sync timestamp (ISO 8601)
     pub next_sync_at: Option<String>,
+    /// Next scheduled compaction timestamp (ISO 8601)
+    pub next_compaction_at: Option<String>,
     /// Last sync result message
     pub last_result: Option<String>,
     /// Last error message (if any)
@@ -240,12 +256,22 @@ pub struct SyncServiceStatus {
 
 impl SyncServiceStatus {
     /// Create from lifecycle state
-    pub fn from_lifecycle(lifecycle: &ServiceLifecycle, last_result: Option<String>, last_error: Option<String>) -> Self {
+    pub fn from_lifecycle(
+        lifecycle: &ServiceLifecycle,
+        is_compacting: bool,
+        last_compaction_at: Option<String>,
+        next_compaction_at: Option<String>,
+        last_result: Option<String>,
+        last_error: Option<String>,
+    ) -> Self {
         Self {
             is_running: lifecycle.is_running(),
             is_syncing: lifecycle.is_syncing(),
+            is_compacting,
             last_sync_at: lifecycle.last_sync_at().map(|s| s.to_string()),
+            last_compaction_at,
             next_sync_at: lifecycle.next_sync_at().map(|s| s.to_string()),
+            next_compaction_at,
             last_result,
             last_error,
         }
@@ -290,23 +316,35 @@ impl From<SourceSyncResult> for SyncOperationResult {
 /// Uses a formal lifecycle state machine to ensure correct state transitions.
 /// All sync operations must go through `execute_sync` to guarantee proper
 /// state management.
+///
+/// Tasks are separated:
+/// - **Data Sync**: Frequent (every N minutes) - discovery and extraction
+/// - **Data Compaction**: Periodic (every N hours) - hierarchical summary generation
 pub struct BackgroundSyncService {
     /// Current configuration
     config: Arc<RwLock<BackgroundSyncConfig>>,
     /// Service lifecycle state (single source of truth)
     lifecycle: Arc<RwLock<ServiceLifecycle>>,
-    /// Last sync timestamp (persisted separately for display during Syncing state)
+    /// Last data sync timestamp (persisted separately for display during Syncing state)
     last_sync_at: Arc<RwLock<Option<String>>>,
+    /// Last compaction timestamp
+    last_compaction_at: Arc<RwLock<Option<String>>>,
+    /// Next scheduled compaction timestamp
+    next_compaction_at: Arc<RwLock<Option<String>>>,
     /// Last sync result message
     last_result: Arc<RwLock<Option<String>>>,
     /// Last error message
     last_error: Arc<RwLock<Option<String>>>,
-    /// Shutdown signal sender
+    /// Shutdown signal sender for sync task
     shutdown_tx: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+    /// Shutdown signal sender for compaction task
+    compaction_shutdown_tx: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
     /// Database connection for sync operations
     db: Arc<Mutex<recap_core::Database>>,
     /// User ID for sync operations
     user_id: Arc<RwLock<Option<String>>>,
+    /// Whether compaction is currently in progress
+    is_compacting: Arc<RwLock<bool>>,
 }
 
 impl BackgroundSyncService {
@@ -316,12 +354,21 @@ impl BackgroundSyncService {
             config: Arc::new(RwLock::new(BackgroundSyncConfig::default())),
             lifecycle: Arc::new(RwLock::new(ServiceLifecycle::Created)),
             last_sync_at: Arc::new(RwLock::new(None)),
+            last_compaction_at: Arc::new(RwLock::new(None)),
+            next_compaction_at: Arc::new(RwLock::new(None)),
             last_result: Arc::new(RwLock::new(None)),
             last_error: Arc::new(RwLock::new(None)),
             shutdown_tx: Arc::new(Mutex::new(None)),
+            compaction_shutdown_tx: Arc::new(Mutex::new(None)),
             db,
             user_id: Arc::new(RwLock::new(None)),
+            is_compacting: Arc::new(RwLock::new(false)),
         }
+    }
+
+    /// Get last compaction timestamp
+    pub async fn get_last_compaction_at(&self) -> Option<String> {
+        self.last_compaction_at.read().await.clone()
     }
 
     /// Set the user ID for sync operations
@@ -355,15 +402,20 @@ impl BackgroundSyncService {
     pub async fn get_status(&self) -> SyncServiceStatus {
         let lifecycle = self.lifecycle.read().await;
         let last_sync_at = self.last_sync_at.read().await.clone();
+        let last_compaction_at = self.last_compaction_at.read().await.clone();
+        let next_compaction_at = self.next_compaction_at.read().await.clone();
         let last_result = self.last_result.read().await.clone();
         let last_error = self.last_error.read().await.clone();
+        let is_compacting = *self.is_compacting.read().await;
 
-        // Use separate last_sync_at field to persist value during Syncing state
         SyncServiceStatus {
             is_running: lifecycle.is_running(),
             is_syncing: lifecycle.is_syncing(),
+            is_compacting,
             last_sync_at,
+            last_compaction_at,
             next_sync_at: lifecycle.next_sync_at().map(|s| s.to_string()),
+            next_compaction_at,
             last_result,
             last_error,
         }
@@ -470,6 +522,10 @@ impl BackgroundSyncService {
     }
 
     /// Start the background sync service
+    ///
+    /// Spawns two independent tasks:
+    /// 1. **Data Sync Task** - Runs every N minutes for discovery and extraction
+    /// 2. **Compaction Task** - Runs every N hours for hierarchical summary generation
     pub async fn start(&self) {
         let config = self.config.read().await;
         if !config.enabled {
@@ -478,6 +534,8 @@ impl BackgroundSyncService {
         }
 
         let interval_minutes = config.interval_minutes;
+        let compaction_interval_hours = config.compaction_interval_hours;
+        let auto_generate_summaries = config.auto_generate_summaries;
         drop(config);
 
         // Transition lifecycle: Created/Stopped -> Idle
@@ -496,78 +554,145 @@ impl BackgroundSyncService {
             }
         }
 
-        // Create shutdown channel
+        // Create shutdown channels for both tasks
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         {
             let mut tx = self.shutdown_tx.lock().await;
             *tx = Some(shutdown_tx);
         }
 
-        log::info!("Starting background sync service with {}min interval", interval_minutes);
+        let (compaction_shutdown_tx, mut compaction_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        {
+            let mut tx = self.compaction_shutdown_tx.lock().await;
+            *tx = Some(compaction_shutdown_tx);
+        }
 
-        // Clone references for the spawned task
-        let config = Arc::clone(&self.config);
-        let lifecycle = Arc::clone(&self.lifecycle);
-        let last_sync_at = Arc::clone(&self.last_sync_at);
-        let last_result = Arc::clone(&self.last_result);
-        let last_error = Arc::clone(&self.last_error);
-        let db = Arc::clone(&self.db);
-        let user_id = Arc::clone(&self.user_id);
+        log::info!(
+            "Starting background sync service: data sync every {}min, compaction every {}h",
+            interval_minutes,
+            compaction_interval_hours
+        );
 
-        // Spawn the sync loop
-        tokio::spawn(async move {
-            let mut timer = interval(Duration::from_secs(interval_minutes as u64 * 60));
+        // ===== Task 1: Data Sync (frequent) =====
+        {
+            let config = Arc::clone(&self.config);
+            let lifecycle = Arc::clone(&self.lifecycle);
+            let last_sync_at = Arc::clone(&self.last_sync_at);
+            let last_result = Arc::clone(&self.last_result);
+            let last_error = Arc::clone(&self.last_error);
+            let db = Arc::clone(&self.db);
+            let user_id = Arc::clone(&self.user_id);
 
-            // Skip the first tick (immediate)
-            timer.tick().await;
+            tokio::spawn(async move {
+                let mut timer = interval(Duration::from_secs(interval_minutes as u64 * 60));
+                timer.tick().await; // Skip first tick
 
-            loop {
-                tokio::select! {
-                    _ = timer.tick() => {
-                        // Check if still enabled
-                        let cfg = config.read().await;
-                        if !cfg.enabled {
-                            log::info!("Background sync disabled, stopping loop");
+                loop {
+                    tokio::select! {
+                        _ = timer.tick() => {
+                            let cfg = config.read().await;
+                            if !cfg.enabled {
+                                log::info!("Background sync disabled, stopping data sync loop");
+                                break;
+                            }
+                            let sync_config = cfg.clone();
+                            drop(cfg);
+
+                            let uid = user_id.read().await.clone();
+                            if uid.is_none() {
+                                log::warn!("No user ID set, skipping data sync");
+                                continue;
+                            }
+
+                            Self::perform_data_sync(
+                                &db,
+                                &lifecycle,
+                                &last_sync_at,
+                                &last_result,
+                                &last_error,
+                                &sync_config,
+                                &uid.unwrap(),
+                            ).await;
+                        }
+                        _ = &mut shutdown_rx => {
+                            log::info!("Data sync task received shutdown signal");
                             break;
                         }
-                        let sync_config = cfg.clone();
-                        drop(cfg);
-
-                        // Get user ID
-                        let uid = user_id.read().await.clone();
-                        if uid.is_none() {
-                            log::warn!("No user ID set, skipping sync");
-                            continue;
-                        }
-                        let uid = uid.unwrap();
-
-                        // Perform sync with lifecycle management
-                        Self::perform_sync_with_lifecycle(
-                            &db,
-                            &lifecycle,
-                            &last_sync_at,
-                            &last_result,
-                            &last_error,
-                            &sync_config,
-                            &uid,
-                        ).await;
-                    }
-                    _ = &mut shutdown_rx => {
-                        log::info!("Background sync service received shutdown signal");
-                        break;
                     }
                 }
+
+                let mut lc = lifecycle.write().await;
+                *lc = lc.clone().stop();
+                log::info!("Data sync task stopped");
+            });
+        }
+
+        // ===== Task 2: Data Compaction (periodic) =====
+        if auto_generate_summaries {
+            let config = Arc::clone(&self.config);
+            let db = Arc::clone(&self.db);
+            let user_id = Arc::clone(&self.user_id);
+            let last_compaction_at = Arc::clone(&self.last_compaction_at);
+            let next_compaction_at = Arc::clone(&self.next_compaction_at);
+            let is_compacting = Arc::clone(&self.is_compacting);
+
+            // Set initial next_compaction_at
+            {
+                let next = Self::calculate_next_compaction(compaction_interval_hours);
+                let mut nca = self.next_compaction_at.write().await;
+                *nca = Some(next);
             }
 
-            // Transition lifecycle to Stopped
-            let mut lc = lifecycle.write().await;
-            *lc = lc.clone().stop();
-            log::info!("Background sync service stopped");
-        });
+            tokio::spawn(async move {
+                let mut timer = interval(Duration::from_secs(compaction_interval_hours as u64 * 3600));
+                timer.tick().await; // Skip first tick
+
+                loop {
+                    tokio::select! {
+                        _ = timer.tick() => {
+                            let cfg = config.read().await;
+                            if !cfg.enabled || !cfg.auto_generate_summaries {
+                                log::info!("Compaction disabled, skipping");
+                                // Update next compaction time
+                                let mut nca = next_compaction_at.write().await;
+                                *nca = Some(Self::calculate_next_compaction(cfg.compaction_interval_hours));
+                                continue;
+                            }
+                            let interval_hours = cfg.compaction_interval_hours;
+                            drop(cfg);
+
+                            let uid = user_id.read().await.clone();
+                            if uid.is_none() {
+                                log::warn!("No user ID set, skipping compaction");
+                                continue;
+                            }
+
+                            Self::perform_compaction(
+                                &db,
+                                &last_compaction_at,
+                                &is_compacting,
+                                &uid.unwrap(),
+                            ).await;
+
+                            // Update next compaction time after completion
+                            let mut nca = next_compaction_at.write().await;
+                            *nca = Some(Self::calculate_next_compaction(interval_hours));
+                        }
+                        _ = &mut compaction_shutdown_rx => {
+                            log::info!("Compaction task received shutdown signal");
+                            break;
+                        }
+                    }
+                }
+
+                log::info!("Compaction task stopped");
+            });
+        }
     }
 
     /// Stop the background sync service
     pub async fn stop(&self) {
+        // Stop sync task
         let tx = {
             let mut guard = self.shutdown_tx.lock().await;
             guard.take()
@@ -575,7 +700,18 @@ impl BackgroundSyncService {
 
         if let Some(tx) = tx {
             let _ = tx.send(());
-            log::info!("Sent shutdown signal to background sync service");
+            log::info!("Sent shutdown signal to data sync task");
+        }
+
+        // Stop compaction task
+        let compaction_tx = {
+            let mut guard = self.compaction_shutdown_tx.lock().await;
+            guard.take()
+        };
+
+        if let Some(tx) = compaction_tx {
+            let _ = tx.send(());
+            log::info!("Sent shutdown signal to compaction task");
         }
 
         // Transition lifecycle to Stopped
@@ -704,7 +840,219 @@ impl BackgroundSyncService {
         result
     }
 
-    /// Perform the actual sync operation with lifecycle management
+    /// Perform data sync only (Phase 1: Sources, Phase 2: Snapshots)
+    ///
+    /// This is the frequent task that runs every N minutes.
+    /// Does NOT include compaction or timeline summary generation.
+    async fn perform_data_sync(
+        db: &Arc<Mutex<recap_core::Database>>,
+        lifecycle: &Arc<RwLock<ServiceLifecycle>>,
+        last_sync_at: &Arc<RwLock<Option<String>>>,
+        last_result: &Arc<RwLock<Option<String>>>,
+        last_error: &Arc<RwLock<Option<String>>>,
+        config: &BackgroundSyncConfig,
+        user_id: &str,
+    ) -> Vec<SyncOperationResult> {
+        log::info!("Starting data sync for user: {}", user_id);
+
+        // Transition to Syncing
+        {
+            let mut lc = lifecycle.write().await;
+            match lc.clone().begin_sync() {
+                Ok(new_state) => *lc = new_state,
+                Err(e) => {
+                    log::warn!("Cannot begin sync: {}", e);
+                    return vec![SyncOperationResult {
+                        source: "system".to_string(),
+                        success: false,
+                        error: Some(e.to_string()),
+                        ..Default::default()
+                    }];
+                }
+            }
+        }
+
+        let mut results = Vec::new();
+
+        // Clone pool immediately
+        let pool = {
+            let db_guard = db.lock().await;
+            db_guard.pool.clone()
+        };
+
+        // Phase 1: Sync all enabled sources
+        let sync_config = config.to_sync_config();
+        let sources = recap_core::services::sources::get_enabled_sources(&sync_config).await;
+
+        for source in &sources {
+            log::info!("Syncing {} for user: {}", source.display_name(), user_id);
+
+            match source.sync_sessions(&pool, user_id).await {
+                Ok(source_result) => {
+                    let result = SyncOperationResult::from(source_result);
+                    log::info!(
+                        "{} sync complete: {} items, {} created",
+                        source.display_name(),
+                        result.items_synced,
+                        result.items_created
+                    );
+                    results.push(result);
+                }
+                Err(e) => {
+                    log::error!("{} sync error: {}", source.display_name(), e);
+                    results.push(SyncOperationResult {
+                        source: source.source_name().to_string(),
+                        success: false,
+                        error: Some(e),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+
+        // Phase 2: Capture hourly snapshots
+        if config.sync_claude {
+            let projects = recap_core::services::SyncService::discover_project_paths();
+            let mut snapshot_count = 0;
+            for project in &projects {
+                match recap_core::services::snapshot::capture_snapshots_for_project(
+                    &pool,
+                    user_id,
+                    project,
+                )
+                .await
+                {
+                    Ok(n) => snapshot_count += n,
+                    Err(e) => {
+                        log::warn!("Snapshot capture error for {}: {}", project.name, e);
+                    }
+                }
+            }
+            if snapshot_count > 0 {
+                log::info!("Captured {} hourly snapshots", snapshot_count);
+            }
+        }
+
+        // Update last_sync_at
+        {
+            let mut sync_time = last_sync_at.write().await;
+            *sync_time = Some(chrono::Utc::now().to_rfc3339());
+        }
+
+        // Transition back to Idle
+        {
+            let mut lc = lifecycle.write().await;
+            let next_sync = Some(Self::calculate_next_sync(config.interval_minutes));
+            if let Ok(new_state) = lc.clone().complete_sync(next_sync) {
+                *lc = new_state;
+            }
+        }
+
+        // Record results
+        {
+            let total_projects: i32 = results.iter().map(|r| r.projects_scanned).sum();
+            let total_created: i32 = results.iter().map(|r| r.items_created).sum();
+            let errors: Vec<String> = results.iter().filter_map(|r| r.error.clone()).collect();
+
+            {
+                let mut result = last_result.write().await;
+                *result = Some(format!("已掃描 {} 個專案，發現 {} 筆新資料", total_projects, total_created));
+            }
+            {
+                let mut error = last_error.write().await;
+                *error = if errors.is_empty() { None } else { Some(errors.join("; ")) };
+            }
+        }
+
+        log::info!("Data sync completed: {} sources processed", results.len());
+        results
+    }
+
+    /// Perform data compaction (Phase 3: Hourly/Daily, Phase 4: Timeline Summaries)
+    ///
+    /// This is the periodic task that runs every N hours.
+    /// Performs hierarchical compaction from small to large time units.
+    async fn perform_compaction(
+        db: &Arc<Mutex<recap_core::Database>>,
+        last_compaction_at: &Arc<RwLock<Option<String>>>,
+        is_compacting: &Arc<RwLock<bool>>,
+        user_id: &str,
+    ) {
+        // Set compacting state
+        {
+            let mut compacting = is_compacting.write().await;
+            *compacting = true;
+        }
+
+        log::info!("Starting data compaction for user: {}", user_id);
+
+        let pool = {
+            let db_guard = db.lock().await;
+            db_guard.pool.clone()
+        };
+
+        // Phase 3: Hourly → Daily compaction
+        let llm = recap_core::services::llm::create_llm_service(&pool, user_id)
+            .await
+            .ok();
+
+        match recap_core::services::compaction::run_compaction_cycle(
+            &pool,
+            llm.as_ref(),
+            user_id,
+        )
+        .await
+        {
+            Ok(cr) => {
+                if cr.hourly_compacted > 0 || cr.daily_compacted > 0 {
+                    log::info!(
+                        "Compaction: {} hourly, {} daily summaries created",
+                        cr.hourly_compacted,
+                        cr.daily_compacted
+                    );
+                }
+            }
+            Err(e) => {
+                log::warn!("Compaction cycle error: {}", e);
+            }
+        }
+
+        // Phase 4: Timeline summaries (hierarchical: week → month → quarter → year)
+        // Process in order from small to large time units
+        let time_units = ["week", "month", "quarter", "year"];
+        match crate::commands::projects::summaries::generate_all_completed_summaries(
+            &pool,
+            user_id,
+            &time_units,
+        )
+        .await
+        {
+            Ok(count) => {
+                if count > 0 {
+                    log::info!("Generated {} timeline summaries", count);
+                }
+            }
+            Err(e) => {
+                log::warn!("Timeline summary generation error: {}", e);
+            }
+        }
+
+        // Update last_compaction_at
+        {
+            let mut compaction_time = last_compaction_at.write().await;
+            *compaction_time = Some(chrono::Utc::now().to_rfc3339());
+        }
+
+        // Clear compacting state
+        {
+            let mut compacting = is_compacting.write().await;
+            *compacting = false;
+        }
+
+        log::info!("Data compaction completed");
+    }
+
+    /// Perform the actual sync operation with lifecycle management (FULL SYNC)
     ///
     /// This is the internal implementation used by both the timer loop and trigger_sync.
     /// Uses the lifecycle state machine to ensure correct state transitions.
@@ -851,6 +1199,28 @@ impl BackgroundSyncService {
             }
         }
 
+        // Phase 4: Generate timeline summaries for completed periods
+        if config.auto_generate_summaries {
+            // Generate summaries for week, month, quarter, year (skip day for efficiency)
+            let time_units = ["week", "month", "quarter", "year"];
+            match crate::commands::projects::summaries::generate_all_completed_summaries(
+                &pool,
+                user_id,
+                &time_units,
+            )
+            .await
+            {
+                Ok(count) => {
+                    if count > 0 {
+                        log::info!("Generated {} timeline summaries", count);
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Timeline summary generation error: {}", e);
+                }
+            }
+        }
+
         // Update last_sync_at (persists during all states)
         {
             let mut sync_time = last_sync_at.write().await;
@@ -892,6 +1262,12 @@ impl BackgroundSyncService {
         let next = chrono::Utc::now() + chrono::Duration::minutes(interval_minutes as i64);
         next.to_rfc3339()
     }
+
+    /// Calculate the next compaction timestamp
+    fn calculate_next_compaction(interval_hours: u32) -> String {
+        let next = chrono::Utc::now() + chrono::Duration::hours(interval_hours as i64);
+        next.to_rfc3339()
+    }
 }
 
 // =============================================================================
@@ -918,7 +1294,9 @@ mod tests {
         let status = SyncServiceStatus::default();
         assert!(!status.is_running);
         assert!(!status.is_syncing);
+        assert!(!status.is_compacting);
         assert!(status.last_sync_at.is_none());
+        assert!(status.last_compaction_at.is_none());
         assert!(status.next_sync_at.is_none());
     }
 
@@ -1096,13 +1474,19 @@ mod tests {
 
         let status = SyncServiceStatus::from_lifecycle(
             &lifecycle,
+            false, // is_compacting
+            Some("2026-01-30T11:00:00Z".to_string()), // last_compaction_at
+            Some("2026-01-30T17:00:00Z".to_string()), // next_compaction_at
             Some("結果".to_string()),
             None,
         );
 
         assert!(status.is_running);
         assert!(!status.is_syncing);
+        assert!(!status.is_compacting);
+        assert_eq!(status.next_compaction_at, Some("2026-01-30T17:00:00Z".to_string()));
         assert_eq!(status.last_sync_at, Some("2026-01-30T12:00:00Z".to_string()));
+        assert_eq!(status.last_compaction_at, Some("2026-01-30T11:00:00Z".to_string()));
         assert_eq!(status.next_sync_at, Some("2026-01-30T12:15:00Z".to_string()));
         assert_eq!(status.last_result, Some("結果".to_string()));
         assert!(status.last_error.is_none());

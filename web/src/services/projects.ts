@@ -13,6 +13,10 @@ import type {
   AntigravitySessionPathResponse,
   ProjectDescription,
   UpdateProjectDescriptionRequest,
+  ProjectTimelineRequest,
+  ProjectTimelineResponse,
+  CommitDiffResponse,
+  GetCommitDiffRequest,
 } from '@/types'
 
 /**
@@ -112,4 +116,47 @@ export async function updateProjectDescription(request: UpdateProjectDescription
  */
 export async function deleteProjectDescription(projectName: string): Promise<string> {
   return invokeAuth<string>('delete_project_description', { projectName })
+}
+
+/**
+ * Get project timeline with sessions and commits grouped by time period
+ */
+export async function getProjectTimeline(
+  request: ProjectTimelineRequest
+): Promise<ProjectTimelineResponse> {
+  return invokeAuth<ProjectTimelineResponse>('get_project_timeline', { request })
+}
+
+// ============ Timeline Summary API ============
+
+/**
+ * Get cached summaries in batch (for timeline view)
+ * Queries both work_summaries (compaction) and project_summaries (legacy)
+ */
+export async function getCachedSummariesBatch(
+  projectName: string,
+  summaryType: 'report' | 'timeline',
+  timeUnit: string,
+  periodStarts: string[]
+): Promise<Record<string, string>> {
+  return invokeAuth<Record<string, string>>('get_cached_summaries_batch', {
+    projectName,
+    summaryType,
+    timeUnit,
+    periodStarts,
+  })
+}
+
+/**
+ * Get the diff for a specific commit
+ */
+export async function getCommitDiff(
+  projectPath: string,
+  commitHash: string
+): Promise<CommitDiffResponse> {
+  const request: GetCommitDiffRequest = {
+    project_path: projectPath,
+    commit_hash: commitHash,
+  }
+  return invokeAuth<CommitDiffResponse>('get_commit_diff', { request })
 }

@@ -151,6 +151,19 @@ pub fn run() {
             commands::projects::descriptions::get_project_description,
             commands::projects::descriptions::update_project_description,
             commands::projects::descriptions::delete_project_description,
+            // Projects - timeline
+            commands::projects::timeline::get_project_timeline,
+            // Projects - summaries (unified)
+            commands::projects::summaries::get_cached_summary,
+            commands::projects::summaries::get_cached_summaries_batch,
+            commands::projects::summaries::trigger_summaries_generation,
+            commands::projects::summaries::generate_completed_summaries,
+            // Projects - summaries (legacy)
+            commands::projects::summaries::get_project_summary,
+            commands::projects::summaries::generate_project_summary,
+            commands::projects::summaries::check_summary_freshness,
+            // Projects - git diff
+            commands::projects::git_diff::get_commit_diff,
             // Danger Zone
             commands::danger_zone::clear_synced_data,
             commands::danger_zone::factory_reset,

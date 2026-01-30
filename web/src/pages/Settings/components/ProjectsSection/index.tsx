@@ -1,20 +1,23 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Plus } from 'lucide-react'
-import { projects as projectsService } from '@/services'
+import { projects as projectsService, worklog } from '@/services'
 import type { ProjectInfo } from '@/types'
+import type { CompactionResult } from '@/services/worklog'
 import type { BackgroundSyncStatus, SyncProgress } from '@/services/background-sync'
 import { ProjectList } from './ProjectList'
 import { ProjectSourcePanel } from './ProjectSourcePanel'
 import { ClaudePathSetting } from './ClaudePathSetting'
 import { AntigravityPathSetting } from './AntigravityPathSetting'
 import { AddProjectDialog } from './AddProjectDialog'
-import { DataSyncStatus } from './DataSyncStatus'
+import { DataSyncStatus, DataCompactionStatus } from './DataSyncStatus'
 
 type PhaseState = 'idle' | 'syncing' | 'done'
+type CompactionPhase = 'idle' | 'hourly' | 'timeline' | 'done'
 
 interface ProjectsSectionProps {
   syncStatus?: BackgroundSyncStatus | null
   syncEnabled?: boolean
+  autoGenerateSummaries?: boolean
   dataSyncState?: PhaseState
   summaryState?: PhaseState
   syncProgress?: SyncProgress | null
@@ -24,6 +27,7 @@ interface ProjectsSectionProps {
 export function ProjectsSection({
   syncStatus = null,
   syncEnabled = false,
+  autoGenerateSummaries = true,
   dataSyncState = 'idle',
   summaryState = 'idle',
   syncProgress = null,
@@ -33,6 +37,8 @@ export function ProjectsSection({
   const [loading, setLoading] = useState(true)
   const [selectedProject, setSelectedProject] = useState<string | null>(null)
   const [showAddDialog, setShowAddDialog] = useState(false)
+  const [compactionPhase, setCompactionPhase] = useState<CompactionPhase>('idle')
+  const [compactionResult, setCompactionResult] = useState<CompactionResult | null>(null)
 
   const fetchProjects = useCallback(async () => {
     try {
@@ -76,6 +82,28 @@ export function ProjectsSection({
     }
   }, [fetchProjects])
 
+  const handleTriggerCompaction = useCallback(async () => {
+    if (compactionPhase !== 'idle') return
+
+    try {
+      setCompactionPhase('hourly')
+      setCompactionResult(null)
+      const result = await worklog.triggerCompaction()
+      setCompactionResult(result)
+      setCompactionPhase('timeline')
+      // Brief delay to show timeline phase
+      await new Promise(resolve => setTimeout(resolve, 500))
+      setCompactionPhase('done')
+      console.log('Compaction complete:', result)
+      // Reset phase after showing done state, but keep result for display
+      setTimeout(() => setCompactionPhase('idle'), 2000)
+    } catch (err) {
+      console.error('Failed to trigger compaction:', err)
+      setCompactionPhase('idle')
+      setCompactionResult(null)
+    }
+  }, [compactionPhase])
+
   if (loading) {
     return (
       <section className="animate-fade-up opacity-0 delay-1">
@@ -96,14 +124,24 @@ export function ProjectsSection({
 
       {/* Data sync status */}
       {onTriggerSync && (
-        <DataSyncStatus
-          status={syncStatus}
-          enabled={syncEnabled}
-          dataSyncState={dataSyncState}
-          summaryState={summaryState}
-          syncProgress={syncProgress}
-          onTriggerSync={onTriggerSync}
-        />
+        <div className="space-y-3">
+          <DataSyncStatus
+            status={syncStatus}
+            enabled={syncEnabled}
+            dataSyncState={dataSyncState}
+            summaryState={summaryState}
+            syncProgress={syncProgress}
+            onTriggerSync={onTriggerSync}
+          />
+          <DataCompactionStatus
+            status={syncStatus}
+            enabled={syncEnabled}
+            autoGenerateSummaries={autoGenerateSummaries}
+            compactionPhase={compactionPhase}
+            compactionResult={compactionResult}
+            onTriggerCompaction={handleTriggerCompaction}
+          />
+        </div>
       )}
 
       {/* Data source path settings */}

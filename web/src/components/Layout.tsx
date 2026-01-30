@@ -208,6 +208,11 @@ export function Layout() {
                     <RefreshCw className="w-3 h-3 text-muted-foreground animate-spin" strokeWidth={1.5} />
                     <span className="text-[10px] text-muted-foreground">同步中...</span>
                   </>
+                ) : syncValue.backendStatus?.is_compacting ? (
+                  <>
+                    <RefreshCw className="w-3 h-3 text-muted-foreground animate-spin" strokeWidth={1.5} />
+                    <span className="text-[10px] text-muted-foreground">壓縮中...</span>
+                  </>
                 ) : (
                   <>
                     <CheckCircle2 className="w-3 h-3 text-sage" strokeWidth={1.5} />
@@ -234,10 +239,10 @@ export function Layout() {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 ml-56 overflow-hidden">
+      <main className="flex-1 ml-56 h-screen overflow-y-auto">
         <SyncProvider value={syncValue}>
           <BackgroundTaskProvider value={backgroundTaskValue}>
-            <div className="px-12 py-10 max-w-5xl overflow-x-hidden">
+            <div className="px-12 py-10 max-w-5xl">
               <Outlet />
             </div>
           </BackgroundTaskProvider>

@@ -94,13 +94,14 @@ export interface UpdateProjectDescriptionRequest {
   notes?: string | null
 }
 
-// Project AI summary from cache (renamed to avoid conflict with integrations/ProjectSummary)
-export interface ProjectAISummary {
-  period_type: 'week' | 'month'
+// Project AI summary response from backend
+export interface ProjectSummaryResponse {
+  summary: string | null
+  period_type: string
   period_start: string
   period_end: string
-  summary: string
   is_stale: boolean
+  generated_at: string | null
 }
 
 export interface GenerateSummaryRequest {
@@ -108,6 +109,7 @@ export interface GenerateSummaryRequest {
   period_type: 'week' | 'month'
   period_start: string
   period_end: string
+  force_regenerate?: boolean
 }
 
 export interface SummaryFreshness {
@@ -125,6 +127,7 @@ export interface TimelineGroup {
   period_start: string
   period_end: string
   total_hours: number
+  summary: string | null
   sessions: TimelineSessionDetail[]
   standalone_commits: TimelineCommitDetail[]
 }
@@ -136,6 +139,7 @@ export interface TimelineSessionDetail {
   start_time: string
   end_time: string
   hours: number
+  summary: string | null
   commits: TimelineCommitDetail[]
 }
 
@@ -169,13 +173,29 @@ export interface ProjectTimelineRequest {
 // Git diff types
 export interface CommitFileChange {
   path: string
-  status: 'added' | 'modified' | 'deleted' | 'renamed'
+  status: 'added' | 'modified' | 'deleted' | 'renamed' | 'copied'
+  old_path: string | null // For renamed files
   insertions: number
   deletions: number
 }
 
-export interface CommitDiff {
+export interface CommitStats {
+  files_changed: number
+  insertions: number
+  deletions: number
+}
+
+export interface CommitDiffResponse {
   hash: string
+  message: string
+  author: string
+  date: string
   files: CommitFileChange[]
   diff_text: string | null // null if repo not available locally
+  stats: CommitStats
+}
+
+export interface GetCommitDiffRequest {
+  project_path: string
+  commit_hash: string
 }

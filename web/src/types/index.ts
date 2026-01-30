@@ -182,7 +182,7 @@ export type {
   // Project descriptions & summaries
   ProjectDescription,
   UpdateProjectDescriptionRequest,
-  ProjectAISummary,
+  ProjectSummaryResponse,
   GenerateSummaryRequest,
   SummaryFreshness,
   // Timeline types
@@ -194,5 +194,7 @@ export type {
   ProjectTimelineRequest,
   // Git diff types
   CommitFileChange,
-  CommitDiff,
+  CommitStats,
+  CommitDiffResponse,
+  GetCommitDiffRequest,
 } from './projects'

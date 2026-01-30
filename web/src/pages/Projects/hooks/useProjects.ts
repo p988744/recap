@@ -30,8 +30,12 @@ export function useProjects(options: UseProjectsOptions = {}): UseProjectsReturn
         ? data
         : data.filter(p => !p.hidden)
 
-      // Sort by total hours descending
-      filtered.sort((a, b) => b.total_hours - a.total_hours)
+      // Sort by latest activity date (most recent first)
+      filtered.sort((a, b) => {
+        const dateA = a.latest_date || '0000-00-00'
+        const dateB = b.latest_date || '0000-00-00'
+        return dateB.localeCompare(dateA)
+      })
 
       setProjects(filtered)
     } catch (err) {

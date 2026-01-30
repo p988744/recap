@@ -98,6 +98,7 @@ export function SettingsPage() {
           <ProjectsSection
             syncStatus={syncForm.status}
             syncEnabled={syncForm.enabled}
+            autoGenerateSummaries={syncForm.autoGenerateSummaries}
             dataSyncState={syncForm.dataSyncState}
             summaryState={syncForm.summaryState}
             syncProgress={syncForm.syncProgress}
@@ -112,6 +113,10 @@ export function SettingsPage() {
             setEnabled={syncForm.setEnabled}
             intervalMinutes={syncForm.intervalMinutes}
             setIntervalMinutes={syncForm.setIntervalMinutes}
+            compactionIntervalHours={syncForm.compactionIntervalHours}
+            setCompactionIntervalHours={syncForm.setCompactionIntervalHours}
+            autoGenerateSummaries={syncForm.autoGenerateSummaries}
+            setAutoGenerateSummaries={syncForm.setAutoGenerateSummaries}
             loading={syncForm.loading}
             saving={syncForm.saving}
             onSave={syncForm.handleSave}

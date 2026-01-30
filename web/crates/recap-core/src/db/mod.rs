@@ -427,6 +427,12 @@ impl Database {
             .await?;
 
         // Create work_summaries table for compacted summaries at multiple time scales
+        // NOTE: This table stores AUTOMATIC compaction results from snapshot_raw_data
+        // - Used by: Worklog page, background compaction service
+        // - Scale: hourly, daily, weekly, monthly
+        // - Key: (user_id, project_path, scale, period_start)
+        // - Source: snapshot_raw_data → compaction service
+        // See also: project_summaries (for LLM-generated reports from work_items)
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS work_summaries (
@@ -526,27 +532,54 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
-        // Project summaries cache
+        // Project summaries cache (LLM-generated reports from work_items)
+        // NOTE: This table stores LLM-GENERATED summaries triggered manually
+        // - Used by: Projects page report generation
+        // - summary_type: "report" (專案報告) | "timeline" (時間軸摘要)
+        // - time_unit: "day" | "week" | "month" | "quarter" | "year"
+        // - Key: (user_id, project_name, summary_type, time_unit, period_start)
+        // - Source: work_items → LLM service
+        // See also: work_summaries (for automatic compaction from snapshot_raw_data)
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS project_summaries (
                 id TEXT PRIMARY KEY,
                 user_id TEXT NOT NULL,
                 project_name TEXT NOT NULL,
-                period_type TEXT NOT NULL,
+                summary_type TEXT NOT NULL DEFAULT 'report',
+                time_unit TEXT NOT NULL DEFAULT 'week',
                 period_start DATE NOT NULL,
                 period_end DATE NOT NULL,
+                period_label TEXT,
                 summary TEXT NOT NULL,
                 data_hash TEXT,
                 orphaned BOOLEAN DEFAULT 0,
                 orphaned_at DATETIME,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(user_id, project_name, period_type, period_start)
+                UNIQUE(user_id, project_name, summary_type, time_unit, period_start)
             )
             "#,
         )
         .execute(&self.pool)
         .await?;
+
+        // Migration: Add new columns if table exists with old schema
+        sqlx::query("ALTER TABLE project_summaries ADD COLUMN summary_type TEXT NOT NULL DEFAULT 'report'")
+            .execute(&self.pool)
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE project_summaries ADD COLUMN time_unit TEXT NOT NULL DEFAULT 'week'")
+            .execute(&self.pool)
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE project_summaries ADD COLUMN period_label TEXT")
+            .execute(&self.pool)
+            .await
+            .ok();
+
+        // Migration: Fix unique constraint if table was created with old schema
+        // SQLite doesn't support ALTER TABLE ADD CONSTRAINT, so we need to recreate the table
+        self.migrate_project_summaries_unique_constraint().await?;
 
         // Create worklog_sync_records table for tracking Tempo sync status
         sqlx::query(
@@ -637,6 +670,103 @@ impl Database {
             .await?;
 
         log::info!("Database migrations completed");
+        Ok(())
+    }
+
+    /// Migrate project_summaries table to add proper UNIQUE constraint
+    /// SQLite doesn't support ALTER TABLE ADD CONSTRAINT, so we recreate the table
+    async fn migrate_project_summaries_unique_constraint(&self) -> Result<()> {
+        // Check if we need to migrate by trying to create a unique index
+        // If it fails with "already exists", we're good
+        // If it fails with constraint issues, we need to migrate
+        let check_result = sqlx::query(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_project_summaries_unique
+             ON project_summaries(user_id, project_name, summary_type, time_unit, period_start)"
+        )
+        .execute(&self.pool)
+        .await;
+
+        match check_result {
+            Ok(_) => {
+                // Index created or already exists with same definition - we're good
+                log::info!("project_summaries unique constraint verified");
+                return Ok(());
+            }
+            Err(e) => {
+                let err_str = e.to_string();
+                // If there's a constraint issue, we need to migrate
+                if !err_str.contains("UNIQUE constraint") && !err_str.contains("already exists") {
+                    log::info!("Migrating project_summaries table to fix unique constraint: {}", err_str);
+                } else {
+                    // Some other error, log and continue
+                    log::warn!("project_summaries index check: {}", err_str);
+                    return Ok(());
+                }
+            }
+        }
+
+        // Begin transaction for safe migration
+        let mut tx = self.pool.begin().await?;
+
+        // Step 1: Create new table with correct schema
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS project_summaries_new (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                project_name TEXT NOT NULL,
+                summary_type TEXT NOT NULL DEFAULT 'report',
+                time_unit TEXT NOT NULL DEFAULT 'week',
+                period_start DATE NOT NULL,
+                period_end DATE NOT NULL,
+                period_label TEXT,
+                summary TEXT NOT NULL,
+                data_hash TEXT,
+                orphaned BOOLEAN DEFAULT 0,
+                orphaned_at DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, project_name, summary_type, time_unit, period_start)
+            )
+            "#,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // Step 2: Copy data (handle duplicates by taking the latest one)
+        sqlx::query(
+            r#"
+            INSERT OR REPLACE INTO project_summaries_new
+            SELECT * FROM project_summaries
+            WHERE id IN (
+                SELECT id FROM project_summaries p1
+                WHERE created_at = (
+                    SELECT MAX(created_at) FROM project_summaries p2
+                    WHERE p1.user_id = p2.user_id
+                    AND p1.project_name = p2.project_name
+                    AND COALESCE(p1.summary_type, 'report') = COALESCE(p2.summary_type, 'report')
+                    AND COALESCE(p1.time_unit, 'week') = COALESCE(p2.time_unit, 'week')
+                    AND p1.period_start = p2.period_start
+                )
+            )
+            "#,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // Step 3: Drop old table
+        sqlx::query("DROP TABLE project_summaries")
+            .execute(&mut *tx)
+            .await?;
+
+        // Step 4: Rename new table
+        sqlx::query("ALTER TABLE project_summaries_new RENAME TO project_summaries")
+            .execute(&mut *tx)
+            .await?;
+
+        // Commit transaction
+        tx.commit().await?;
+
+        log::info!("Successfully migrated project_summaries table with proper unique constraint");
         Ok(())
     }
 }

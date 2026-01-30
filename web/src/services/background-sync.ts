@@ -14,17 +14,23 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 export interface BackgroundSyncConfig {
   enabled: boolean
   interval_minutes: number
+  compaction_interval_hours: number
   sync_git: boolean
   sync_claude: boolean
+  sync_antigravity: boolean
   sync_gitlab: boolean
   sync_jira: boolean
+  auto_generate_summaries: boolean
 }
 
 export interface BackgroundSyncStatus {
   is_running: boolean
   is_syncing: boolean
+  is_compacting: boolean
   last_sync_at: string | null
+  last_compaction_at: string | null
   next_sync_at: string | null
+  next_compaction_at: string | null
   last_result: string | null
   last_error: string | null
 }
@@ -45,7 +51,7 @@ export interface TriggerSyncResponse {
 
 /** Progress event for sync operations */
 export interface SyncProgress {
-  phase: 'sources' | 'snapshots' | 'compaction' | 'complete'
+  phase: 'sources' | 'snapshots' | 'compaction' | 'summaries' | 'complete'
   current_source: string | null
   current: number
   total: number

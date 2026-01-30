@@ -37,6 +37,8 @@ pub struct CompactionResult {
     pub weekly_compacted: usize,
     pub monthly_compacted: usize,
     pub errors: Vec<String>,
+    /// Latest date that was compacted (YYYY-MM-DD format)
+    pub latest_compacted_date: Option<String>,
 }
 
 // ============ Helpers (time) ============
@@ -876,6 +878,7 @@ pub async fn run_compaction_cycle(
         weekly_compacted: 0,
         monthly_compacted: 0,
         errors: Vec::new(),
+        latest_compacted_date: None,
     };
 
     // 1. Find all uncompacted hourly snapshots
@@ -971,13 +974,90 @@ pub async fn run_compaction_cycle(
 
     for (project_path, day) in &all_days {
         match compact_daily(pool, llm, user_id, project_path, day).await {
-            Ok(()) => result.daily_compacted += 1,
+            Ok(()) => {
+                result.daily_compacted += 1;
+                // Track the latest compacted date
+                if result.latest_compacted_date.as_ref().map_or(true, |d| day > d) {
+                    result.latest_compacted_date = Some(day.clone());
+                }
+            }
             Err(e) => result.errors.push(format!("daily {}/{}: {}", project_path, day, e)),
         }
     }
 
-    // 6. Monthly compaction for the current month (re-compact while month is in progress)
+    // 6. Weekly compaction - find weeks with daily summaries but no weekly summary
+    // Use ISO week calculation: weeks start on Monday
     let now = chrono::Local::now();
+
+    // Find all (project_path, iso_week_start) combinations that have daily summaries but no weekly summary
+    let uncompacted_weeks: Vec<(String, String, String)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT
+            ws.project_path,
+            DATE(ws.period_start, 'weekday 0', '-6 days') as week_start,
+            DATE(ws.period_start, 'weekday 0', '+1 day') as week_end
+        FROM work_summaries ws
+        LEFT JOIN work_summaries ww ON ww.user_id = ws.user_id
+            AND ww.project_path = ws.project_path
+            AND ww.scale = 'weekly'
+            AND DATE(ww.period_start) = DATE(ws.period_start, 'weekday 0', '-6 days')
+        WHERE ws.user_id = ? AND ws.scale = 'daily' AND ww.id IS NULL
+        ORDER BY week_start
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to find uncompacted weeks: {}", e))?;
+
+    // Also include the current week for re-compaction
+    let current_week_start = now.format("%Y-%m-%d").to_string();
+    let in_progress_weeks: Vec<(String,)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT ws.project_path
+        FROM work_summaries ws
+        WHERE ws.user_id = ? AND ws.scale = 'daily'
+            AND DATE(ws.period_start, 'weekday 0', '-6 days') = DATE(?, 'weekday 0', '-6 days')
+        "#,
+    )
+    .bind(user_id)
+    .bind(&current_week_start)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to find in-progress weeks: {}", e))?;
+
+    // Merge uncompacted weeks + current week
+    let mut all_weeks = uncompacted_weeks;
+    for (project_path,) in in_progress_weeks {
+        // Calculate current week bounds
+        let week_start_query: Option<(String, String)> = sqlx::query_as(
+            "SELECT DATE(?, 'weekday 0', '-6 days'), DATE(?, 'weekday 0', '+1 day')"
+        )
+        .bind(&current_week_start)
+        .bind(&current_week_start)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten();
+
+        if let Some((ws, we)) = week_start_query {
+            let entry = (project_path, ws, we);
+            if !all_weeks.iter().any(|(p, s, _)| p == &entry.0 && s == &entry.1) {
+                all_weeks.push(entry);
+            }
+        }
+    }
+
+    for (project_path, week_start, week_end) in &all_weeks {
+        let period_start = format!("{}T00:00:00+00:00", week_start);
+        let period_end = format!("{}T00:00:00+00:00", week_end);
+        match compact_period(pool, llm, user_id, Some(project_path), "weekly", &period_start, &period_end).await {
+            Ok(()) => result.weekly_compacted += 1,
+            Err(e) => result.errors.push(format!("weekly {}/{}: {}", project_path, week_start, e)),
+        }
+    }
+
+    // 7. Monthly compaction for the current month (re-compact while month is in progress)
     let month_start = now.format("%Y-%m-01T00:00:00+00:00").to_string();
     let month_end = {
         let year = now.format("%Y").to_string().parse::<i32>().unwrap_or(2026);
@@ -986,12 +1066,12 @@ pub async fn run_compaction_cycle(
         format!("{:04}-{:02}-01T00:00:00+00:00", next_year, next_month)
     };
 
-    // Find all projects that have daily summaries this month
+    // Find all projects that have weekly summaries this month
     let monthly_projects: Vec<(String,)> = sqlx::query_as(
         r#"
         SELECT DISTINCT ws.project_path
         FROM work_summaries ws
-        WHERE ws.user_id = ? AND ws.scale = 'daily'
+        WHERE ws.user_id = ? AND ws.scale = 'weekly'
             AND ws.period_start >= ? AND ws.period_start < ?
         "#,
     )

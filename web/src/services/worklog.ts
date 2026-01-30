@@ -12,6 +12,8 @@ export interface CompactionResult {
   weekly_compacted: number
   monthly_compacted: number
   errors: string[]
+  /** Latest date that was compacted (YYYY-MM-DD format) */
+  latest_compacted_date: string | null
 }
 
 /** Response from force recompaction */
@@ -22,6 +24,8 @@ export interface ForceRecompactResult {
   weekly_compacted: number
   monthly_compacted: number
   errors: string[]
+  /** Latest date that was compacted (YYYY-MM-DD format) */
+  latest_compacted_date: string | null
 }
 
 /** Options for force recompaction */
