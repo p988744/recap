@@ -14,11 +14,20 @@ interface DayGanttChartProps {
   projects: WorklogDayProject[]
 }
 
+interface CommitMarker {
+  hash: string
+  message: string
+  timestamp: string
+  hour: number
+  minute: number
+}
+
 interface HourData {
   summaries: string[]
   commits: number
   files: number
   sources: Set<string>
+  commitMarkers: CommitMarker[]
 }
 
 interface TimeSpan {
@@ -28,6 +37,7 @@ interface TimeSpan {
   totalCommits: number
   totalFiles: number
   allSources: Set<string>
+  allCommitMarkers: CommitMarker[]
 }
 
 interface ProjectRowData {
@@ -39,6 +49,21 @@ interface ProjectRowData {
 // Parse hour string to number (e.g., "09:00" -> 9)
 function parseHour(hourStr: string): number {
   return parseInt(hourStr.split(':')[0], 10)
+}
+
+// Parse commit timestamp to local hour and minute
+function parseCommitTime(timestamp: string): { hour: number; minute: number } | null {
+  if (!timestamp) return null
+  try {
+    const date = new Date(timestamp)
+    if (isNaN(date.getTime())) return null
+    return {
+      hour: date.getHours(),
+      minute: date.getMinutes(),
+    }
+  } catch {
+    return null
+  }
 }
 
 // Format hour to full time string
@@ -112,6 +137,21 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
         globalMin = Math.min(globalMin, hour)
         globalMax = Math.max(globalMax, hour)
 
+        // Parse commit timestamps to markers
+        const markers: CommitMarker[] = item.git_commits
+          .map(commit => {
+            const time = parseCommitTime(commit.timestamp)
+            if (!time) return null
+            return {
+              hash: commit.hash,
+              message: commit.message,
+              timestamp: commit.timestamp,
+              hour: time.hour,
+              minute: time.minute,
+            }
+          })
+          .filter((m): m is CommitMarker => m !== null)
+
         const existing = hoursMap.get(hour)
         if (existing) {
           // Merge with existing data for this hour
@@ -119,12 +159,14 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
           existing.commits += item.git_commits.length
           existing.files += item.files_modified.length
           existing.sources.add(item.source)
+          existing.commitMarkers.push(...markers)
         } else {
           hoursMap.set(hour, {
             summaries: [item.summary],
             commits: item.git_commits.length,
             files: item.files_modified.length,
             sources: new Set([item.source]),
+            commitMarkers: markers,
           })
         }
       })
@@ -145,6 +187,7 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
           currentSpan.totalCommits += data.commits
           currentSpan.totalFiles += data.files
           data.sources.forEach(s => currentSpan!.allSources.add(s))
+          currentSpan.allCommitMarkers.push(...data.commitMarkers)
         } else {
           // Start new span
           if (currentSpan) spans.push(currentSpan)
@@ -155,6 +198,7 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
             totalCommits: data.commits,
             totalFiles: data.files,
             allSources: new Set(data.sources),
+            allCommitMarkers: [...data.commitMarkers],
           }
         }
       }
@@ -279,16 +323,35 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
                       .map(s => s === 'claude_code' ? 'Claude Code' : s === 'antigravity' ? 'Antigravity' : s)
                       .join(' + ')
 
+                    // Calculate commit marker positions within the span
+                    const commitPositions = span.allCommitMarkers.map(marker => {
+                      // Calculate position as percentage within the span
+                      const commitHourOffset = marker.hour + marker.minute / 60 - span.startHour
+                      const spanDuration = span.endHour - span.startHour
+                      const positionPercent = Math.max(0, Math.min(100, (commitHourOffset / spanDuration) * 100))
+                      return { ...marker, positionPercent }
+                    })
+
                     return (
                       <Tooltip key={spanIndex}>
                         <TooltipTrigger asChild>
                           <div
-                            className={`absolute top-1/2 -translate-y-1/2 h-7 rounded ${PROJECT_COLORS[rowIndex % PROJECT_COLORS.length]} cursor-pointer hover:opacity-90 transition-opacity`}
+                            className={`absolute top-1/2 -translate-y-1/2 h-7 rounded ${PROJECT_COLORS[rowIndex % PROJECT_COLORS.length]} cursor-pointer hover:opacity-90 transition-opacity overflow-hidden`}
                             style={{
                               left: `calc(${leftPercent}% + 2px)`,
                               width: `calc(${widthPercent}% - 4px)`,
                             }}
-                          />
+                          >
+                            {/* Commit markers */}
+                            {commitPositions.map((commit, idx) => (
+                              <div
+                                key={`${commit.hash}-${idx}`}
+                                className="absolute top-0 bottom-0 w-0.5 bg-white/60"
+                                style={{ left: `${commit.positionPercent}%` }}
+                                title={`${commit.hash.slice(0, 7)}: ${commit.message}`}
+                              />
+                            ))}
+                          </div>
                         </TooltipTrigger>
                         <TooltipContent side="top" className="max-w-sm bg-popover border border-border shadow-lg">
                           <div className="space-y-2">
@@ -322,6 +385,31 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
                                 </span>
                               )}
                             </div>
+                            {/* Commit timeline */}
+                            {span.allCommitMarkers.length > 0 && (
+                              <div className="space-y-1 pt-1 border-t border-border max-h-24 overflow-y-auto">
+                                <div className="text-[10px] text-muted-foreground/70 flex items-center gap-1">
+                                  <GitCommit className="w-3 h-3" strokeWidth={1.5} />
+                                  Commits:
+                                </div>
+                                {span.allCommitMarkers
+                                  .sort((a, b) => a.hour * 60 + a.minute - (b.hour * 60 + b.minute))
+                                  .slice(0, 5)
+                                  .map((commit, idx) => (
+                                    <div key={idx} className="text-[10px] text-muted-foreground flex items-start gap-1.5">
+                                      <span className="text-muted-foreground/60 font-mono shrink-0">
+                                        {String(commit.hour).padStart(2, '0')}:{String(commit.minute).padStart(2, '0')}
+                                      </span>
+                                      <span className="truncate">{commit.message}</span>
+                                    </div>
+                                  ))}
+                                {span.allCommitMarkers.length > 5 && (
+                                  <div className="text-[10px] text-muted-foreground/50">
+                                    +{span.allCommitMarkers.length - 5} more
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </TooltipContent>
                       </Tooltip>
