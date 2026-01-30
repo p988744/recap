@@ -883,3 +883,46 @@ Closes #1   # 合併後自動關閉 Issue
 Refs #2     # 僅關聯，不自動關閉
 ```
 > 更新日期：2026-01-16
+
+---
+
+## Development Notes & Troubleshooting
+
+### 重要參考文件
+
+遇到特定模組問題時，請先閱讀相關文件：
+
+| 問題類型 | 參考文件 |
+|----------|----------|
+| Git commit 顯示問題 | `web/docs/DEVELOPMENT_NOTES.md` |
+| 資料同步流程 | `web/docs/DATA_SOURCES.md` |
+
+### Git Commit 資料流程 (快速參考)
+
+```
+Session Files → snapshot.rs (enrich) → snapshot_raw_data (完整 JSON)
+                                              ↓
+Frontend ← snapshots.rs (API) ← work_summaries + snapshot fallback
+```
+
+**關鍵函數：**
+- `enrich_buckets_with_git_commits` - 捕獲時添加 commits
+- `resolve_git_root` - 找到真正的 .git 目錄
+- `get_hourly_breakdown` - API 回傳小時明細
+
+**常見問題：**
+1. **Commits 不顯示** → 檢查 `snapshot_raw_data.git_commits` 是否有資料
+2. **時間格式錯誤** → 同時處理 RFC3339 和 NaiveDateTime
+3. **找不到 git repo** → 使用 `resolve_git_root()` 而非直接用 project_path
+
+### 常用除錯指令
+
+```bash
+# 檢查 snapshot 的 git commits
+sqlite3 ~/Library/Application\ Support/com.recap.Recap/recap.db \
+  "SELECT hour_bucket, git_commits FROM snapshot_raw_data WHERE project_path LIKE '%projectName%'"
+
+# 檢查 work_summaries
+sqlite3 ~/Library/Application\ Support/com.recap.Recap/recap.db \
+  "SELECT period_start, git_commits_summary FROM work_summaries WHERE scale = 'hourly'"
+```
