@@ -234,10 +234,10 @@ export function Layout() {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 ml-56">
+      <main className="flex-1 ml-56 overflow-hidden">
         <SyncProvider value={syncValue}>
           <BackgroundTaskProvider value={backgroundTaskValue}>
-            <div className="px-12 py-10 max-w-5xl">
+            <div className="px-12 py-10 max-w-5xl overflow-x-hidden">
               <Outlet />
             </div>
           </BackgroundTaskProvider>
