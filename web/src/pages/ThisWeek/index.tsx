@@ -148,8 +148,6 @@ export function ThisWeekPage() {
 
       {/* Week Overview */}
       <WeekOverview
-        projectCount={tw.projectCount}
-        daysWorked={tw.daysWorked}
         days={tw.days}
         startDate={tw.startDate}
         endDate={tw.endDate}
