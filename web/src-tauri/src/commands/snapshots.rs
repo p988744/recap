@@ -758,7 +758,13 @@ pub async fn get_hourly_breakdown(
     // Only add Antigravity items for hours that DON'T already have entries
     // (to avoid duplicates when we already have LLM-generated summaries)
     for item in antigravity_items {
-        // Extract hour from start_time (actual session time), falling back to created_at
+        // Skip items without session_id or start_time - these are orphan entries
+        // that weren't properly linked to snapshots and would show incorrect times
+        if item.session_id.is_none() || item.start_time.is_none() {
+            continue;
+        }
+
+        // Extract hour from start_time (actual session time)
         let hour_start = item
             .start_time
             .as_ref()
