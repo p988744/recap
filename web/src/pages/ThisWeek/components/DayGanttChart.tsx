@@ -16,20 +16,36 @@ interface DayGanttChartProps {
   projects: WorklogDayProject[]
 }
 
-interface ProjectHourData {
+interface HourData {
+  summary: string
+  commits: number
+  files: number
+  source: string
+}
+
+interface TimeSpan {
+  startHour: number
+  endHour: number // exclusive
+  data: HourData[]
+  totalCommits: number
+  totalFiles: number
+  sources: Set<string>
+}
+
+interface ProjectRowData {
   projectPath: string
   projectName: string
-  hours: Map<number, {
-    summary: string
-    commits: number
-    files: number
-    source: string
-  }>
+  spans: TimeSpan[]
 }
 
 // Parse hour string to number (e.g., "09:00" -> 9)
 function parseHour(hourStr: string): number {
   return parseInt(hourStr.split(':')[0], 10)
+}
+
+// Format hour to full time string
+function formatHour(hour: number): string {
+  return `${String(hour).padStart(2, '0')}:00`
 }
 
 const SOURCE_ICONS: Record<string, React.ReactNode> = {
@@ -39,14 +55,14 @@ const SOURCE_ICONS: Record<string, React.ReactNode> = {
 
 // Color palette for different projects
 const PROJECT_COLORS = [
-  'bg-blue-500/70',
-  'bg-emerald-500/70',
-  'bg-violet-500/70',
-  'bg-amber-500/70',
-  'bg-rose-500/70',
-  'bg-cyan-500/70',
-  'bg-indigo-500/70',
-  'bg-orange-500/70',
+  'bg-blue-500/80',
+  'bg-emerald-500/80',
+  'bg-violet-500/80',
+  'bg-amber-500/80',
+  'bg-rose-500/80',
+  'bg-cyan-500/80',
+  'bg-indigo-500/80',
+  'bg-orange-500/80',
 ]
 
 export function DayGanttChart({ date, projects }: DayGanttChartProps) {
@@ -86,27 +102,22 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
     fetchAllHourly()
   }, [date, projects])
 
-  // Build project hour data for Gantt chart
+  // Build project rows with merged consecutive time spans
   const { projectRows, minHour, maxHour } = useMemo(() => {
-    const rows: ProjectHourData[] = []
-    let min = 24
-    let max = 0
+    const rows: ProjectRowData[] = []
+    let globalMin = 24
+    let globalMax = 0
 
     hourlyData.forEach((items, projectPath) => {
       const project = projects.find(p => p.project_path === projectPath)
-      if (!project) return
+      if (!project || items.length === 0) return
 
-      const hoursMap = new Map<number, {
-        summary: string
-        commits: number
-        files: number
-        source: string
-      }>()
-
+      // Build hour -> data map
+      const hoursMap = new Map<number, HourData>()
       items.forEach(item => {
         const hour = parseHour(item.hour_start)
-        min = Math.min(min, hour)
-        max = Math.max(max, hour)
+        globalMin = Math.min(globalMin, hour)
+        globalMax = Math.max(globalMax, hour)
 
         hoursMap.set(hour, {
           summary: item.summary,
@@ -116,26 +127,57 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
         })
       })
 
-      if (hoursMap.size > 0) {
+      // Merge consecutive hours into spans
+      const sortedHours = Array.from(hoursMap.keys()).sort((a, b) => a - b)
+      const spans: TimeSpan[] = []
+
+      let currentSpan: TimeSpan | null = null
+
+      for (const hour of sortedHours) {
+        const data = hoursMap.get(hour)!
+
+        if (currentSpan && hour === currentSpan.endHour) {
+          // Extend current span
+          currentSpan.endHour = hour + 1
+          currentSpan.data.push(data)
+          currentSpan.totalCommits += data.commits
+          currentSpan.totalFiles += data.files
+          currentSpan.sources.add(data.source)
+        } else {
+          // Start new span
+          if (currentSpan) spans.push(currentSpan)
+          currentSpan = {
+            startHour: hour,
+            endHour: hour + 1,
+            data: [data],
+            totalCommits: data.commits,
+            totalFiles: data.files,
+            sources: new Set([data.source]),
+          }
+        }
+      }
+      if (currentSpan) spans.push(currentSpan)
+
+      if (spans.length > 0) {
         rows.push({
           projectPath: project.project_path,
           projectName: project.project_name,
-          hours: hoursMap,
+          spans,
         })
       }
     })
 
     // Default to work hours if no data
-    if (min > max) {
-      min = 9
-      max = 18
+    if (globalMin > globalMax) {
+      globalMin = 9
+      globalMax = 18
     } else {
       // Add padding
-      min = Math.max(0, min - 1)
-      max = Math.min(23, max + 1)
+      globalMin = Math.max(0, globalMin - 1)
+      globalMax = Math.min(23, globalMax + 1)
     }
 
-    return { projectRows: rows, minHour: min, maxHour: max }
+    return { projectRows: rows, minHour: globalMin, maxHour: globalMax }
   }, [hourlyData, projects])
 
   // Generate hour columns
@@ -146,6 +188,8 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
     }
     return cols
   }, [minHour, maxHour])
+
+  const totalColumns = hourColumns.length
 
   if (loading) {
     return (
@@ -173,21 +217,21 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
         </div>
 
         {/* Gantt Chart */}
-        <div className="overflow-x-auto">
-          <div className="min-w-fit">
+        <div>
+          <div>
             {/* Hour header row */}
             <div className="flex">
               {/* Project name column */}
-              <div className="w-32 shrink-0" />
+              <div className="w-24 shrink-0" />
 
               {/* Hour columns */}
               <div className="flex-1 flex">
                 {hourColumns.map((hour) => (
                   <div
                     key={hour}
-                    className="flex-1 min-w-[40px] text-center text-[10px] text-muted-foreground font-mono py-1 border-l border-border/30 first:border-l-0"
+                    className="flex-1 text-center text-[10px] text-muted-foreground font-mono py-1 border-l border-border/30 first:border-l-0"
                   >
-                    {String(hour).padStart(2, '0')}
+                    {formatHour(hour)}
                   </div>
                 ))}
               </div>
@@ -197,68 +241,93 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
             {projectRows.map((row, rowIndex) => (
               <div key={row.projectPath} className="flex items-center h-10 border-t border-border/20">
                 {/* Project name */}
-                <div className="w-32 shrink-0 pr-2 flex items-center gap-1.5">
+                <div className="w-24 shrink-0 pr-2 flex items-center">
                   <span className="text-xs text-foreground truncate" title={row.projectName}>
                     {row.projectName}
                   </span>
                 </div>
 
-                {/* Hour cells */}
-                <div className="flex-1 flex h-full">
-                  {hourColumns.map((hour) => {
-                    const hourData = row.hours.get(hour)
-                    const hasWork = !!hourData
-
-                    return (
+                {/* Timeline area - use relative positioning for spans */}
+                <div className="flex-1 relative h-full">
+                  {/* Grid lines */}
+                  <div className="absolute inset-0 flex">
+                    {hourColumns.map((hour) => (
                       <div
                         key={hour}
-                        className="flex-1 min-w-[40px] h-full flex items-center justify-center border-l border-border/20 first:border-l-0"
-                      >
-                        {hasWork && (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <div
-                                className={`w-[90%] h-6 rounded ${PROJECT_COLORS[rowIndex % PROJECT_COLORS.length]} cursor-pointer hover:opacity-80 transition-opacity flex items-center justify-center gap-1`}
-                              >
-                                {/* Source icon */}
-                                <div className="text-white/90">
-                                  {SOURCE_ICONS[hourData.source] || null}
-                                </div>
-                                {/* Commit indicator */}
-                                {hourData.commits > 0 && (
-                                  <span className="text-[9px] text-white/90 font-medium">
-                                    {hourData.commits}
-                                  </span>
-                                )}
-                              </div>
-                            </TooltipTrigger>
-                            <TooltipContent side="top" className="max-w-xs">
-                              <div className="space-y-1">
-                                <div className="font-medium text-xs">
-                                  {row.projectName} · {String(hour).padStart(2, '0')}:00
-                                </div>
-                                <p className="text-xs text-muted-foreground">
-                                  {hourData.summary}
-                                </p>
-                                <div className="flex items-center gap-3 text-[10px] text-muted-foreground pt-1">
-                                  {hourData.commits > 0 && (
-                                    <span className="flex items-center gap-1">
-                                      <GitCommit className="w-3 h-3" strokeWidth={1.5} />
-                                      {hourData.commits} commits
-                                    </span>
-                                  )}
-                                  {hourData.files > 0 && (
-                                    <span className="flex items-center gap-1">
-                                      <FileCode className="w-3 h-3" strokeWidth={1.5} />
-                                      {hourData.files} files
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            </TooltipContent>
-                          </Tooltip>
-                        )}
-                      </div>
+                        className="flex-1 border-l border-border/20 first:border-l-0"
+                      />
+                    ))}
+                  </div>
+
+                  {/* Time spans */}
+                  {row.spans.map((span, spanIndex) => {
+                    const startOffset = span.startHour - minHour
+                    const spanWidth = span.endHour - span.startHour
+                    const leftPercent = (startOffset / totalColumns) * 100
+                    const widthPercent = (spanWidth / totalColumns) * 100
+
+                    // Combine summaries for tooltip
+                    const combinedSummary = span.data.map(d => d.summary).join('\n\n')
+
+                    return (
+                      <Tooltip key={spanIndex}>
+                        <TooltipTrigger asChild>
+                          <div
+                            className={`absolute top-1/2 -translate-y-1/2 h-7 rounded ${PROJECT_COLORS[rowIndex % PROJECT_COLORS.length]} cursor-pointer hover:opacity-90 transition-opacity flex items-center justify-center gap-1.5 px-2`}
+                            style={{
+                              left: `calc(${leftPercent}% + 2px)`,
+                              width: `calc(${widthPercent}% - 4px)`,
+                            }}
+                          >
+                            {/* Source icons */}
+                            <div className="flex items-center gap-0.5 text-white/90">
+                              {Array.from(span.sources).map((source) => (
+                                <span key={source}>{SOURCE_ICONS[source]}</span>
+                              ))}
+                            </div>
+
+                            {/* Time range */}
+                            <span className="text-[10px] text-white/90 font-medium whitespace-nowrap">
+                              {formatHour(span.startHour)}-{formatHour(span.endHour)}
+                            </span>
+
+                            {/* Commit count */}
+                            {span.totalCommits > 0 && (
+                              <span className="flex items-center gap-0.5 text-[10px] text-white/90">
+                                <GitCommit className="w-3 h-3" strokeWidth={1.5} />
+                                {span.totalCommits}
+                              </span>
+                            )}
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-sm">
+                          <div className="space-y-2">
+                            <div className="font-medium text-xs">
+                              {row.projectName}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground">
+                              {formatHour(span.startHour)} - {formatHour(span.endHour)} ({span.endHour - span.startHour}h)
+                            </div>
+                            <p className="text-xs text-muted-foreground whitespace-pre-line line-clamp-4">
+                              {combinedSummary}
+                            </p>
+                            <div className="flex items-center gap-3 text-[10px] text-muted-foreground pt-1 border-t border-border/50">
+                              {span.totalCommits > 0 && (
+                                <span className="flex items-center gap-1">
+                                  <GitCommit className="w-3 h-3" strokeWidth={1.5} />
+                                  {span.totalCommits} commits
+                                </span>
+                              )}
+                              {span.totalFiles > 0 && (
+                                <span className="flex items-center gap-1">
+                                  <FileCode className="w-3 h-3" strokeWidth={1.5} />
+                                  {span.totalFiles} files
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
                     )
                   })}
                 </div>
