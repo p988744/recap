@@ -504,6 +504,50 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
+        // Project descriptions for AI context
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS project_descriptions (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                project_name TEXT NOT NULL,
+                goal TEXT,
+                tech_stack TEXT,
+                key_features TEXT,
+                notes TEXT,
+                orphaned BOOLEAN DEFAULT 0,
+                orphaned_at DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, project_name)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Project summaries cache
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS project_summaries (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                project_name TEXT NOT NULL,
+                period_type TEXT NOT NULL,
+                period_start DATE NOT NULL,
+                period_end DATE NOT NULL,
+                summary TEXT NOT NULL,
+                data_hash TEXT,
+                orphaned BOOLEAN DEFAULT 0,
+                orphaned_at DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, project_name, period_type, period_start)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
         // Create worklog_sync_records table for tracking Tempo sync status
         sqlx::query(
             r#"
