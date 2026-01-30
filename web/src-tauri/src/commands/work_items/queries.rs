@@ -11,7 +11,7 @@ use recap_core::models::{PaginatedResponse, WorkItem};
 use crate::commands::AppState;
 use super::query_builder::SafeQueryBuilder;
 use super::types::{
-    DailyHours, JiraMappingStats, StatsQuery, TempoSyncStats, TimelineResponse, TimelineSession,
+    DailyHours, JiraMappingStats, StatsQuery, TempoSyncStats, TimelineQuery, TimelineResponse, TimelineSession,
     WorkItemFilters, WorkItemStatsResponse, WorkItemWithChildren,
 };
 
@@ -227,29 +227,49 @@ pub async fn get_stats_summary(
 pub async fn get_timeline_data(
     state: State<'_, AppState>,
     token: String,
-    date: String,
+    query: TimelineQuery,
 ) -> Result<TimelineResponse, String> {
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
     let db = state.db.lock().await;
 
+    // Determine which sources to filter by
+    // Default to both claude_code and antigravity if not specified or empty
+    let sources = match &query.sources {
+        Some(s) if !s.is_empty() => s.clone(),
+        _ => vec!["claude_code".to_string(), "antigravity".to_string()],
+    };
+
+    // Build the source placeholders for SQL IN clause
+    let source_placeholders: String = sources.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+
     // Query work_items for the given date with start_time (session timing)
+    // Filter by selected sources
     // Exclude hidden projects
-    let items: Vec<crate::models::WorkItem> = sqlx::query_as(
+    let sql = format!(
         r#"SELECT * FROM work_items
-           WHERE user_id = ? AND date = ? AND source = 'claude_code'
+           WHERE user_id = ? AND date = ? AND source IN ({})
            AND NOT EXISTS (
                SELECT 1 FROM project_preferences pp
                WHERE pp.user_id = work_items.user_id
                AND pp.hidden = 1
                AND work_items.title LIKE '[' || pp.project_name || ']%'
            )
-           ORDER BY start_time ASC"#
-    )
-    .bind(&claims.sub)
-    .bind(&date)
-    .fetch_all(&db.pool)
-    .await
-    .map_err(|e| e.to_string())?;
+           ORDER BY start_time ASC"#,
+        source_placeholders
+    );
+
+    let mut query_builder = sqlx::query_as::<_, crate::models::WorkItem>(&sql)
+        .bind(&claims.sub)
+        .bind(&query.date);
+
+    for source in &sources {
+        query_builder = query_builder.bind(source);
+    }
+
+    let items: Vec<crate::models::WorkItem> = query_builder
+        .fetch_all(&db.pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
     // Convert work items to timeline sessions
     let mut sessions: Vec<TimelineSession> = Vec::new();
@@ -284,9 +304,9 @@ pub async fn get_timeline_data(
 
         // Use start_time/end_time if available, otherwise use date boundaries
         let start_time = item.start_time.clone()
-            .unwrap_or_else(|| format!("{}T09:00:00+08:00", date));
+            .unwrap_or_else(|| format!("{}T09:00:00+08:00", query.date));
         let end_time = item.end_time.clone()
-            .unwrap_or_else(|| format!("{}T17:00:00+08:00", date));
+            .unwrap_or_else(|| format!("{}T17:00:00+08:00", query.date));
 
         // Get commits for this session's time range
         let project_path = item.project_path.clone().unwrap_or_default();
@@ -307,7 +327,7 @@ pub async fn get_timeline_data(
     let total_commits: i32 = sessions.iter().map(|s| s.commits.len() as i32).sum();
 
     Ok(TimelineResponse {
-        date,
+        date: query.date,
         sessions,
         total_hours,
         total_commits,

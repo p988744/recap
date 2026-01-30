@@ -46,7 +46,7 @@ export function getHeatmapRange(weeks: number = 53) {
 // Main Hook: useDashboard
 // =============================================================================
 
-export function useDashboard(isAuthenticated: boolean, token: string | null) {
+export function useDashboard(isAuthenticated: boolean) {
   const [stats, setStats] = useState<WorkItemStatsResponse | null>(null)
   const [heatmapStats, setHeatmapStats] = useState<WorkItemStatsResponse | null>(null)
   const [worklogDays, setWorklogDays] = useState<WorklogDay[]>([])
@@ -59,13 +59,14 @@ export function useDashboard(isAuthenticated: boolean, token: string | null) {
   const [ganttDate, setGanttDate] = useState(() => new Date().toISOString().split('T')[0])
   const [ganttSessions, setGanttSessions] = useState<TimelineSession[]>([])
   const [ganttLoading, setGanttLoading] = useState(false)
+  const [ganttSources, setGanttSources] = useState<string[]>(['claude_code', 'antigravity'])
 
   // Consume app-level sync state to know when to refetch data
   const { dataSyncState } = useSyncContext()
 
   // Main data fetch effect — re-runs when app-level sync completes
   useEffect(() => {
-    if (!isAuthenticated || !token) return
+    if (!isAuthenticated) return
 
     async function fetchData() {
       try {
@@ -84,16 +85,18 @@ export function useDashboard(isAuthenticated: boolean, token: string | null) {
       }
     }
     fetchData()
-  }, [weekRange, heatmapRange, dataSyncState, isAuthenticated, token])
+  }, [weekRange, heatmapRange, dataSyncState, isAuthenticated])
 
-  // Gantt timeline fetch effect
+  // Gantt timeline fetch effect — also re-runs when app-level sync completes
   useEffect(() => {
-    if (!isAuthenticated || !token) return
+    if (!isAuthenticated) return
 
     async function fetchTimeline() {
       setGanttLoading(true)
       try {
-        const result = await workItems.getTimeline(ganttDate)
+        // Pass sources filter (undefined if all sources selected to use backend defaults)
+        const sourcesToPass = ganttSources.length === 2 ? undefined : ganttSources
+        const result = await workItems.getTimeline(ganttDate, sourcesToPass)
         const sessions: TimelineSession[] = result.sessions.map(s => ({
           id: s.id,
           project: s.project,
@@ -116,7 +119,7 @@ export function useDashboard(isAuthenticated: boolean, token: string | null) {
       }
     }
     fetchTimeline()
-  }, [ganttDate, isAuthenticated, token])
+  }, [ganttDate, ganttSources, dataSyncState, isAuthenticated])
 
   // Computed values
   const chartData = useMemo(() => {
@@ -178,6 +181,8 @@ export function useDashboard(isAuthenticated: boolean, token: string | null) {
     setGanttDate,
     ganttSessions,
     ganttLoading,
+    ganttSources,
+    setGanttSources,
     // Computed
     chartData,
     recentActivities,

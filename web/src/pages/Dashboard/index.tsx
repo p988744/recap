@@ -1,5 +1,9 @@
-import { TrendingUp, CalendarDays } from 'lucide-react'
+import { TrendingUp, CalendarDays, Filter, Bot, Sparkles } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Label } from '@/components/ui/label'
 import { ContributionHeatmap } from '@/components/ContributionHeatmap'
 import { WorkGanttChart } from '@/components/WorkGanttChart'
 import { getGreeting, formatDate } from '@/lib/utils'
@@ -13,8 +17,8 @@ import {
 } from './components'
 
 export function Dashboard() {
-  const { token, isAuthenticated } = useAuth()
-  const dashboardState = useDashboard(isAuthenticated, token)
+  const { isAuthenticated } = useAuth()
+  const dashboardState = useDashboard(isAuthenticated)
 
   if (dashboardState.loading) {
     return (
@@ -66,11 +70,71 @@ export function Dashboard() {
 
       {/* Daily Work Gantt Chart */}
       <section className="animate-fade-up opacity-0 delay-3">
-        <div className="flex items-center gap-2 mb-6">
-          <CalendarDays className="w-4 h-4 text-muted-foreground" strokeWidth={1.5} />
-          <h2 className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-            每日工作時間軸
-          </h2>
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-2">
+            <CalendarDays className="w-4 h-4 text-muted-foreground" strokeWidth={1.5} />
+            <h2 className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+              每日工作時間軸
+            </h2>
+          </div>
+          {/* Source Filter */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8 gap-2">
+                <Filter className="h-3.5 w-3.5" />
+                <span className="text-xs">
+                  {dashboardState.ganttSources.length === 2
+                    ? '全部來源'
+                    : dashboardState.ganttSources.includes('claude_code')
+                      ? 'Claude Code'
+                      : 'Antigravity'}
+                </span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-48 p-3" align="end">
+              <div className="space-y-3">
+                <p className="text-xs font-medium text-muted-foreground">資料來源</p>
+                <div className="space-y-2">
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="source-claude_code"
+                      checked={dashboardState.ganttSources.includes('claude_code')}
+                      disabled={dashboardState.ganttSources.includes('claude_code') && dashboardState.ganttSources.length === 1}
+                      onCheckedChange={(checked) => {
+                        if (checked) {
+                          dashboardState.setGanttSources([...dashboardState.ganttSources, 'claude_code'])
+                        } else if (dashboardState.ganttSources.length > 1) {
+                          dashboardState.setGanttSources(dashboardState.ganttSources.filter(s => s !== 'claude_code'))
+                        }
+                      }}
+                    />
+                    <Label htmlFor="source-claude_code" className="flex items-center gap-2 text-sm font-normal cursor-pointer">
+                      <Bot className="h-3.5 w-3.5 text-muted-foreground" />
+                      Claude Code
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="source-antigravity"
+                      checked={dashboardState.ganttSources.includes('antigravity')}
+                      disabled={dashboardState.ganttSources.includes('antigravity') && dashboardState.ganttSources.length === 1}
+                      onCheckedChange={(checked) => {
+                        if (checked) {
+                          dashboardState.setGanttSources([...dashboardState.ganttSources, 'antigravity'])
+                        } else if (dashboardState.ganttSources.length > 1) {
+                          dashboardState.setGanttSources(dashboardState.ganttSources.filter(s => s !== 'antigravity'))
+                        }
+                      }}
+                    />
+                    <Label htmlFor="source-antigravity" className="flex items-center gap-2 text-sm font-normal cursor-pointer">
+                      <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
+                      Antigravity
+                    </Label>
+                  </div>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
         <Card>
           <CardContent className="p-6">

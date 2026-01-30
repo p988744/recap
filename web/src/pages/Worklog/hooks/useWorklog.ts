@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react'
 import { worklog, workItems, config as configService } from '@/services'
 import type { WorklogDay, HourlyBreakdownItem } from '@/types/worklog'
 import type { WorkItem } from '@/types'
+import type { TimelineSession } from '@/components/WorkGanttChart'
 
 // =============================================================================
 // Types
@@ -90,6 +91,12 @@ export function useWorklog(isAuthenticated: boolean) {
   const [hourlyData, setHourlyData] = useState<HourlyBreakdownItem[]>([])
   const [hourlyLoading, setHourlyLoading] = useState(false)
 
+  // Gantt chart state
+  const [ganttDate, setGanttDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [ganttSessions, setGanttSessions] = useState<TimelineSession[]>([])
+  const [ganttLoading, setGanttLoading] = useState(false)
+  const [ganttSources, setGanttSources] = useState<string[]>(['claude_code', 'antigravity'])
+
   // CRUD state
   const [selectedItem, setSelectedItem] = useState<WorkItem | null>(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -127,6 +134,40 @@ export function useWorklog(isAuthenticated: boolean) {
     if (!isAuthenticated) return
     fetchOverview()
   }, [isAuthenticated, fetchOverview])
+
+  // Gantt timeline fetch effect
+  useEffect(() => {
+    if (!isAuthenticated) return
+
+    async function fetchTimeline() {
+      setGanttLoading(true)
+      try {
+        // Pass sources filter (undefined if all sources selected to use backend defaults)
+        const sourcesToPass = ganttSources.length === 2 ? undefined : ganttSources
+        const result = await workItems.getTimeline(ganttDate, sourcesToPass)
+        const sessions: TimelineSession[] = result.sessions.map(s => ({
+          id: s.id,
+          project: s.project,
+          title: s.title,
+          startTime: s.start_time,
+          endTime: s.end_time,
+          hours: s.hours,
+          commits: s.commits.map(c => ({
+            hash: c.hash,
+            message: c.message,
+            time: c.time,
+            author: c.author,
+          })),
+        }))
+        setGanttSessions(sessions)
+      } catch {
+        setGanttSessions([])
+      } finally {
+        setGanttLoading(false)
+      }
+    }
+    fetchTimeline()
+  }, [ganttDate, ganttSources, isAuthenticated])
 
   // ==========================================================================
   // Date navigation
@@ -325,6 +366,13 @@ export function useWorklog(isAuthenticated: boolean) {
     hourlyData,
     hourlyLoading,
     toggleHourlyBreakdown,
+    // Gantt chart
+    ganttDate,
+    setGanttDate,
+    ganttSessions,
+    ganttLoading,
+    ganttSources,
+    setGanttSources,
     // CRUD
     showCreateModal,
     showEditModal,

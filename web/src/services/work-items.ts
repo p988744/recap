@@ -75,9 +75,11 @@ export async function getGrouped(query: { start_date?: string; end_date?: string
 
 /**
  * Get timeline data for Gantt chart visualization
+ * @param date - The date in YYYY-MM-DD format
+ * @param sources - Optional array of sources to filter by (e.g., ['claude_code', 'antigravity'])
  */
-export async function getTimeline(date: string): Promise<TimelineResponse> {
-  return invokeAuth<TimelineResponse>('get_timeline_data', { date })
+export async function getTimeline(date: string, sources?: string[]): Promise<TimelineResponse> {
+  return invokeAuth<TimelineResponse>('get_timeline_data', { query: { date, sources } })
 }
 
 // ============ Jira Mapping ============

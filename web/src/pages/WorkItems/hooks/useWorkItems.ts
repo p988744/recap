@@ -48,6 +48,7 @@ export function useWorkItems(isAuthenticated: boolean, token: string | null) {
   const [timelineDate, setTimelineDate] = useState(() => new Date().toISOString().split('T')[0])
   const [timelineSessions, setTimelineSessions] = useState<TimelineSession[]>([])
   const [timelineLoading, setTimelineLoading] = useState(false)
+  const [timelineSources, setTimelineSources] = useState<string[]>(['claude_code', 'antigravity'])
 
   // UI state
   const [searchTerm, setSearchTerm] = useState('')
@@ -104,7 +105,9 @@ export function useWorkItems(isAuthenticated: boolean, token: string | null) {
   const fetchTimelineData = useCallback(async () => {
     setTimelineLoading(true)
     try {
-      const response = await workItems.getTimeline(timelineDate)
+      // Pass sources filter (undefined if all sources selected to use backend defaults)
+      const sourcesToPass = timelineSources.length === 2 ? undefined : timelineSources
+      const response = await workItems.getTimeline(timelineDate, sourcesToPass)
       const sessions: TimelineSession[] = response.sessions.map(s => ({
         id: s.id,
         project: s.project,
@@ -126,7 +129,7 @@ export function useWorkItems(isAuthenticated: boolean, token: string | null) {
     } finally {
       setTimelineLoading(false)
     }
-  }, [timelineDate])
+  }, [timelineDate, timelineSources])
 
   // Effects
   useEffect(() => {
@@ -146,7 +149,7 @@ export function useWorkItems(isAuthenticated: boolean, token: string | null) {
     if (viewMode === 'timeline') {
       fetchTimelineData()
     }
-  }, [viewMode, timelineDate, isAuthenticated, token, fetchTimelineData])
+  }, [viewMode, timelineDate, timelineSources, isAuthenticated, token, fetchTimelineData])
 
   // Handlers
   const handleSearch = useCallback((e: React.FormEvent) => {
@@ -276,6 +279,7 @@ export function useWorkItems(isAuthenticated: boolean, token: string | null) {
     timelineDate,
     timelineSessions,
     timelineLoading,
+    timelineSources,
     searchTerm,
     showFilters,
     expandedItems,
@@ -290,6 +294,7 @@ export function useWorkItems(isAuthenticated: boolean, token: string | null) {
     setFilters,
     setViewMode,
     setTimelineDate,
+    setTimelineSources,
     setSearchTerm,
     setShowFilters,
     // Actions
