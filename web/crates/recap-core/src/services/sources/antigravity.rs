@@ -3,14 +3,23 @@
 //! This module implements the SyncSource trait for Antigravity sessions.
 //! Antigravity is Gemini Code's local language server that provides an HTTP API
 //! for accessing code session data.
+//!
+//! ## Data Flow
+//!
+//! 1. **API Sync**: Fetch session metadata from Antigravity HTTP API
+//! 2. **Local Files**: Read detailed session data from ~/.gemini/tmp/*/chats/
+//! 3. **Snapshot Capture**: Store hourly buckets in snapshot_raw_data
+//! 4. **Compaction**: LLM generates summaries (handled by compaction service)
 
 use async_trait::async_trait;
+use chrono::{DateTime, Local, Timelike};
 use serde::Deserialize;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::process::Command;
 
 use super::{SyncSource, SourceProject, SourceSyncResult, WorkItemParams, upsert_work_item, UpsertResult};
+use crate::services::snapshot::save_hourly_snapshots;
 use crate::services::worklog::calculate_session_hours;
 
 /// Antigravity (Gemini Code) data source
@@ -94,42 +103,60 @@ impl SyncSource for AntigravitySource {
         pool: &SqlitePool,
         user_id: &str,
     ) -> Result<SourceSyncResult, String> {
+        let mut result = SourceSyncResult::new(self.source_name());
+
+        // Get connection (needed for both phases)
         let connection = match self.get_connection() {
             Some(conn) => conn,
             None => {
-                // Not an error if Antigravity is not running
                 log::debug!("Antigravity not running, skipping sync");
-                return Ok(SourceSyncResult::new(self.source_name()));
+                return Ok(result);
             }
         };
 
-        let api_response = fetch_all_trajectories(&connection).await?;
-        let projects = convert_to_projects(api_response);
+        // Phase 1: Sync from API - get session metadata (timestamps, summaries, etc.)
+        let api_projects = match fetch_all_trajectories(&connection).await {
+            Ok(api_response) => {
+                let projects = convert_to_projects(api_response);
+                result.projects_scanned = projects.len();
 
-        let mut result = SourceSyncResult::new(self.source_name());
-        result.projects_scanned = projects.len();
-
-        for project in projects {
-            for session in &project.sessions {
-                match process_session(pool, user_id, session, self.source_name()).await {
-                    Ok(ProcessResult::Created) => {
-                        result.sessions_processed += 1;
-                        result.work_items_created += 1;
-                    }
-                    Ok(ProcessResult::Updated) => {
-                        result.sessions_processed += 1;
-                        result.work_items_updated += 1;
-                    }
-                    Ok(ProcessResult::Skipped) => {
-                        result.sessions_skipped += 1;
-                    }
-                    Err(e) => {
-                        log::error!("Failed to process Antigravity session: {}", e);
-                        result.sessions_skipped += 1;
+                for project in &projects {
+                    for session in &project.sessions {
+                        match process_session(pool, user_id, session, self.source_name()).await {
+                            Ok(ProcessResult::Created) => {
+                                result.sessions_processed += 1;
+                                result.work_items_created += 1;
+                            }
+                            Ok(ProcessResult::Updated) => {
+                                result.sessions_processed += 1;
+                                result.work_items_updated += 1;
+                            }
+                            Ok(ProcessResult::Skipped) => {
+                                result.sessions_skipped += 1;
+                            }
+                            Err(e) => {
+                                log::error!("Failed to process Antigravity session: {}", e);
+                                result.sessions_skipped += 1;
+                            }
+                        }
                     }
                 }
+                projects
             }
-        }
+            Err(e) => {
+                log::warn!("Failed to fetch from Antigravity API: {}", e);
+                Vec::new()
+            }
+        };
+
+        // Phase 2: Capture detailed snapshots from API (GetCascadeTrajectorySteps)
+        // This enables LLM-powered summary generation via compaction
+        let snapshots_captured = capture_api_snapshots(pool, user_id, &connection, &api_projects).await;
+        log::info!(
+            "Antigravity sync: {} work items, {} snapshots captured",
+            result.work_items_created + result.work_items_updated,
+            snapshots_captured
+        );
 
         Ok(result)
     }
@@ -141,6 +168,67 @@ impl SyncSource for AntigravitySource {
 struct ApiResponse {
     #[serde(rename = "trajectorySummaries")]
     trajectory_summaries: Option<HashMap<String, TrajectorySummary>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StepsResponse {
+    steps: Option<Vec<CascadeStep>>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct CascadeStep {
+    #[serde(rename = "type")]
+    step_type: Option<String>,
+    status: Option<String>,
+    metadata: Option<StepMetadata>,
+    #[serde(rename = "userInput")]
+    user_input: Option<UserInput>,
+    #[serde(rename = "plannerResponse")]
+    planner_response: Option<PlannerResponse>,
+    #[serde(rename = "codeAction")]
+    code_action: Option<CodeAction>,
+    #[serde(rename = "runCommand")]
+    run_command: Option<RunCommand>,
+    #[serde(rename = "notifyUser")]
+    notify_user: Option<NotifyUser>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct StepMetadata {
+    #[serde(rename = "createdAt")]
+    created_at: Option<String>,
+    #[serde(rename = "completedAt")]
+    completed_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct UserInput {
+    #[serde(rename = "userResponse")]
+    user_response: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct PlannerResponse {
+    #[serde(rename = "modelResponseText")]
+    model_response_text: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct CodeAction {
+    #[serde(rename = "filePath")]
+    file_path: Option<String>,
+    #[serde(rename = "actionType")]
+    action_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct RunCommand {
+    command: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct NotifyUser {
+    message: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -293,6 +381,49 @@ async fn fetch_all_trajectories(connection: &AntigravityConnection) -> Result<Ap
         .json()
         .await
         .map_err(|e| format!("Failed to parse API response: {}", e))
+}
+
+/// Fetch detailed steps for a specific trajectory
+async fn fetch_trajectory_steps(
+    connection: &AntigravityConnection,
+    cascade_id: &str,
+    start_index: usize,
+    end_index: usize,
+) -> Result<StepsResponse, String> {
+    let url = format!(
+        "https://localhost:{}/exa.language_server_pb.LanguageServerService/GetCascadeTrajectorySteps",
+        connection.port
+    );
+
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let body = serde_json::json!({
+        "cascadeId": cascade_id,
+        "startIndex": start_index,
+        "endIndex": end_index
+    });
+
+    let response = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Connect-Protocol-Version", "1")
+        .header("X-Codeium-Csrf-Token", &connection.csrf_token)
+        .body(body.to_string())
+        .send()
+        .await
+        .map_err(|e| format!("API request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("API returned error status: {}", response.status()));
+    }
+
+    response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse steps response: {}", e))
 }
 
 /// Convert API response to internal project/session structure
@@ -457,6 +588,208 @@ fn build_session_description(session: &AntigravitySession, hours: f64) -> String
     }
 
     parts.join("\n\n")
+}
+
+// ==================== Snapshot Capture ====================
+
+/// Capture snapshots from Antigravity API
+///
+/// This fetches detailed step data using GetCascadeTrajectorySteps API
+/// and saves them to snapshot_raw_data for LLM-powered summary generation.
+async fn capture_api_snapshots(
+    pool: &SqlitePool,
+    user_id: &str,
+    connection: &AntigravityConnection,
+    api_projects: &[AntigravityProject],
+) -> usize {
+    let mut total_saved = 0;
+
+    for project in api_projects {
+        for session in &project.sessions {
+            // Skip sessions with no steps
+            if session.step_count == 0 {
+                continue;
+            }
+
+            // Fetch detailed steps from API (batch of 100 at a time)
+            let mut all_steps = Vec::new();
+            let batch_size = 100;
+            let mut start = 0;
+
+            while start < session.step_count {
+                let end = std::cmp::min(start + batch_size, session.step_count);
+                match fetch_trajectory_steps(connection, &session.session_id, start, end).await {
+                    Ok(response) => {
+                        if let Some(steps) = response.steps {
+                            all_steps.extend(steps);
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to fetch steps for session {}: {}",
+                            session.session_id,
+                            e
+                        );
+                        break;
+                    }
+                }
+                start = end;
+            }
+
+            if all_steps.is_empty() {
+                continue;
+            }
+
+            // Convert steps to hourly buckets
+            let buckets = convert_steps_to_hourly_buckets(&all_steps);
+
+            if buckets.is_empty() {
+                continue;
+            }
+
+            // Save to snapshot_raw_data
+            match save_hourly_snapshots(
+                pool,
+                user_id,
+                &session.session_id,
+                &session.cwd,
+                &buckets,
+            )
+            .await
+            {
+                Ok(saved) => {
+                    total_saved += saved;
+                    log::debug!(
+                        "Saved {} snapshots for Antigravity session {} ({} steps)",
+                        saved,
+                        session.session_id,
+                        all_steps.len()
+                    );
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Failed to save snapshots for session {}: {}",
+                        session.session_id,
+                        e
+                    );
+                }
+            }
+        }
+    }
+
+    total_saved
+}
+
+/// Convert Cascade steps to hourly buckets for snapshot storage
+fn convert_steps_to_hourly_buckets(steps: &[CascadeStep]) -> Vec<crate::services::snapshot::HourlyBucket> {
+    use crate::services::snapshot::{HourlyBucket, ToolCallRecord};
+    use std::collections::HashMap as StdHashMap;
+
+    let mut buckets_map: StdHashMap<String, HourlyBucket> = StdHashMap::new();
+
+    for step in steps {
+        // Get timestamp from metadata
+        let timestamp = step
+            .metadata
+            .as_ref()
+            .and_then(|m| m.created_at.as_ref())
+            .cloned()
+            .unwrap_or_default();
+
+        // Truncate to hour bucket
+        let hour_bucket = match truncate_to_hour(&timestamp) {
+            Some(h) => h,
+            None => continue,
+        };
+
+        let bucket = buckets_map.entry(hour_bucket.clone()).or_insert_with(|| HourlyBucket {
+            hour_bucket,
+            user_messages: Vec::new(),
+            assistant_summaries: Vec::new(),
+            tool_calls: Vec::new(),
+            files_modified: Vec::new(),
+            git_commits: Vec::new(),
+            message_count: 0,
+        });
+
+        let step_type = step.step_type.as_deref().unwrap_or("");
+
+        match step_type {
+            "CORTEX_STEP_TYPE_USER_INPUT" => {
+                if let Some(ui) = &step.user_input {
+                    if let Some(msg) = &ui.user_response {
+                        let truncated: String = msg.chars().take(500).collect();
+                        if !truncated.trim().is_empty() {
+                            bucket.user_messages.push(truncated);
+                            bucket.message_count += 1;
+                        }
+                    }
+                }
+            }
+            "CORTEX_STEP_TYPE_PLANNER_RESPONSE" | "CORTEX_STEP_TYPE_NOTIFY_USER" => {
+                let msg = step
+                    .planner_response
+                    .as_ref()
+                    .and_then(|pr| pr.model_response_text.as_ref())
+                    .or_else(|| step.notify_user.as_ref().and_then(|nu| nu.message.as_ref()));
+
+                if let Some(text) = msg {
+                    let truncated: String = text.chars().take(200).collect();
+                    bucket.assistant_summaries.push(truncated);
+                }
+            }
+            "CORTEX_STEP_TYPE_CODE_ACTION" => {
+                if let Some(ca) = &step.code_action {
+                    if let Some(path) = &ca.file_path {
+                        if !bucket.files_modified.contains(path) {
+                            bucket.files_modified.push(path.clone());
+                        }
+                        bucket.tool_calls.push(ToolCallRecord {
+                            tool: ca.action_type.clone().unwrap_or_else(|| "CodeAction".to_string()),
+                            input_summary: path.clone(),
+                            timestamp: timestamp.clone(),
+                        });
+                    }
+                }
+            }
+            "CORTEX_STEP_TYPE_RUN_COMMAND" => {
+                if let Some(rc) = &step.run_command {
+                    if let Some(cmd) = &rc.command {
+                        bucket.tool_calls.push(ToolCallRecord {
+                            tool: "RunCommand".to_string(),
+                            input_summary: cmd.chars().take(200).collect(),
+                            timestamp: timestamp.clone(),
+                        });
+                    }
+                }
+            }
+            "CORTEX_STEP_TYPE_VIEW_FILE" | "CORTEX_STEP_TYPE_GREP_SEARCH" |
+            "CORTEX_STEP_TYPE_FIND" | "CORTEX_STEP_TYPE_LIST_DIRECTORY" => {
+                bucket.tool_calls.push(ToolCallRecord {
+                    tool: step_type.replace("CORTEX_STEP_TYPE_", ""),
+                    input_summary: String::new(),
+                    timestamp: timestamp.clone(),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    // Convert to sorted vec
+    let mut buckets: Vec<HourlyBucket> = buckets_map.into_values().collect();
+    buckets.sort_by(|a, b| a.hour_bucket.cmp(&b.hour_bucket));
+    buckets
+}
+
+/// Truncate ISO timestamp to hour boundary in local timezone
+fn truncate_to_hour(timestamp: &str) -> Option<String> {
+    let dt = DateTime::parse_from_rfc3339(timestamp).ok()?;
+    let local_dt: DateTime<Local> = dt.with_timezone(&Local);
+    let truncated = local_dt
+        .with_minute(0)?
+        .with_second(0)?
+        .with_nanosecond(0)?;
+    Some(truncated.format("%Y-%m-%dT%H:%M:%S").to_string())
 }
 
 // ==================== Public API for Commands ====================

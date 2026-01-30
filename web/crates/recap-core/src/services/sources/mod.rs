@@ -38,6 +38,7 @@ pub mod types;
 pub mod work_item;
 pub mod claude;
 pub mod antigravity;
+pub mod antigravity_session;
 pub mod registry;
 
 pub use types::{SourceProject, SourceSyncResult, WorkItemParams};

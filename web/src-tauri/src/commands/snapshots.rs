@@ -693,14 +693,44 @@ pub async fn get_hourly_breakdown(
 
     // Add Antigravity items to the breakdown
     for item in antigravity_items {
-        // Extract hour from created_at if available, otherwise use a placeholder
-        let hour_start = item.created_at.format("%H:00").to_string();
+        // Extract hour from start_time (actual session time), falling back to created_at
+        let hour_start = item
+            .start_time
+            .as_ref()
+            .and_then(|ts| {
+                // Parse ISO timestamp and convert to local timezone
+                chrono::DateTime::parse_from_rfc3339(ts)
+                    .ok()
+                    .map(|dt| dt.with_timezone(&chrono::Local).format("%H:00").to_string())
+            })
+            .unwrap_or_else(|| item.created_at.format("%H:00").to_string());
         let hour_end = next_hour(&hour_start);
+
+        // Extract clean summary from description (find "📋 Summary:" line)
+        // or fall back to title (which contains the API summary)
+        let summary = item
+            .description
+            .as_ref()
+            .and_then(|desc| {
+                // Look for "📋 Summary: " line and extract the text after it
+                desc.lines()
+                    .find(|line| line.starts_with("📋 Summary:"))
+                    .map(|line| line.trim_start_matches("📋 Summary:").trim().to_string())
+            })
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                // Fall back to title, removing the "[project_name] " prefix
+                item.title
+                    .split(']')
+                    .nth(1)
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_else(|| item.title.clone())
+            });
 
         items.push(HourlyBreakdownItem {
             hour_start,
             hour_end,
-            summary: item.description.unwrap_or_else(|| item.title.clone()),
+            summary,
             files_modified: Vec::new(),
             git_commits: Vec::new(),
             source: "antigravity".to_string(),
