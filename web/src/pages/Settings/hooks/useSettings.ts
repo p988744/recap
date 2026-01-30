@@ -1,12 +1,31 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { config as configService, sources as sourcesService } from '@/services'
 import type { ConfigResponse, SourcesResponse } from '@/types'
 import { useAuth } from '@/lib/auth'
 import type { SettingsSection, SettingsMessage } from './types'
 
+const validSections: SettingsSection[] = ['profile', 'projects', 'sync', 'export', 'ai', 'about', 'danger']
+
 export function useSettings() {
   const { user, logout, appStatus, token, isAuthenticated } = useAuth()
-  const [activeSection, setActiveSection] = useState<SettingsSection>('profile')
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  // Read initial section from URL params
+  const sectionParam = searchParams.get('section') as SettingsSection | null
+  const initialSection = sectionParam && validSections.includes(sectionParam) ? sectionParam : 'profile'
+  const [activeSection, setActiveSectionState] = useState<SettingsSection>(initialSection)
+
+  // Sync URL params when section changes
+  const setActiveSection = (section: SettingsSection) => {
+    setActiveSectionState(section)
+    if (section === 'profile') {
+      searchParams.delete('section')
+    } else {
+      searchParams.set('section', section)
+    }
+    setSearchParams(searchParams, { replace: true })
+  }
   const [config, setConfig] = useState<ConfigResponse | null>(null)
   const [sources, setSources] = useState<SourcesResponse | null>(null)
   const [loading, setLoading] = useState(true)

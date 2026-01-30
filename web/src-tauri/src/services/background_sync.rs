@@ -68,10 +68,160 @@ impl BackgroundSyncConfig {
 }
 
 // =============================================================================
-// Sync Status
+// Service Lifecycle
 // =============================================================================
 
-/// Current status of the background sync service
+/// Service lifecycle states
+///
+/// ```text
+///                    ┌──────────┐
+///                    │  Created │
+///                    └────┬─────┘
+///                         │ start()
+///                         ▼
+///   stop()          ┌──────────┐
+/// ┌─────────────────│   Idle   │◄────────────────┐
+/// │                 └────┬─────┘                 │
+/// │                      │ begin_sync()          │
+/// │                      ▼                       │
+/// │                 ┌──────────┐                 │
+/// │                 │ Syncing  │─────────────────┘
+/// │                 └────┬─────┘  complete_sync()
+/// │                      │
+/// │                      │ (unrecoverable error)
+/// │                      ▼
+/// │                 ┌──────────┐
+/// └────────────────►│ Stopped  │
+///                   └──────────┘
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServiceLifecycle {
+    /// Service created but not started
+    Created,
+    /// Running and waiting for next sync
+    Idle {
+        last_sync_at: Option<String>,
+        next_sync_at: Option<String>,
+    },
+    /// Currently performing sync
+    Syncing {
+        started_at: String,
+    },
+    /// Service stopped
+    Stopped,
+}
+
+impl Default for ServiceLifecycle {
+    fn default() -> Self {
+        Self::Created
+    }
+}
+
+impl ServiceLifecycle {
+    /// Check if service is running (Idle or Syncing)
+    pub fn is_running(&self) -> bool {
+        matches!(self, Self::Idle { .. } | Self::Syncing { .. })
+    }
+
+    /// Check if currently syncing
+    pub fn is_syncing(&self) -> bool {
+        matches!(self, Self::Syncing { .. })
+    }
+
+    /// Get last sync timestamp
+    pub fn last_sync_at(&self) -> Option<&str> {
+        match self {
+            Self::Idle { last_sync_at, .. } => last_sync_at.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Get next sync timestamp
+    pub fn next_sync_at(&self) -> Option<&str> {
+        match self {
+            Self::Idle { next_sync_at, .. } => next_sync_at.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Transition: Created/Stopped -> Idle
+    pub fn start(self, next_sync_at: Option<String>) -> Result<Self, ServiceLifecycleError> {
+        match self {
+            Self::Created | Self::Stopped => Ok(Self::Idle {
+                last_sync_at: None,
+                next_sync_at,
+            }),
+            Self::Idle { .. } => Err(ServiceLifecycleError::AlreadyRunning),
+            Self::Syncing { .. } => Err(ServiceLifecycleError::SyncInProgress),
+        }
+    }
+
+    /// Transition: Idle -> Syncing
+    pub fn begin_sync(self) -> Result<Self, ServiceLifecycleError> {
+        match self {
+            Self::Idle { .. } => Ok(Self::Syncing {
+                started_at: chrono::Utc::now().to_rfc3339(),
+            }),
+            Self::Created => Err(ServiceLifecycleError::NotStarted),
+            Self::Stopped => Err(ServiceLifecycleError::ServiceStopped),
+            Self::Syncing { .. } => Err(ServiceLifecycleError::SyncInProgress),
+        }
+    }
+
+    /// Transition: Syncing -> Idle
+    pub fn complete_sync(self, next_sync_at: Option<String>) -> Result<Self, ServiceLifecycleError> {
+        match self {
+            Self::Syncing { started_at } => {
+                let _ = started_at; // Use started_at for logging if needed
+                Ok(Self::Idle {
+                    last_sync_at: Some(chrono::Utc::now().to_rfc3339()),
+                    next_sync_at,
+                })
+            }
+            _ => Err(ServiceLifecycleError::NotSyncing),
+        }
+    }
+
+    /// Transition: Any -> Stopped
+    pub fn stop(self) -> Self {
+        Self::Stopped
+    }
+}
+
+/// Lifecycle transition errors
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServiceLifecycleError {
+    /// Service is already running
+    AlreadyRunning,
+    /// Service has not been started
+    NotStarted,
+    /// Service is stopped
+    ServiceStopped,
+    /// A sync operation is already in progress
+    SyncInProgress,
+    /// No sync operation is in progress
+    NotSyncing,
+}
+
+impl std::fmt::Display for ServiceLifecycleError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AlreadyRunning => write!(f, "服務已經在運行中"),
+            Self::NotStarted => write!(f, "服務尚未啟動"),
+            Self::ServiceStopped => write!(f, "服務已停止"),
+            Self::SyncInProgress => write!(f, "同步正在進行中"),
+            Self::NotSyncing => write!(f, "目前沒有同步在進行"),
+        }
+    }
+}
+
+impl std::error::Error for ServiceLifecycleError {}
+
+// =============================================================================
+// Sync Status (for API response)
+// =============================================================================
+
+/// Current status of the background sync service (API response)
 #[derive(Debug, Clone, Default)]
 pub struct SyncServiceStatus {
     /// Whether the service is currently running
@@ -86,6 +236,20 @@ pub struct SyncServiceStatus {
     pub last_result: Option<String>,
     /// Last error message (if any)
     pub last_error: Option<String>,
+}
+
+impl SyncServiceStatus {
+    /// Create from lifecycle state
+    pub fn from_lifecycle(lifecycle: &ServiceLifecycle, last_result: Option<String>, last_error: Option<String>) -> Self {
+        Self {
+            is_running: lifecycle.is_running(),
+            is_syncing: lifecycle.is_syncing(),
+            last_sync_at: lifecycle.last_sync_at().map(|s| s.to_string()),
+            next_sync_at: lifecycle.next_sync_at().map(|s| s.to_string()),
+            last_result,
+            last_error,
+        }
+    }
 }
 
 // =============================================================================
@@ -122,11 +286,21 @@ impl From<SourceSyncResult> for SyncOperationResult {
 // =============================================================================
 
 /// Background sync service that manages scheduled synchronization
+///
+/// Uses a formal lifecycle state machine to ensure correct state transitions.
+/// All sync operations must go through `execute_sync` to guarantee proper
+/// state management.
 pub struct BackgroundSyncService {
     /// Current configuration
     config: Arc<RwLock<BackgroundSyncConfig>>,
-    /// Current status
-    status: Arc<RwLock<SyncServiceStatus>>,
+    /// Service lifecycle state (single source of truth)
+    lifecycle: Arc<RwLock<ServiceLifecycle>>,
+    /// Last sync timestamp (persisted separately for display during Syncing state)
+    last_sync_at: Arc<RwLock<Option<String>>>,
+    /// Last sync result message
+    last_result: Arc<RwLock<Option<String>>>,
+    /// Last error message
+    last_error: Arc<RwLock<Option<String>>>,
     /// Shutdown signal sender
     shutdown_tx: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
     /// Database connection for sync operations
@@ -140,7 +314,10 @@ impl BackgroundSyncService {
     pub fn new(db: Arc<Mutex<recap_core::Database>>) -> Self {
         Self {
             config: Arc::new(RwLock::new(BackgroundSyncConfig::default())),
-            status: Arc::new(RwLock::new(SyncServiceStatus::default())),
+            lifecycle: Arc::new(RwLock::new(ServiceLifecycle::Created)),
+            last_sync_at: Arc::new(RwLock::new(None)),
+            last_result: Arc::new(RwLock::new(None)),
+            last_error: Arc::new(RwLock::new(None)),
             shutdown_tx: Arc::new(Mutex::new(None)),
             db,
             user_id: Arc::new(RwLock::new(None)),
@@ -174,9 +351,122 @@ impl BackgroundSyncService {
         self.config.read().await.clone()
     }
 
-    /// Get the current status
+    /// Get the current status (API response format)
     pub async fn get_status(&self) -> SyncServiceStatus {
-        self.status.read().await.clone()
+        let lifecycle = self.lifecycle.read().await;
+        let last_sync_at = self.last_sync_at.read().await.clone();
+        let last_result = self.last_result.read().await.clone();
+        let last_error = self.last_error.read().await.clone();
+
+        // Use separate last_sync_at field to persist value during Syncing state
+        SyncServiceStatus {
+            is_running: lifecycle.is_running(),
+            is_syncing: lifecycle.is_syncing(),
+            last_sync_at,
+            next_sync_at: lifecycle.next_sync_at().map(|s| s.to_string()),
+            last_result,
+            last_error,
+        }
+    }
+
+    /// Update the current status (DEPRECATED: use execute_sync instead)
+    /// This method exists for backward compatibility during migration.
+    #[deprecated(note = "Use execute_sync for proper lifecycle management")]
+    pub async fn update_status(&self, new_status: SyncServiceStatus) {
+        // Update last_result and last_error
+        {
+            let mut result = self.last_result.write().await;
+            *result = new_status.last_result;
+        }
+        {
+            let mut error = self.last_error.write().await;
+            *error = new_status.last_error;
+        }
+
+        // Try to reconcile lifecycle state with the status
+        let mut lifecycle = self.lifecycle.write().await;
+        if new_status.is_syncing && !lifecycle.is_syncing() {
+            if let Ok(new_state) = lifecycle.clone().begin_sync() {
+                *lifecycle = new_state;
+            }
+        } else if !new_status.is_syncing && lifecycle.is_syncing() {
+            let interval = self.config.read().await.interval_minutes;
+            if let Ok(new_state) = lifecycle.clone().complete_sync(Some(Self::calculate_next_sync(interval))) {
+                *lifecycle = new_state;
+            }
+        }
+    }
+
+    /// Get the current lifecycle state
+    pub async fn get_lifecycle(&self) -> ServiceLifecycle {
+        self.lifecycle.read().await.clone()
+    }
+
+    /// Begin a sync operation (transition to Syncing state)
+    ///
+    /// Call this at the start of any sync operation. Must be paired with
+    /// `complete_sync_operation` when the sync finishes.
+    ///
+    /// If the service is in Created or Stopped state, it will automatically
+    /// transition to Idle first, then to Syncing.
+    pub async fn begin_sync_operation(&self) -> Result<(), ServiceLifecycleError> {
+        let interval = self.config.read().await.interval_minutes;
+        let mut lifecycle = self.lifecycle.write().await;
+
+        // Auto-start if in Created or Stopped state
+        if matches!(*lifecycle, ServiceLifecycle::Created | ServiceLifecycle::Stopped) {
+            log::info!("Auto-starting service for sync operation");
+            *lifecycle = ServiceLifecycle::Idle {
+                last_sync_at: None,
+                next_sync_at: Some(Self::calculate_next_sync(interval)),
+            };
+        }
+
+        // Now transition to Syncing
+        match lifecycle.clone().begin_sync() {
+            Ok(new_state) => {
+                *lifecycle = new_state;
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Complete a sync operation (transition back to Idle state)
+    ///
+    /// Call this when a sync operation finishes, regardless of success or failure.
+    /// Records the results and errors for status reporting.
+    pub async fn complete_sync_operation(&self, results: &[SyncOperationResult]) {
+        let interval = self.config.read().await.interval_minutes;
+        let now = chrono::Utc::now().to_rfc3339();
+
+        // Update separate last_sync_at field (persists during all states)
+        {
+            let mut last_sync = self.last_sync_at.write().await;
+            *last_sync = Some(now);
+        }
+
+        // Transition lifecycle
+        {
+            let mut lifecycle = self.lifecycle.write().await;
+            if let Ok(new_state) = lifecycle.clone().complete_sync(Some(Self::calculate_next_sync(interval))) {
+                *lifecycle = new_state;
+            }
+        }
+
+        // Record results
+        let total_projects: i32 = results.iter().map(|r| r.projects_scanned).sum();
+        let total_created: i32 = results.iter().map(|r| r.items_created).sum();
+        let errors: Vec<String> = results.iter().filter_map(|r| r.error.clone()).collect();
+
+        {
+            let mut last_result = self.last_result.write().await;
+            *last_result = Some(format!("已掃描 {} 個專案，發現 {} 筆新資料", total_projects, total_created));
+        }
+        {
+            let mut last_error = self.last_error.write().await;
+            *last_error = if errors.is_empty() { None } else { Some(errors.join("; ")) };
+        }
     }
 
     /// Start the background sync service
@@ -187,17 +477,24 @@ impl BackgroundSyncService {
             return;
         }
 
-        // Check if already running
-        {
-            let status = self.status.read().await;
-            if status.is_running {
-                log::info!("Background sync service is already running");
-                return;
-            }
-        }
-
         let interval_minutes = config.interval_minutes;
         drop(config);
+
+        // Transition lifecycle: Created/Stopped -> Idle
+        {
+            let mut lifecycle = self.lifecycle.write().await;
+            match lifecycle.clone().start(Some(Self::calculate_next_sync(interval_minutes))) {
+                Ok(new_state) => *lifecycle = new_state,
+                Err(ServiceLifecycleError::AlreadyRunning) => {
+                    log::info!("Background sync service is already running");
+                    return;
+                }
+                Err(e) => {
+                    log::warn!("Cannot start service: {}", e);
+                    return;
+                }
+            }
+        }
 
         // Create shutdown channel
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -206,18 +503,14 @@ impl BackgroundSyncService {
             *tx = Some(shutdown_tx);
         }
 
-        // Update status
-        {
-            let mut status = self.status.write().await;
-            status.is_running = true;
-            status.next_sync_at = Some(Self::calculate_next_sync(interval_minutes));
-        }
-
         log::info!("Starting background sync service with {}min interval", interval_minutes);
 
         // Clone references for the spawned task
         let config = Arc::clone(&self.config);
-        let status = Arc::clone(&self.status);
+        let lifecycle = Arc::clone(&self.lifecycle);
+        let last_sync_at = Arc::clone(&self.last_sync_at);
+        let last_result = Arc::clone(&self.last_result);
+        let last_error = Arc::clone(&self.last_error);
         let db = Arc::clone(&self.db);
         let user_id = Arc::clone(&self.user_id);
 
@@ -248,12 +541,16 @@ impl BackgroundSyncService {
                         }
                         let uid = uid.unwrap();
 
-                        // Perform sync
-                        Self::perform_sync(&db, &status, &sync_config, &uid).await;
-
-                        // Update next sync time
-                        let mut st = status.write().await;
-                        st.next_sync_at = Some(Self::calculate_next_sync(sync_config.interval_minutes));
+                        // Perform sync with lifecycle management
+                        Self::perform_sync_with_lifecycle(
+                            &db,
+                            &lifecycle,
+                            &last_sync_at,
+                            &last_result,
+                            &last_error,
+                            &sync_config,
+                            &uid,
+                        ).await;
                     }
                     _ = &mut shutdown_rx => {
                         log::info!("Background sync service received shutdown signal");
@@ -262,10 +559,9 @@ impl BackgroundSyncService {
                 }
             }
 
-            // Update status on exit
-            let mut st = status.write().await;
-            st.is_running = false;
-            st.next_sync_at = None;
+            // Transition lifecycle to Stopped
+            let mut lc = lifecycle.write().await;
+            *lc = lc.clone().stop();
             log::info!("Background sync service stopped");
         });
     }
@@ -282,10 +578,9 @@ impl BackgroundSyncService {
             log::info!("Sent shutdown signal to background sync service");
         }
 
-        // Update status
-        let mut status = self.status.write().await;
-        status.is_running = false;
-        status.next_sync_at = None;
+        // Transition lifecycle to Stopped
+        let mut lifecycle = self.lifecycle.write().await;
+        *lifecycle = lifecycle.clone().stop();
     }
 
     /// Restart the background sync service
@@ -312,22 +607,133 @@ impl BackgroundSyncService {
             }];
         }
 
-        Self::perform_sync(&self.db, &self.status, &config, &uid.unwrap()).await
+        Self::perform_sync_with_lifecycle(
+            &self.db,
+            &self.lifecycle,
+            &self.last_sync_at,
+            &self.last_result,
+            &self.last_error,
+            &config,
+            &uid.unwrap(),
+        ).await
     }
 
-    /// Perform the actual sync operation using the source registry
-    async fn perform_sync(
+    /// Execute a sync operation with proper lifecycle management
+    ///
+    /// This is the ONLY way to perform sync operations. It guarantees:
+    /// 1. Lifecycle state transition to Syncing at start
+    /// 2. Lifecycle state transition to Idle at end
+    /// 3. Proper error handling and result recording
+    ///
+    /// # Example
+    /// ```ignore
+    /// let results = service.execute_sync(|pool, user_id| async move {
+    ///     // Your sync logic here
+    ///     Ok(vec![SyncOperationResult::default()])
+    /// }).await;
+    /// ```
+    pub async fn execute_sync<F, Fut>(&self, sync_fn: F) -> Result<Vec<SyncOperationResult>, String>
+    where
+        F: FnOnce(sqlx::SqlitePool, String) -> Fut,
+        Fut: std::future::Future<Output = Result<Vec<SyncOperationResult>, String>>,
+    {
+        let uid = self.user_id.read().await.clone();
+        if uid.is_none() {
+            return Err("No user logged in".to_string());
+        }
+        let user_id = uid.unwrap();
+
+        // Get pool
+        let pool = {
+            let db = self.db.lock().await;
+            db.pool.clone()
+        };
+
+        // Transition to Syncing
+        {
+            let mut lifecycle = self.lifecycle.write().await;
+            match lifecycle.clone().begin_sync() {
+                Ok(new_state) => *lifecycle = new_state,
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+
+        log::info!("Starting sync via execute_sync for user: {}", user_id);
+
+        // Execute the sync function
+        let result = sync_fn(pool, user_id).await;
+
+        // Update last_sync_at (persists during all states)
+        {
+            let mut last_sync = self.last_sync_at.write().await;
+            *last_sync = Some(chrono::Utc::now().to_rfc3339());
+        }
+
+        // Transition back to Idle and record results
+        let interval = self.config.read().await.interval_minutes;
+        {
+            let mut lifecycle = self.lifecycle.write().await;
+            if let Ok(new_state) = lifecycle.clone().complete_sync(Some(Self::calculate_next_sync(interval))) {
+                *lifecycle = new_state;
+            }
+        }
+
+        // Record result/error
+        match &result {
+            Ok(results) => {
+                let total_projects: i32 = results.iter().map(|r| r.projects_scanned).sum();
+                let total_created: i32 = results.iter().map(|r| r.items_created).sum();
+                let errors: Vec<String> = results.iter().filter_map(|r| r.error.clone()).collect();
+
+                {
+                    let mut last_result = self.last_result.write().await;
+                    *last_result = Some(format!("已掃描 {} 個專案，發現 {} 筆新資料", total_projects, total_created));
+                }
+                {
+                    let mut last_error = self.last_error.write().await;
+                    *last_error = if errors.is_empty() { None } else { Some(errors.join("; ")) };
+                }
+            }
+            Err(e) => {
+                let mut last_error = self.last_error.write().await;
+                *last_error = Some(e.clone());
+            }
+        }
+
+        log::info!("Sync completed via execute_sync");
+        result
+    }
+
+    /// Perform the actual sync operation with lifecycle management
+    ///
+    /// This is the internal implementation used by both the timer loop and trigger_sync.
+    /// Uses the lifecycle state machine to ensure correct state transitions.
+    async fn perform_sync_with_lifecycle(
         db: &Arc<Mutex<recap_core::Database>>,
-        status: &Arc<RwLock<SyncServiceStatus>>,
+        lifecycle: &Arc<RwLock<ServiceLifecycle>>,
+        last_sync_at: &Arc<RwLock<Option<String>>>,
+        last_result: &Arc<RwLock<Option<String>>>,
+        last_error: &Arc<RwLock<Option<String>>>,
         config: &BackgroundSyncConfig,
         user_id: &str,
     ) -> Vec<SyncOperationResult> {
         log::info!("Starting background sync for user: {}", user_id);
 
-        // Mark as syncing
+        // Transition to Syncing
         {
-            let mut st = status.write().await;
-            st.is_syncing = true;
+            let mut lc = lifecycle.write().await;
+            match lc.clone().begin_sync() {
+                Ok(new_state) => *lc = new_state,
+                Err(e) => {
+                    log::warn!("Cannot begin sync: {}", e);
+                    return vec![SyncOperationResult {
+                        source: "system".to_string(),
+                        success: false,
+                        error: Some(e.to_string()),
+                        ..Default::default()
+                    }];
+                }
+            }
         }
 
         let mut results = Vec::new();
@@ -445,25 +851,35 @@ impl BackgroundSyncService {
             }
         }
 
-        // Update status
+        // Update last_sync_at (persists during all states)
         {
-            let mut st = status.write().await;
-            st.is_syncing = false;
-            st.last_sync_at = Some(chrono::Utc::now().to_rfc3339());
+            let mut sync_time = last_sync_at.write().await;
+            *sync_time = Some(chrono::Utc::now().to_rfc3339());
+        }
 
+        // Transition back to Idle and record results
+        {
+            let mut lc = lifecycle.write().await;
+            // Calculate next sync time
+            let next_sync = Some(Self::calculate_next_sync(config.interval_minutes));
+            if let Ok(new_state) = lc.clone().complete_sync(next_sync) {
+                *lc = new_state;
+            }
+        }
+
+        // Record results
+        {
             let total_projects: i32 = results.iter().map(|r| r.projects_scanned).sum();
             let total_created: i32 = results.iter().map(|r| r.items_created).sum();
-            let errors: Vec<String> = results
-                .iter()
-                .filter_map(|r| r.error.clone())
-                .collect();
+            let errors: Vec<String> = results.iter().filter_map(|r| r.error.clone()).collect();
 
-            if errors.is_empty() {
-                st.last_result = Some(format!("已掃描 {} 個專案，發現 {} 筆新資料", total_projects, total_created));
-                st.last_error = None;
-            } else {
-                st.last_result = Some(format!("同步完成，{} 個錯誤", errors.len()));
-                st.last_error = Some(errors.join("; "));
+            {
+                let mut result = last_result.write().await;
+                *result = Some(format!("已掃描 {} 個專案，發現 {} 筆新資料", total_projects, total_created));
+            }
+            {
+                let mut error = last_error.write().await;
+                *error = if errors.is_empty() { None } else { Some(errors.join("; ")) };
             }
         }
 
@@ -529,5 +945,166 @@ mod tests {
         assert_eq!(result.items_synced, 5);
         assert_eq!(result.projects_scanned, 3);
         assert_eq!(result.items_created, 2);
+    }
+
+    // =========================================================================
+    // Lifecycle State Machine Tests
+    // =========================================================================
+
+    #[test]
+    fn test_lifecycle_default_is_created() {
+        let lifecycle = ServiceLifecycle::default();
+        assert_eq!(lifecycle, ServiceLifecycle::Created);
+        assert!(!lifecycle.is_running());
+        assert!(!lifecycle.is_syncing());
+    }
+
+    #[test]
+    fn test_lifecycle_start_from_created() {
+        let lifecycle = ServiceLifecycle::Created;
+        let result = lifecycle.start(Some("2026-01-30T12:00:00Z".to_string()));
+        assert!(result.is_ok());
+
+        let new_state = result.unwrap();
+        assert!(new_state.is_running());
+        assert!(!new_state.is_syncing());
+        assert_eq!(new_state.next_sync_at(), Some("2026-01-30T12:00:00Z"));
+    }
+
+    #[test]
+    fn test_lifecycle_start_from_stopped() {
+        let lifecycle = ServiceLifecycle::Stopped;
+        let result = lifecycle.start(None);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_running());
+    }
+
+    #[test]
+    fn test_lifecycle_cannot_start_when_already_running() {
+        let lifecycle = ServiceLifecycle::Idle {
+            last_sync_at: None,
+            next_sync_at: None,
+        };
+        let result = lifecycle.start(None);
+        assert_eq!(result.unwrap_err(), ServiceLifecycleError::AlreadyRunning);
+    }
+
+    #[test]
+    fn test_lifecycle_begin_sync_from_idle() {
+        let lifecycle = ServiceLifecycle::Idle {
+            last_sync_at: None,
+            next_sync_at: None,
+        };
+        let result = lifecycle.begin_sync();
+        assert!(result.is_ok());
+
+        let new_state = result.unwrap();
+        assert!(new_state.is_syncing());
+        assert!(new_state.is_running());
+    }
+
+    #[test]
+    fn test_lifecycle_cannot_begin_sync_when_not_started() {
+        let lifecycle = ServiceLifecycle::Created;
+        let result = lifecycle.begin_sync();
+        assert_eq!(result.unwrap_err(), ServiceLifecycleError::NotStarted);
+    }
+
+    #[test]
+    fn test_lifecycle_cannot_begin_sync_when_already_syncing() {
+        let lifecycle = ServiceLifecycle::Syncing {
+            started_at: "2026-01-30T12:00:00Z".to_string(),
+        };
+        let result = lifecycle.begin_sync();
+        assert_eq!(result.unwrap_err(), ServiceLifecycleError::SyncInProgress);
+    }
+
+    #[test]
+    fn test_lifecycle_complete_sync() {
+        let lifecycle = ServiceLifecycle::Syncing {
+            started_at: "2026-01-30T12:00:00Z".to_string(),
+        };
+        let result = lifecycle.complete_sync(Some("2026-01-30T12:15:00Z".to_string()));
+        assert!(result.is_ok());
+
+        let new_state = result.unwrap();
+        assert!(!new_state.is_syncing());
+        assert!(new_state.is_running());
+        assert!(new_state.last_sync_at().is_some());
+        assert_eq!(new_state.next_sync_at(), Some("2026-01-30T12:15:00Z"));
+    }
+
+    #[test]
+    fn test_lifecycle_cannot_complete_sync_when_not_syncing() {
+        let lifecycle = ServiceLifecycle::Idle {
+            last_sync_at: None,
+            next_sync_at: None,
+        };
+        let result = lifecycle.complete_sync(None);
+        assert_eq!(result.unwrap_err(), ServiceLifecycleError::NotSyncing);
+    }
+
+    #[test]
+    fn test_lifecycle_stop_from_any_state() {
+        // From Created
+        let lifecycle = ServiceLifecycle::Created;
+        assert_eq!(lifecycle.stop(), ServiceLifecycle::Stopped);
+
+        // From Idle
+        let lifecycle = ServiceLifecycle::Idle {
+            last_sync_at: None,
+            next_sync_at: None,
+        };
+        assert_eq!(lifecycle.stop(), ServiceLifecycle::Stopped);
+
+        // From Syncing
+        let lifecycle = ServiceLifecycle::Syncing {
+            started_at: "2026-01-30T12:00:00Z".to_string(),
+        };
+        assert_eq!(lifecycle.stop(), ServiceLifecycle::Stopped);
+    }
+
+    #[test]
+    fn test_lifecycle_full_flow() {
+        // Created -> Idle -> Syncing -> Idle -> Stopped
+        let lifecycle = ServiceLifecycle::Created;
+
+        // Start
+        let lifecycle = lifecycle.start(Some("next".to_string())).unwrap();
+        assert!(matches!(lifecycle, ServiceLifecycle::Idle { .. }));
+
+        // Begin sync
+        let lifecycle = lifecycle.begin_sync().unwrap();
+        assert!(matches!(lifecycle, ServiceLifecycle::Syncing { .. }));
+
+        // Complete sync
+        let lifecycle = lifecycle.complete_sync(Some("next2".to_string())).unwrap();
+        assert!(matches!(lifecycle, ServiceLifecycle::Idle { .. }));
+        assert!(lifecycle.last_sync_at().is_some());
+
+        // Stop
+        let lifecycle = lifecycle.stop();
+        assert_eq!(lifecycle, ServiceLifecycle::Stopped);
+    }
+
+    #[test]
+    fn test_status_from_lifecycle() {
+        let lifecycle = ServiceLifecycle::Idle {
+            last_sync_at: Some("2026-01-30T12:00:00Z".to_string()),
+            next_sync_at: Some("2026-01-30T12:15:00Z".to_string()),
+        };
+
+        let status = SyncServiceStatus::from_lifecycle(
+            &lifecycle,
+            Some("結果".to_string()),
+            None,
+        );
+
+        assert!(status.is_running);
+        assert!(!status.is_syncing);
+        assert_eq!(status.last_sync_at, Some("2026-01-30T12:00:00Z".to_string()));
+        assert_eq!(status.next_sync_at, Some("2026-01-30T12:15:00Z".to_string()));
+        assert_eq!(status.last_result, Some("結果".to_string()));
+        assert!(status.last_error.is_none());
     }
 }

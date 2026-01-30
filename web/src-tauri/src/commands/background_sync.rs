@@ -221,6 +221,10 @@ pub async fn trigger_background_sync(
 
 /// Trigger an immediate sync with progress reporting.
 /// Emits "sync-progress" events to the frontend.
+///
+/// Uses the service lifecycle to ensure proper state management:
+/// 1. Calls begin_sync_operation() at start
+/// 2. Calls complete_sync_operation() at end (always, even on error)
 #[tauri::command]
 pub async fn trigger_sync_with_progress(
     state: State<'_, AppState>,
@@ -232,6 +236,10 @@ pub async fn trigger_sync_with_progress(
 
     // Ensure user ID is set
     state.background_sync.set_user_id(user_id.clone()).await;
+
+    // Begin sync operation (lifecycle: Idle -> Syncing)
+    state.background_sync.begin_sync_operation().await
+        .map_err(|e| e.to_string())?;
 
     // Helper to emit progress
     let emit = |phase: &str, source: Option<&str>, current: usize, total: usize, message: &str| {
@@ -400,6 +408,10 @@ pub async fn trigger_sync_with_progress(
         100,
         &format!("同步完成，共處理 {} 筆資料", total_items),
     );
+
+    // Complete sync operation (lifecycle: Syncing -> Idle)
+    // This automatically records results and updates last_sync_at
+    state.background_sync.complete_sync_operation(&results).await;
 
     log::info!("Manual sync with progress triggered, {} items synced", total_items);
 
