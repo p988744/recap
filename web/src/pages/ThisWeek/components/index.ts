@@ -1,5 +1,6 @@
 export { WeekHeader } from './WeekHeader'
 export { WeekOverview } from './WeekOverview'
+export { WeekTimeline } from './WeekTimeline'
 export { DayCard } from './DayCard'
 export { DayDetails } from './DayDetails'
 export { DailySummary } from './DailySummary'

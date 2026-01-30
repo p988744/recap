@@ -151,12 +151,9 @@ export function ThisWeekPage() {
         stats={tw.stats}
         projectCount={tw.projectCount}
         daysWorked={tw.daysWorked}
-        ganttDate={tw.ganttDate}
-        ganttSessions={tw.ganttSessions}
-        ganttLoading={tw.ganttLoading}
-        ganttSources={tw.ganttSources}
-        onGanttDateChange={tw.setGanttDate}
-        onGanttSourcesChange={tw.setGanttSources}
+        days={tw.days}
+        startDate={tw.startDate}
+        endDate={tw.endDate}
       />
 
       {/* Day Cards */}
@@ -261,3 +258,7 @@ export function ThisWeekPage() {
     </div>
   )
 }
+
+// Re-export detail pages
+export { DayDetailPage } from './DayDetailPage'
+export { ProjectDayDetailPage } from './ProjectDayDetailPage'

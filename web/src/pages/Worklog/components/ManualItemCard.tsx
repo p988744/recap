@@ -8,8 +8,8 @@ import { IssueKeyCombobox } from './IssueKeyCombobox'
 
 interface ManualItemCardProps {
   item: ManualWorkItem
-  onEdit: () => void
-  onDelete: () => void
+  onEdit?: () => void
+  onDelete?: () => void
   syncRecord?: WorklogSyncRecord
   onSyncToTempo?: () => void
   mappedIssueKey?: string
@@ -92,14 +92,20 @@ export function ManualItemCard({ item, onEdit, onDelete, syncRecord, onSyncToTem
 
         {/* Right side actions — Export always visible, Edit/Delete on hover */}
         <div className="px-2 py-3 flex items-center gap-1 shrink-0">
-          <div className="flex items-center gap-1 opacity-0 group-hover/item:opacity-100 transition-opacity">
-            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onEdit} title="Edit">
-              <Pencil className="w-3 h-3" strokeWidth={1.5} />
-            </Button>
-            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={onDelete} title="Delete">
-              <Trash2 className="w-3 h-3" strokeWidth={1.5} />
-            </Button>
-          </div>
+          {(onEdit || onDelete) && (
+            <div className="flex items-center gap-1 opacity-0 group-hover/item:opacity-100 transition-opacity">
+              {onEdit && (
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onEdit} title="Edit">
+                  <Pencil className="w-3 h-3" strokeWidth={1.5} />
+                </Button>
+              )}
+              {onDelete && (
+                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={onDelete} title="Delete">
+                  <Trash2 className="w-3 h-3" strokeWidth={1.5} />
+                </Button>
+              )}
+            </div>
+          )}
           {onSyncToTempo && (
             <Button
               variant="ghost"
