@@ -179,4 +179,20 @@ export type {
   AddManualProjectRequest,
   ClaudeSessionPathResponse,
   AntigravitySessionPathResponse,
+  // Project descriptions & summaries
+  ProjectDescription,
+  UpdateProjectDescriptionRequest,
+  ProjectAISummary,
+  GenerateSummaryRequest,
+  SummaryFreshness,
+  // Timeline types
+  TimeUnit,
+  TimelineGroup,
+  TimelineSessionDetail,
+  TimelineCommitDetail,
+  ProjectTimelineResponse,
+  ProjectTimelineRequest,
+  // Git diff types
+  CommitFileChange,
+  CommitDiff,
 } from './projects'

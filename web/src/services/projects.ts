@@ -11,6 +11,8 @@ import type {
   AddManualProjectRequest,
   ClaudeSessionPathResponse,
   AntigravitySessionPathResponse,
+  ProjectDescription,
+  UpdateProjectDescriptionRequest,
 } from '@/types'
 
 /**
@@ -89,4 +91,25 @@ export async function addManualProject(request: AddManualProjectRequest): Promis
  */
 export async function removeManualProject(projectName: string): Promise<string> {
   return invokeAuth<string>('remove_manual_project', { projectName })
+}
+
+/**
+ * Get project description (goal, tech stack, etc.)
+ */
+export async function getProjectDescription(projectName: string): Promise<ProjectDescription | null> {
+  return invokeAuth<ProjectDescription | null>('get_project_description', { projectName })
+}
+
+/**
+ * Update or create project description
+ */
+export async function updateProjectDescription(request: UpdateProjectDescriptionRequest): Promise<string> {
+  return invokeAuth<string>('update_project_description', { request })
+}
+
+/**
+ * Delete project description
+ */
+export async function deleteProjectDescription(projectName: string): Promise<string> {
+  return invokeAuth<string>('delete_project_description', { projectName })
 }

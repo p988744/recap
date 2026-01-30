@@ -94,8 +94,8 @@ export interface UpdateProjectDescriptionRequest {
   notes?: string | null
 }
 
-// Project summary from cache
-export interface ProjectSummary {
+// Project AI summary from cache (renamed to avoid conflict with integrations/ProjectSummary)
+export interface ProjectAISummary {
   period_type: 'week' | 'month'
   period_start: string
   period_end: string
