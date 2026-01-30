@@ -3,7 +3,7 @@ import { Plus, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/lib/auth'
 import { useThisWeek } from './hooks'
-import { WeekHeader, WeekOverview, DayCard } from './components'
+import { WeekHeader, WeekOverview, TodayWorkSection, WeekTimelineSection } from './components'
 import {
   CreateModal,
   EditModal,
@@ -155,42 +155,27 @@ export function ThisWeekPage() {
         endDate={tw.endDate}
       />
 
-      {/* Day Cards */}
-      <section className="space-y-4 animate-fade-up opacity-0 delay-3">
-        <h2 className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-          每日工作
-        </h2>
-        {tw.days.length === 0 ? (
-          <div className="py-16 text-center">
-            <p className="text-sm text-muted-foreground mb-4">本週尚無工作紀錄</p>
-            <Button variant="outline" onClick={() => tw.openCreateModal()}>
-              <Plus className="w-4 h-4 mr-2" strokeWidth={1.5} />
-              新增手動工作項目
-            </Button>
-          </div>
-        ) : (
-          tw.days.map((day) => (
-            <DayCard
-              key={day.date}
-              day={day}
-              isToday={day.date === tw.today}
-              isExpanded={tw.isDayExpanded(day.date)}
-              onToggle={() => tw.toggleDay(day.date)}
-              expandedProject={tw.expandedProject}
-              hourlyData={tw.hourlyData}
-              hourlyLoading={tw.hourlyLoading}
-              onToggleHourly={tw.toggleHourlyBreakdown}
-              onAddManualItem={tw.openCreateModal}
-              onEditManualItem={tw.openEditManualItem}
-              onDeleteManualItem={tw.confirmDeleteManualItem}
-              getSyncRecord={tw.jiraConfigured ? ts.getSyncRecord : undefined}
-              onSyncProject={tw.jiraConfigured ? ts.openSyncModal : undefined}
-              getMappedIssueKey={tw.jiraConfigured ? ts.getMappedIssueKey : undefined}
-              onIssueKeyChange={tw.jiraConfigured ? ts.updateIssueKey : undefined}
-            />
-          ))
-        )}
-      </section>
+      {/* Today's Work - detailed view */}
+      <TodayWorkSection
+        day={tw.days.find(d => d.date === tw.today) ?? null}
+        expandedProject={tw.expandedProject}
+        hourlyData={tw.hourlyData}
+        hourlyLoading={tw.hourlyLoading}
+        onToggleHourly={tw.toggleHourlyBreakdown}
+        onAddManualItem={tw.openCreateModal}
+        onEditManualItem={tw.openEditManualItem}
+        onDeleteManualItem={tw.confirmDeleteManualItem}
+        getSyncRecord={tw.jiraConfigured ? ts.getSyncRecord : undefined}
+        onSyncProject={tw.jiraConfigured ? ts.openSyncModal : undefined}
+        getMappedIssueKey={tw.jiraConfigured ? ts.getMappedIssueKey : undefined}
+        onIssueKeyChange={tw.jiraConfigured ? ts.updateIssueKey : undefined}
+      />
+
+      {/* Week Timeline - summary cards that navigate to day details */}
+      <WeekTimelineSection
+        days={tw.days}
+        today={tw.today}
+      />
 
       {/* CRUD Modals */}
       <CreateModal

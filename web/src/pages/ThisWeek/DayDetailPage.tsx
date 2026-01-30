@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth'
 import { useDayDetail } from './hooks/useDayDetail'
 import { ProjectCard } from '@/pages/Worklog/components/ProjectCard'
 import { ManualItemCard } from '@/pages/Worklog/components/ManualItemCard'
+import { DayGanttChart } from './components'
 
 // Get weekday label in Chinese based on actual day of week (0=Sunday, 1=Monday, ...)
 function getWeekdayLabel(dayOfWeek: number): string {
@@ -104,6 +105,15 @@ export function DayDetailPage() {
         </Card>
       ) : (
         <div className="space-y-6">
+          {/* Gantt Chart - hourly timeline */}
+          {hasProjects && (
+            <Card>
+              <CardContent className="py-4">
+                <DayGanttChart date={date} projects={day.projects} />
+              </CardContent>
+            </Card>
+          )}
+
           {/* Projects */}
           {hasProjects && (
             <section className="space-y-3">
