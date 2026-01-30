@@ -69,7 +69,7 @@ export function TodayWorkSection({
                 </span>
                 <span className="flex items-center gap-1.5">
                   <FolderKanban className="w-3.5 h-3.5" strokeWidth={1.5} />
-                  {projectCount} 項目
+                  {projectCount} 個專案
                 </span>
               </div>
             )}
