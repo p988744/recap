@@ -28,32 +28,28 @@ export function WeekHeader({
   const year = startDate.slice(0, 4)
 
   return (
-    <header className="animate-fade-up opacity-0 delay-1">
-      <div className="flex items-start justify-between mb-4">
-        <div>
-          <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground mb-2">
-            {year} {formatDisplayDate(startDate)} - {formatDisplayDate(endDate)}
-          </p>
-          <h1 className="font-display text-4xl text-foreground tracking-tight">
-            第 {weekNumber} 週
-          </h1>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="flex items-center">
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onPrev}>
-              <ChevronLeft className="w-4 h-4" strokeWidth={1.5} />
-            </Button>
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onNext}>
-              <ChevronRight className="w-4 h-4" strokeWidth={1.5} />
-            </Button>
-          </div>
-          {!isCurrentWeek && (
-            <Button variant="outline" size="sm" className="text-xs h-8" onClick={onToday}>
-              本週
-            </Button>
-          )}
-        </div>
+    <header className="flex items-center gap-4">
+      <div className="flex items-center gap-1">
+        <p className="text-xs text-muted-foreground">
+          {year} {formatDisplayDate(startDate)} - {formatDisplayDate(endDate)}
+        </p>
       </div>
+      <h1 className="font-display text-2xl text-foreground tracking-tight">
+        第 {weekNumber} 週
+      </h1>
+      <div className="flex items-center gap-1">
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onPrev}>
+          <ChevronLeft className="w-4 h-4" strokeWidth={1.5} />
+        </Button>
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onNext}>
+          <ChevronRight className="w-4 h-4" strokeWidth={1.5} />
+        </Button>
+      </div>
+      {!isCurrentWeek && (
+        <Button variant="outline" size="sm" className="text-xs h-7 px-2" onClick={onToday}>
+          本週
+        </Button>
+      )}
     </header>
   )
 }

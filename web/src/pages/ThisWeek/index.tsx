@@ -102,16 +102,18 @@ export function ThisWeekPage() {
   // Loading state
   if (tw.loading) {
     return (
-      <div className="space-y-12">
-        <WeekHeader
-          weekNumber={tw.weekNumber}
-          startDate={tw.startDate}
-          endDate={tw.endDate}
-          isCurrentWeek={tw.isCurrentWeek}
-          onPrev={tw.goToPreviousWeek}
-          onNext={tw.goToNextWeek}
-          onToday={tw.goToThisWeek}
-        />
+      <div className="space-y-10">
+        <div className="sticky top-0 z-10 -mx-12 px-12 py-4 bg-background/95 backdrop-blur-sm">
+          <WeekHeader
+            weekNumber={tw.weekNumber}
+            startDate={tw.startDate}
+            endDate={tw.endDate}
+            isCurrentWeek={tw.isCurrentWeek}
+            onPrev={tw.goToPreviousWeek}
+            onNext={tw.goToNextWeek}
+            onToday={tw.goToThisWeek}
+          />
+        </div>
         <div className="flex items-center justify-center h-48">
           <div className="w-6 h-6 border border-border border-t-foreground/60 rounded-full animate-spin" />
         </div>
@@ -121,28 +123,28 @@ export function ThisWeekPage() {
 
   return (
     <div className="space-y-10">
-      {/* Header with actions */}
-      <div className="flex items-start justify-between">
-        <WeekHeader
-          weekNumber={tw.weekNumber}
-          startDate={tw.startDate}
-          endDate={tw.endDate}
-          isCurrentWeek={tw.isCurrentWeek}
-          onPrev={tw.goToPreviousWeek}
-          onNext={tw.goToNextWeek}
-          onToday={tw.goToThisWeek}
-        />
-        <div className="flex items-center gap-2 pt-6">
-          {tw.jiraConfigured && (
-            <Button variant="outline" onClick={ts.openWeekSyncModal}>
-              <Upload className="w-4 h-4 mr-2" strokeWidth={1.5} />
-              Export Week
+      {/* Sticky Header with actions */}
+      <div className="sticky top-0 z-10 -mx-12 px-12 py-4 bg-background/95 backdrop-blur-sm border-b border-transparent [&:not(:first-child)]:border-border">
+        <div className="flex items-center justify-between">
+          <WeekHeader
+            weekNumber={tw.weekNumber}
+            startDate={tw.startDate}
+            endDate={tw.endDate}
+            isCurrentWeek={tw.isCurrentWeek}
+            onPrev={tw.goToPreviousWeek}
+            onNext={tw.goToNextWeek}
+            onToday={tw.goToThisWeek}
+          />
+          <div className="flex items-center gap-1.5">
+            {tw.jiraConfigured && (
+              <Button variant="ghost" size="icon" onClick={ts.openWeekSyncModal} title="Export Week">
+                <Upload className="w-4 h-4" strokeWidth={1.5} />
+              </Button>
+            )}
+            <Button variant="ghost" size="icon" onClick={() => tw.openCreateModal()} title="新增項目">
+              <Plus className="w-4 h-4" strokeWidth={1.5} />
             </Button>
-          )}
-          <Button onClick={() => tw.openCreateModal()}>
-            <Plus className="w-4 h-4 mr-2" strokeWidth={1.5} />
-            新增項目
-          </Button>
+          </div>
         </div>
       </div>
 
