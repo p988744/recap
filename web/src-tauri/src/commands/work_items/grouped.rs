@@ -23,7 +23,7 @@ fn extract_project(title: &str, description: &Option<String>) -> String {
     }
     if let Some(desc) = description {
         if let Some(line) = desc.lines().find(|l| l.starts_with("Project:")) {
-            if let Some(name) = line.split('/').last() {
+            if let Some(name) = line.rsplit(|c| c == '/' || c == '\\').next() {
                 return name.to_string();
             }
         }

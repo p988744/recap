@@ -1,4 +1,4 @@
-import { TrendingUp, CalendarDays, CheckCircle2, RefreshCw } from 'lucide-react'
+import { TrendingUp, CalendarDays } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { ContributionHeatmap } from '@/components/ContributionHeatmap'
 import { WorkGanttChart } from '@/components/WorkGanttChart'
@@ -10,7 +10,6 @@ import {
   WorkItemsStatus,
   ProjectDistribution,
   RecentActivities,
-  QuickActions,
 } from './components'
 
 export function Dashboard() {
@@ -37,34 +36,6 @@ export function Dashboard() {
             <h1 className="font-display text-4xl text-foreground tracking-tight">
               {getGreeting()}
             </h1>
-          </div>
-          {/* Sync Status Indicator */}
-          <div className="flex items-center gap-3">
-            {dashboardState.autoSyncState === 'syncing' ? (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <RefreshCw className="w-3 h-3 animate-spin" strokeWidth={1.5} />
-                <span>同步中...</span>
-              </div>
-            ) : (
-              <>
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <CheckCircle2 className="w-3 h-3 text-sage" strokeWidth={1.5} />
-                  <span>
-                    {dashboardState.lastSyncTime
-                      ? `上次同步: ${dashboardState.lastSyncTime.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}`
-                      : '已同步'}
-                  </span>
-                </div>
-                <button
-                  onClick={dashboardState.handleManualSync}
-                  className="flex items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors rounded"
-                  title="手動同步"
-                >
-                  <RefreshCw className="w-3 h-3" strokeWidth={1.5} />
-                  <span>同步</span>
-                </button>
-              </>
-            )}
           </div>
         </div>
       </header>
@@ -128,23 +99,6 @@ export function Dashboard() {
         <ProjectDistribution chartData={dashboardState.chartData} />
         <RecentActivities activities={dashboardState.recentActivities} />
       </section>
-
-      {/* Quick Actions */}
-      <QuickActions
-        syncStatus={dashboardState.syncStatus}
-        syncMessage={dashboardState.syncMessage}
-        onSyncToTempo={dashboardState.handleSyncToTempo}
-      />
-
-      {/* Notifications */}
-      {dashboardState.claudeSyncInfo && (
-        <div className="fixed top-4 right-4 p-3 bg-sage/10 border border-sage/30 text-sage text-sm rounded-lg animate-fade-up shadow-sm z-50">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4" strokeWidth={1.5} />
-            {dashboardState.claudeSyncInfo}
-          </div>
-        </div>
-      )}
 
       {dashboardState.error && (
         <div className="p-4 border-l-2 border-l-destructive bg-destructive/5 text-destructive text-sm">

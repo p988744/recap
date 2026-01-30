@@ -30,9 +30,10 @@ export interface ProjectGroup {
 interface ProjectSummaryCardProps {
   project: ProjectGroup
   onItemClick?: (item: WorkLogItem) => void
+  headerAction?: React.ReactNode
 }
 
-export function ProjectSummaryCard({ project, onItemClick }: ProjectSummaryCardProps) {
+export function ProjectSummaryCard({ project, onItemClick, headerAction }: ProjectSummaryCardProps) {
   const [expanded, setExpanded] = useState(false)
 
   const mappedCount = project.issues.filter(i => i.jira_key).length
@@ -69,6 +70,7 @@ export function ProjectSummaryCard({ project, onItemClick }: ProjectSummaryCardP
               <Badge variant="secondary" className="text-xs">
                 {mappedCount}/{totalIssues} 已對應
               </Badge>
+              {headerAction}
             </div>
           </div>
         </CardContent>

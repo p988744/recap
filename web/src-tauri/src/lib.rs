@@ -3,15 +3,16 @@
 //! A Tauri application for work item management.
 
 mod commands;
+mod services;
 
 // Re-export from recap-core for backwards compatibility
 pub use recap_core::models;
-pub use recap_core::services;
+pub use recap_core::services as core_services;
 
 use tauri::{
     menu::{Menu, MenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, RunEvent, WindowEvent,
+    tray::{MouseButton, MouseButtonState, TrayIconEvent},
+    Emitter, Manager, RunEvent, WindowEvent,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -66,6 +67,7 @@ pub fn run() {
             commands::reports::queries::get_summary_report,
             commands::reports::queries::get_category_report,
             commands::reports::queries::get_source_report,
+            commands::reports::queries::analyze_work_items,
             // Reports - export
             commands::reports::export::export_excel_report,
             commands::reports::export::generate_tempo_report,
@@ -88,11 +90,54 @@ pub fn run() {
             commands::tempo::test_tempo_connection,
             commands::tempo::validate_jira_issue,
             commands::tempo::sync_worklogs_to_tempo,
-            commands::tempo::upload_single_worklog,
             commands::tempo::get_tempo_worklogs,
+            commands::tempo::search_jira_issues,
+            commands::tempo::batch_get_jira_issues,
+            commands::tempo::summarize_tempo_description,
             // Users
             commands::users::get_profile,
             commands::users::update_profile,
+            // Tray
+            commands::tray::update_tray_sync_status,
+            commands::tray::set_tray_syncing,
+            // Background Sync
+            commands::background_sync::get_background_sync_config,
+            commands::background_sync::update_background_sync_config,
+            commands::background_sync::get_background_sync_status,
+            commands::background_sync::start_background_sync,
+            commands::background_sync::stop_background_sync,
+            commands::background_sync::trigger_background_sync,
+            // Notifications
+            commands::notification::send_sync_notification,
+            commands::notification::send_auth_notification,
+            commands::notification::send_source_error_notification,
+            // Snapshots & Compaction
+            commands::snapshots::get_work_summaries,
+            commands::snapshots::get_snapshot_detail,
+            commands::snapshots::trigger_compaction,
+            // Worklog
+            commands::snapshots::get_worklog_overview,
+            commands::snapshots::get_hourly_breakdown,
+            // Worklog Sync
+            commands::worklog_sync::get_project_issue_mappings,
+            commands::worklog_sync::save_project_issue_mapping,
+            commands::worklog_sync::get_worklog_sync_records,
+            commands::worklog_sync::save_worklog_sync_record,
+            // LLM Usage
+            commands::llm_usage::get_llm_usage_stats,
+            commands::llm_usage::get_llm_usage_daily,
+            commands::llm_usage::get_llm_usage_by_model,
+            commands::llm_usage::get_llm_usage_logs,
+            // Projects
+            commands::projects::queries::list_projects,
+            commands::projects::queries::get_project_detail,
+            commands::projects::queries::set_project_visibility,
+            commands::projects::queries::get_hidden_projects,
+            commands::projects::queries::get_project_directories,
+            commands::projects::queries::get_claude_session_path,
+            commands::projects::queries::update_claude_session_path,
+            commands::projects::queries::add_manual_project,
+            commands::projects::queries::remove_manual_project,
         ])
         .setup(|app| {
             // Setup logging
@@ -118,42 +163,50 @@ pub fn run() {
             });
 
             // Create tray menu
-            let show_item = MenuItem::with_id(app, "show", "Show Recap", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            let show_item = MenuItem::with_id(app, "show", "開啟 Recap", true, None::<&str>)?;
+            let sync_item = MenuItem::with_id(app, "sync_now", "立即同步", true, None::<&str>)?;
+            let separator = MenuItem::with_id(app, "sep1", "─────────────", false, None::<&str>)?;
+            let status_item = MenuItem::with_id(app, "status", "上次同步: -", false, None::<&str>)?;
+            let separator2 = MenuItem::with_id(app, "sep2", "─────────────", false, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "結束 Recap", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_item, &sync_item, &separator, &status_item, &separator2, &quit_item])?;
 
-            // Create tray icon
-            let _tray = TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
-                .menu(&menu)
-                .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
+            // Get the tray icon created by tauri.conf.json and attach menu + events
+            let tray = app.tray_by_id("main-tray").expect("tray icon not found");
+            tray.set_menu(Some(menu))?;
+            tray.set_show_menu_on_left_click(false)?;
+            tray.on_menu_event(|app, event| match event.id.as_ref() {
+                "show" => {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
                     }
-                    "quit" => {
-                        app.exit(0);
+                }
+                "sync_now" => {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.emit("tray-sync-now", ());
                     }
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
+                    log::info!("Tray: Sync now triggered");
+                }
+                "quit" => {
+                    app.exit(0);
+                }
+                _ => {}
+            });
+            tray.on_tray_icon_event(|tray, event| {
+                if let TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } = event
+                {
+                    let app = tray.app_handle();
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
                     }
-                })
-                .build(app)?;
+                }
+            });
 
             Ok(())
         })

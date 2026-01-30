@@ -35,6 +35,11 @@ pub async fn list_work_items(
     // Always filter by user_id
     builder.add_string_condition("user_id", "=", &claims.sub);
 
+    // Exclude hidden projects globally
+    builder.add_raw_condition(
+        "NOT EXISTS (SELECT 1 FROM project_preferences pp WHERE pp.user_id = work_items.user_id AND pp.hidden = 1 AND work_items.title LIKE '[' || pp.project_name || ']%')"
+    );
+
     if let Some(parent_id) = &filters.parent_id {
         builder.add_string_condition("parent_id", "=", parent_id);
     } else if !filters.show_all.unwrap_or(false) {
@@ -125,6 +130,11 @@ pub async fn get_stats_summary(
     if let Some(end) = &query.end_date {
         builder.add_string_condition("date", "<=", end);
     }
+
+    // Exclude hidden projects
+    builder.add_raw_condition(
+        "NOT EXISTS (SELECT 1 FROM project_preferences pp WHERE pp.user_id = work_items.user_id AND pp.hidden = 1 AND work_items.title LIKE '[' || pp.project_name || ']%')"
+    );
 
     let work_items: Vec<WorkItem> = builder
         .fetch_all(&db.pool, "SELECT * FROM work_items", "", None, None)
@@ -223,9 +233,16 @@ pub async fn get_timeline_data(
     let db = state.db.lock().await;
 
     // Query work_items for the given date with start_time (session timing)
+    // Exclude hidden projects
     let items: Vec<crate::models::WorkItem> = sqlx::query_as(
         r#"SELECT * FROM work_items
            WHERE user_id = ? AND date = ? AND source = 'claude_code'
+           AND NOT EXISTS (
+               SELECT 1 FROM project_preferences pp
+               WHERE pp.user_id = work_items.user_id
+               AND pp.hidden = 1
+               AND work_items.title LIKE '[' || pp.project_name || ']%'
+           )
            ORDER BY start_time ASC"#
     )
     .bind(&claims.sub)
@@ -248,7 +265,8 @@ pub async fn get_timeline_data(
         } else {
             item.project_path
                 .as_ref()
-                .and_then(|p| p.split('/').last())
+                .and_then(|p| std::path::Path::new(p).file_name())
+                .and_then(|n| n.to_str())
                 .unwrap_or("unknown")
                 .to_string()
         };
@@ -272,7 +290,7 @@ pub async fn get_timeline_data(
 
         // Get commits for this session's time range
         let project_path = item.project_path.clone().unwrap_or_default();
-        let commits = crate::services::get_commits_in_time_range(&project_path, &start_time, &end_time);
+        let commits = crate::core_services::get_commits_in_time_range(&project_path, &start_time, &end_time);
 
         sessions.push(TimelineSession {
             id: item.session_id.unwrap_or_else(|| item.id.clone()),

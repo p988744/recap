@@ -17,23 +17,28 @@ vi.mock('@/services', () => ({
 
 describe('useGitLabForm', () => {
   const mockConfig = {
-    id: 'config-1',
-    user_id: 'user-1',
     daily_work_hours: 8,
     normalize_hours: true,
+    timezone: null,
+    week_start_day: 1,
     jira_url: null,
     jira_configured: false,
+    tempo_configured: false,
     gitlab_url: 'https://gitlab.company.com',
     gitlab_configured: true,
-    llm_provider: null,
-    llm_model: null,
+    llm_provider: '',
+    llm_model: '',
     llm_base_url: null,
+    llm_configured: false,
     auth_type: 'pat',
+    use_git_mode: false,
+    git_repos: [] as string[],
+    outlook_enabled: false,
   }
 
   const mockProjects = [
-    { id: 'proj-1', gitlab_project_id: 123, name: 'Project A', path_with_namespace: 'team/project-a' },
-    { id: 'proj-2', gitlab_project_id: 456, name: 'Project B', path_with_namespace: 'team/project-b' },
+    { id: 'proj-1', user_id: 'user-1', gitlab_project_id: 123, name: 'Project A', path_with_namespace: 'team/project-a', gitlab_url: 'https://gitlab.company.com', default_branch: 'main', enabled: true, created_at: '2024-01-01T00:00:00Z' },
+    { id: 'proj-2', user_id: 'user-1', gitlab_project_id: 456, name: 'Project B', path_with_namespace: 'team/project-b', gitlab_url: 'https://gitlab.company.com', default_branch: 'main', enabled: true, created_at: '2024-01-01T00:00:00Z' },
   ]
 
   const mockSearchResults = [
@@ -237,7 +242,7 @@ describe('useGitLabForm', () => {
   })
 
   it('should add project successfully', async () => {
-    vi.mocked(gitlab.addProject).mockResolvedValue({ id: 'new-proj', gitlab_project_id: 789 })
+    vi.mocked(gitlab.addProject).mockResolvedValue({ id: 'new-proj', user_id: 'user-1', gitlab_project_id: 789, name: 'Project C', path_with_namespace: 'team/project-c', gitlab_url: 'https://gitlab.company.com', default_branch: 'main', enabled: true, created_at: '2024-01-01T00:00:00Z' })
     vi.mocked(gitlab.listProjects).mockResolvedValue(mockProjects)
     const setMessage = vi.fn()
     const { result } = renderHook(() => useGitLabForm(mockConfig))
@@ -300,7 +305,7 @@ describe('useGitLabForm', () => {
   })
 
   it('should sync projects successfully', async () => {
-    vi.mocked(gitlab.sync).mockResolvedValue({ work_items_created: 5 })
+    vi.mocked(gitlab.sync).mockResolvedValue({ synced_commits: 10, synced_merge_requests: 2, work_items_created: 5 })
     vi.mocked(gitlab.listProjects).mockResolvedValue(mockProjects)
     const setMessage = vi.fn()
     const { result } = renderHook(() => useGitLabForm(mockConfig))

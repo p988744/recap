@@ -12,14 +12,3 @@ pub mod config;
 pub mod projects;
 pub mod sync;
 pub mod types;
-
-// Re-export commands for registration
-pub use config::{configure_gitlab, get_gitlab_status, remove_gitlab_config};
-pub use projects::{add_gitlab_project, list_gitlab_projects, remove_gitlab_project, search_gitlab_projects};
-pub use sync::sync_gitlab;
-
-// Re-export types for external use
-pub use types::{
-    AddProjectRequest, ConfigureGitLabRequest, GitLabConfigStatus, GitLabProjectInfo,
-    SearchProjectsRequest, SyncGitLabRequest, SyncGitLabResponse,
-};

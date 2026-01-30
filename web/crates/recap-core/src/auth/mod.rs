@@ -6,32 +6,69 @@ use std::sync::OnceLock;
 
 use crate::models::{Claims, User};
 
-/// JWT secret key - reads from environment variable or generates a secure random key
-/// In production, set RECAP_JWT_SECRET environment variable
+/// Get the path to the persisted JWT secret file in the app data directory
+fn get_secret_file_path() -> Option<std::path::PathBuf> {
+    directories::ProjectDirs::from("com", "recap", "Recap")
+        .map(|dirs| dirs.data_dir().join(".jwt_secret"))
+}
+
+/// JWT secret key - reads from environment variable, persisted file, or auto-generates
 fn get_jwt_secret() -> &'static [u8] {
     static JWT_SECRET: OnceLock<Vec<u8>> = OnceLock::new();
 
     JWT_SECRET.get_or_init(|| {
+        // 1. Check environment variable first
         match std::env::var("RECAP_JWT_SECRET") {
             Ok(secret) if secret.len() >= 32 => {
-                // Use environment variable if it's set and long enough
-                secret.into_bytes()
+                return secret.into_bytes();
             }
             Ok(secret) if !secret.is_empty() => {
-                // Warn if secret is too short but still use it
                 eprintln!("WARNING: RECAP_JWT_SECRET is shorter than 32 characters. Consider using a longer secret.");
-                secret.into_bytes()
+                return secret.into_bytes();
             }
-            _ => {
-                // Generate a secure random secret for this session
-                // Note: This means tokens won't persist across app restarts
-                eprintln!("WARNING: RECAP_JWT_SECRET not set. Generating random secret. Tokens won't persist across restarts.");
-                use rand::Rng;
-                let mut rng = rand::thread_rng();
-                let secret: Vec<u8> = (0..64).map(|_| rng.gen::<u8>()).collect();
-                secret
+            _ => {}
+        }
+
+        // 2. Try to read from persisted file
+        if let Some(path) = get_secret_file_path() {
+            if let Ok(secret) = std::fs::read_to_string(&path) {
+                let secret = secret.trim().to_string();
+                if secret.len() >= 32 {
+                    log::info!("Loaded JWT secret from {}", path.display());
+                    return secret.into_bytes();
+                }
             }
         }
+
+        // 3. Generate and persist a new secret
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        let secret: Vec<u8> = (0..64).map(|_| rng.gen::<u8>()).collect();
+        let hex_secret: String = secret.iter().map(|b| format!("{:02x}", b)).collect();
+
+        if let Some(path) = get_secret_file_path() {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            match std::fs::write(&path, &hex_secret) {
+                Ok(_) => {
+                    // Set restrictive permissions on Unix
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+                    }
+                    log::info!("Generated and saved JWT secret to {}", path.display());
+                }
+                Err(e) => {
+                    eprintln!("WARNING: Failed to save JWT secret to {}: {}. Tokens won't persist across restarts.", path.display(), e);
+                }
+            }
+        } else {
+            eprintln!("WARNING: Could not determine app data directory. Tokens won't persist across restarts.");
+        }
+
+        hex_secret.into_bytes()
     })
 }
 

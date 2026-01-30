@@ -104,12 +104,14 @@ export type {
   GitLabProjectInfo,
   // Tempo
   TempoSuccessResponse,
-  WorklogEntryRequest,
-  WorklogEntryResponse,
   SyncWorklogsRequest,
   SyncWorklogsResponse,
   GetWorklogsRequest,
   ValidateIssueResponse,
+  JiraIssueItem,
+  JiraIssueDetail,
+  SearchIssuesRequest,
+  SearchIssuesResponse,
   // Claude
   ToolUsage,
   ClaudeSession,
@@ -128,3 +130,46 @@ export type {
   ProjectSummary,
   AnalyzeResponse,
 } from './integrations'
+
+// Worklog types
+export type {
+  GitCommitRef,
+  HourlyBreakdownItem,
+  ManualWorkItem,
+  WorklogDayProject,
+  WorklogDay,
+  WorklogOverviewResponse,
+} from './worklog'
+
+// Worklog Sync types
+export type {
+  ProjectIssueMapping,
+  WorklogSyncRecord,
+  SaveMappingRequest,
+  GetSyncRecordsRequest,
+  SaveSyncRecordRequest,
+  TempoSyncTarget,
+  BatchSyncRow,
+} from './worklog-sync'
+
+// LLM Usage types
+export type {
+  LlmUsageStats,
+  DailyUsage,
+  ModelUsage,
+  LlmUsageLog,
+} from './llm-usage'
+
+// Project types
+export type {
+  ProjectInfo,
+  ProjectSourceInfo,
+  ProjectWorkItemSummary,
+  ProjectStats,
+  ProjectDetail,
+  SetProjectVisibilityRequest,
+  ClaudeCodeDirEntry,
+  ProjectDirectories,
+  AddManualProjectRequest,
+  ClaudeSessionPathResponse,
+} from './projects'

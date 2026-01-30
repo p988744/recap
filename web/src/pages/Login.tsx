@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { getVersion } from '@tauri-apps/api/app'
 import { useAuth } from '@/lib/auth'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -12,6 +13,11 @@ export function LoginPage() {
   const { login, register } = useAuth()
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [version, setVersion] = useState('')
+
+  useEffect(() => {
+    getVersion().then(setVersion)
+  }, [])
 
   // Login form
   const [loginUsername, setLoginUsername] = useState('')
@@ -234,7 +240,7 @@ export function LoginPage() {
         </Card>
 
         <p className="text-center text-[10px] text-muted-foreground mt-6">
-          Recap v2.0.0
+          {version ? `Recap v${version}` : 'Recap'}
         </p>
       </div>
     </div>

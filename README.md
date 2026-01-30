@@ -7,27 +7,30 @@
 ## 功能特點
 
 - **多來源自動收集** - 從 Git commits、Claude Code sessions、GitLab 自動追蹤工作
-- **LLM 智能彙整** - 自動將多個工作項目彙整成簡潔的描述
+- **Worklog 每日/每週總覽** - 按日期分組檢視工作紀錄，支援每小時明細展開
+- **LLM 智能彙整** - 自動將工作描述摘要為簡潔的 Tempo worklog 描述
 - **工時正規化** - 自動將每日工時調整為標準工時
-- **Jira Tempo 整合** - 一鍵上傳工時到 Jira Tempo
+- **Jira Tempo 整合** - 單筆、單日、整週匯出工時到 Jira Tempo，含預覽與 Issue 驗證
 - **多種檢視模式** - 時間軸、專案分組、列表檢視
 - **Excel 報表匯出** - 匯出工作報表
+- **跨平台支援** - macOS (Apple Silicon / Intel)、Windows、Linux
 
 ## 安裝
 
 ### Desktop App（推薦）
 
-從 [GitHub Releases](https://github.com/p988744/recap/releases) 下載對應平台的安裝檔：
+從 [Releases](https://github.com/p988744/recap/releases) 下載對應平台的安裝檔：
 
 | 平台 | 檔案 |
 |------|------|
 | macOS (Apple Silicon) | `Recap_x.x.x_aarch64.dmg` |
+| macOS (Intel) | `Recap_x.x.x_x64.dmg` |
 | Windows | `Recap_x.x.x_x64-setup.exe` 或 `.msi` |
 | Linux | `recap_x.x.x_amd64.deb` 或 `.AppImage` |
 
 #### macOS 安裝說明
 
-App 已經過 Apple 簽章和公證，下載後可直接開啟使用。
+下載 DMG 後，將 Recap 拖入 Applications 資料夾。首次開啟若出現安全警告，請右鍵點擊 App → 選擇「打開」。
 
 #### Windows 安裝說明
 
@@ -54,14 +57,19 @@ chmod +x Recap_*.AppImage
 ```bash
 # Clone
 git clone https://github.com/p988744/recap.git
-cd recap
+cd recap/web
 
 # 安裝前端依賴
-cd web && npm install && cd ..
+npm install
 
-# 建置 Desktop App
-cd web && ~/.cargo/bin/cargo tauri build
+# 開發模式
+cargo tauri dev
+
+# 建置 Release（產出 DMG / EXE / AppImage）
+cargo tauri build
 ```
+
+產出檔案位於 `web/target/release/bundle/`
 
 ## 使用方式
 
@@ -69,9 +77,11 @@ cd web && ~/.cargo/bin/cargo tauri build
 
 啟動 App 後，進入 **Settings** 頁面配置：
 
+- **Git Repos** - 選擇要追蹤的本地 Git 倉庫
 - **Claude Code** - 選擇要追蹤的 Claude Code 專案
 - **GitLab** - 設定 GitLab URL 和 Access Token
-- **Tempo** - 設定 Jira URL、PAT 和 Tempo Token
+- **Jira / Tempo** - 設定 Jira URL、PAT 和 Tempo Token
+- **AI (LLM)** - 設定 LLM Provider（用於工作描述摘要）
 
 ### 2. 同步工作紀錄
 
@@ -79,25 +89,35 @@ cd web && ~/.cargo/bin/cargo tauri build
 - 點擊「Sync All」自動同步所有來源
 - 或個別同步 Claude Code / GitLab
 
-### 3. 管理工作項目
+### 3. Worklog（每日工時）
+
+在 **Worklog** 頁面：
+- 按日期檢視每日工作紀錄（Git commits + Claude Code sessions）
+- 展開查看每小時明細
+- 手動新增工作項目
+- 單筆匯出、單日批次匯出、整週匯出到 Tempo
+
+### 4. 匯出到 Tempo
+
+在 Worklog 頁面：
+- **單筆匯出** - 點擊專案卡片上的「Export」按鈕
+- **單日批次匯出** - 點擊日期標題旁的「Export Day」按鈕
+- **整週匯出** - 點擊頁面頂部的「Export Week」按鈕
+- 每次匯出前 LLM 會自動摘要工作描述
+- 支援預覽（Preview）確認後再正式匯出
+
+### 5. 管理工作項目
 
 在 **Work Items** 頁面：
 - **Timeline** - 時間軸檢視，顯示每日工作時段
 - **Grouped** - 按專案和 Jira Issue 分組
 - **List** - 傳統列表檢視
 
-### 4. 匯出報表
+### 6. 匯出報表
 
 在 **Reports** 頁面：
 - 選擇日期範圍
 - 點擊「Export Excel」下載報表
-
-### 5. 同步到 Tempo
-
-在 Work Items 頁面：
-- 選擇要同步的項目
-- 確認 Jira Issue Key 已設定
-- 點擊「Sync to Tempo」
 
 ---
 
@@ -105,25 +125,33 @@ cd web && ~/.cargo/bin/cargo tauri build
 
 ```
 recap/
-└── web/                    # Desktop App
-    ├── src/               # React 前端 (TypeScript)
-    │   ├── components/    # UI 元件
-    │   ├── pages/        # 頁面
-    │   └── lib/          # Tauri API 客戶端
-    └── src-tauri/        # Rust 後端
-        ├── src/
-        │   ├── commands/  # Tauri IPC Commands
-        │   ├── services/ # 業務邏輯
-        │   ├── models/   # 資料模型
-        │   └── db/       # SQLite 資料庫
-        └── Cargo.toml
+├── web/                        # Desktop App
+│   ├── src/                   # React 前端 (TypeScript)
+│   │   ├── components/ui/    # shadcn/ui 基礎元件
+│   │   ├── pages/            # 頁面（每頁拆為 components/ + hooks/）
+│   │   │   ├── Dashboard/
+│   │   │   ├── Worklog/      # 工時總覽（含 Tempo 匯出）
+│   │   │   ├── WorkItems/
+│   │   │   ├── Reports/
+│   │   │   └── Settings/
+│   │   ├── services/          # Tauri API 封裝（按模組拆分）
+│   │   └── types/             # 共用型別定義
+│   ├── src-tauri/             # Rust 後端
+│   │   └── src/
+│   │       ├── commands/      # Tauri IPC Commands（按模組拆分）
+│   │       ├── services/      # 業務邏輯
+│   │       ├── models/        # 資料模型
+│   │       └── db/            # SQLite 資料庫
+│   └── crates/
+│       ├── recap-core/        # 共用核心邏輯
+│       └── recap-cli/         # CLI 工具
 ```
 
 ### 技術棧
 
-- **Frontend**: React + TypeScript + Tailwind CSS + shadcn/ui
-- **Backend**: Rust + Tauri IPC + SQLite
-- **Desktop**: Tauri v2
+- **Frontend**: React 18 + TypeScript + Tailwind CSS + shadcn/ui
+- **Backend**: Rust + Tauri v2 IPC + SQLite (sqlx)
+- **Desktop**: Tauri v2（跨平台：macOS / Windows / Linux）
 - **Build**: Vite + Cargo
 
 ### 架構說明
@@ -139,82 +167,44 @@ Frontend (React)
                       SQLite Database
 ```
 
-### Tauri Commands
-
-| 模組 | Commands |
-|------|----------|
-| **Auth** | `get_app_status`, `register_user`, `login`, `auto_login`, `get_current_user` |
-| **Config** | `get_config`, `update_config`, `update_llm_config`, `update_jira_config` |
-| **Work Items** | `list_work_items`, `create_work_item`, `get_work_item`, `update_work_item`, `delete_work_item`, `get_stats_summary`, `get_grouped_work_items`, `get_timeline_data`, `batch_sync_tempo`, `aggregate_work_items` |
-| **Claude** | `list_claude_sessions`, `import_claude_sessions`, `summarize_claude_session`, `sync_claude_projects` |
-| **Reports** | `get_personal_report`, `get_summary_report`, `get_category_report`, `get_source_report`, `export_excel_report` |
-| **Sync** | `get_sync_status`, `auto_sync`, `list_available_projects` |
-| **GitLab** | `get_gitlab_status`, `configure_gitlab`, `remove_gitlab_config`, `list_gitlab_projects`, `add_gitlab_project`, `remove_gitlab_project`, `sync_gitlab`, `search_gitlab_projects` |
-| **Tempo** | `test_tempo_connection`, `validate_jira_issue`, `sync_worklogs_to_tempo`, `upload_single_worklog`, `get_tempo_worklogs` |
-| **Users** | `get_profile`, `update_profile` |
-
 ---
 
 ## 開發
 
 ### 環境需求
 
-- Node.js 18+
-- Rust 1.70+
-- Cargo + Tauri CLI
+- Node.js 20+
+- Rust 1.77+
+- Tauri CLI (`cargo install tauri-cli`)
 
 ### 開發模式
 
 ```bash
 cd web
-
-# 安裝依賴
 npm install
-
-# 啟動開發伺服器
-~/.cargo/bin/cargo tauri dev
+cargo tauri dev
 ```
 
 ### 建置
 
 ```bash
 cd web
-~/.cargo/bin/cargo tauri build
+cargo tauri build
 ```
 
-產出檔案位於 `web/src-tauri/target/release/bundle/`
+### 測試
 
-### 專案結構
+```bash
+cd web
 
-```
-web/
-├── src/                      # 前端原始碼
-│   ├── components/          # React UI 元件
-│   ├── pages/              # 頁面元件
-│   └── lib/
-│       ├── api.ts          # API 介面（自動偵測 Tauri 環境）
-│       └── tauri-api.ts    # Tauri Commands 封裝
-├── src-tauri/               # Rust 後端
-│   ├── src/
-│   │   ├── lib.rs          # 應用程式進入點
-│   │   ├── commands/       # Tauri Commands
-│   │   │   ├── mod.rs      # AppState 定義
-│   │   │   ├── auth.rs     # 認證
-│   │   │   ├── config.rs   # 設定
-│   │   │   ├── work_items.rs
-│   │   │   ├── claude.rs
-│   │   │   ├── reports.rs
-│   │   │   ├── sync.rs
-│   │   │   ├── gitlab.rs
-│   │   │   ├── tempo.rs
-│   │   │   └── users.rs
-│   │   ├── services/       # 業務邏輯
-│   │   ├── models/         # 資料模型
-│   │   ├── db/            # 資料庫
-│   │   └── auth/          # JWT 認證
-│   └── Cargo.toml
-├── package.json
-└── vite.config.ts
+# 前端測試
+npm test
+
+# Rust 測試
+cargo test --workspace
+
+# TypeScript 型別檢查
+npx tsc --noEmit
 ```
 
 ---

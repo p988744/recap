@@ -138,7 +138,7 @@ pub async fn aggregate_work_items(
             }
         } else if let Some(desc) = &item.description {
             if let Some(line) = desc.lines().find(|l| l.starts_with("Project:")) {
-                line.split('/').last().unwrap_or("其他").to_string()
+                line.rsplit(|c| c == '/' || c == '\\').next().unwrap_or("其他").to_string()
             } else {
                 "其他".to_string()
             }

@@ -60,7 +60,6 @@ export function Reports() {
             <TabsContent value="work">
               <WorkReportTab
                 data={reportsState.data}
-                personalReport={reportsState.personalReport}
                 period={reportsState.period}
                 setPeriod={reportsState.setPeriod}
               />

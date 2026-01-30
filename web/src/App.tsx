@@ -5,15 +5,13 @@ import { Layout } from '@/components/Layout'
 import { LoginPage } from '@/pages/Login'
 import { OnboardingPage } from '@/pages/Onboarding'
 import { Dashboard } from '@/pages/Dashboard'
-import { WorkItemsPage } from '@/pages/WorkItems'
-import { Reports } from '@/pages/Reports'
-import { TeamPage } from '@/pages/Team'
+import { WorklogPage } from '@/pages/Worklog'
 import { SettingsPage } from '@/pages/Settings'
 
 function App() {
   return (
     <AuthProvider>
-      <BrowserRouter>
+      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <Routes>
           {/* Public routes */}
           <Route path="/login" element={<LoginPage />} />
@@ -29,9 +27,7 @@ function App() {
             }
           >
             <Route index element={<Dashboard />} />
-            <Route path="work-items" element={<WorkItemsPage />} />
-            <Route path="reports" element={<Reports />} />
-            <Route path="team" element={<TeamPage />} />
+            <Route path="work-items" element={<WorklogPage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>
         </Routes>
