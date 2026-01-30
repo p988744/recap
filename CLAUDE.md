@@ -193,6 +193,14 @@ cd web && cargo tauri dev
 - **Error Messages**: Return user-friendly error messages from commands
 - **Cross-Platform**: Use `Path` API and `dirs` crate for all path operations — never hardcode `/` as path separator
 
+## Technical Documentation
+
+| 文件 | 說明 |
+|------|------|
+| [`web/docs/DATA_SOURCES.md`](web/docs/DATA_SOURCES.md) | 資料來源架構：Claude Code 和 Antigravity 的資料流程、資料表關係、Session ID 格式歷史、常見問題排查 |
+
+---
+
 ## Team Collaboration & Git Worktree Strategy
 
 ### Team Roles
