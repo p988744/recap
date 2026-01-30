@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
-  LayoutDashboard,
-  Briefcase,
+  CalendarDays,
+  FolderKanban,
+  BarChart3,
   Settings,
   User,
   HelpCircle,
@@ -29,14 +30,16 @@ import {
 } from '@/hooks/useBackgroundTask'
 
 const navItems = [
-  { to: '/', icon: LayoutDashboard, label: '儀表板' },
-  { to: '/work-items', icon: Briefcase, label: '工作日誌' },
+  { to: '/', icon: CalendarDays, label: '本週工作' },
+  { to: '/projects', icon: FolderKanban, label: '專案' },
+  { to: '/review', icon: BarChart3, label: '回顧' },
 ]
 
 export function Layout() {
   const { user, token, isAuthenticated } = useAuth()
   const { showOnboarding, completeOnboarding, openOnboarding } = useOnboarding()
   const [taskPopoverOpen, setTaskPopoverOpen] = useState(false)
+  const navigate = useNavigate()
 
   // App-level background sync: starts service, listens for tray events, runs initial sync
   const syncValue = useAppSync(isAuthenticated, token)
@@ -196,7 +199,10 @@ export function Layout() {
 
             {/* Sync status & help */}
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
+              <button
+                onClick={() => navigate('/settings?section=projects')}
+                className="flex items-center gap-2 hover:text-foreground transition-colors"
+              >
                 {syncValue.dataSyncState === 'syncing' || syncValue.summaryState === 'syncing' || syncValue.backendStatus?.is_syncing ? (
                   <>
                     <RefreshCw className="w-3 h-3 text-muted-foreground animate-spin" strokeWidth={1.5} />
@@ -212,7 +218,7 @@ export function Layout() {
                     </span>
                   </>
                 )}
-              </div>
+              </button>
               <Button
                 variant="ghost"
                 size="icon"
