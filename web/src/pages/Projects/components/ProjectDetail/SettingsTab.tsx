@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { Trash2 } from 'lucide-react'
+import { Settings, AlertTriangle, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -54,15 +54,19 @@ export function SettingsTab({ projectName, detail, onUpdate }: SettingsTabProps)
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-10">
       {/* Project Settings */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">專案設定</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label>顯示名稱</Label>
+      <section>
+        <div className="flex items-center gap-2 mb-4">
+          <Settings className="w-4 h-4 text-muted-foreground" strokeWidth={1.5} />
+          <h2 className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+            專案設定
+          </h2>
+        </div>
+        <Card>
+          <CardContent className="p-6 space-y-4">
+            <div className="space-y-2">
+              <Label>顯示名稱</Label>
             <Input
               value={detail.display_name || detail.project_name}
               disabled
@@ -82,32 +86,34 @@ export function SettingsTab({ projectName, detail, onUpdate }: SettingsTabProps)
             />
           </div>
 
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
-              <Label>可見性</Label>
-              <p className="text-xs text-muted-foreground">
-                在專案列表中顯示此專案
-              </p>
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label>可見性</Label>
+                <p className="text-xs text-muted-foreground">
+                  在專案列表中顯示此專案
+                </p>
+              </div>
+              <Switch
+                checked={isVisible}
+                onCheckedChange={handleVisibilityChange}
+                disabled={isSaving}
+              />
             </div>
-            <Switch
-              checked={isVisible}
-              onCheckedChange={handleVisibilityChange}
-              disabled={isSaving}
-            />
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      </section>
 
       {/* Danger Zone */}
-      <Card className="border-destructive/50">
-        <CardHeader>
-          <CardTitle className="text-base text-destructive">危險區域</CardTitle>
-          <CardDescription>
-            以下操作無法復原，請謹慎操作
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center justify-between">
+      <section>
+        <div className="flex items-center gap-2 mb-4">
+          <AlertTriangle className="w-4 h-4 text-destructive" strokeWidth={1.5} />
+          <h2 className="text-[10px] uppercase tracking-[0.2em] text-destructive">
+            危險區域
+          </h2>
+        </div>
+        <Card className="border-destructive/50">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium">移除專案</p>
               <p className="text-xs text-muted-foreground">
@@ -139,7 +145,8 @@ export function SettingsTab({ projectName, detail, onUpdate }: SettingsTabProps)
             </AlertDialog>
           </div>
         </CardContent>
-      </Card>
+        </Card>
+      </section>
     </div>
   )
 }

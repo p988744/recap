@@ -40,8 +40,8 @@ export function ProjectList({ selectedProject, onSelectProject }: ProjectListPro
       <ScrollArea className="flex-1">
         <div className="p-2 space-y-1">
           {isLoading ? (
-            <div className="p-4 text-center text-sm text-muted-foreground">
-              載入中...
+            <div className="p-4 flex justify-center">
+              <div className="w-5 h-5 border border-border border-t-foreground/60 rounded-full animate-spin" />
             </div>
           ) : filteredProjects.length === 0 ? (
             <div className="p-4 text-center text-sm text-muted-foreground">

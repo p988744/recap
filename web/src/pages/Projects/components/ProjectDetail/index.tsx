@@ -17,7 +17,7 @@ export function ProjectDetail({ projectName }: ProjectDetailProps) {
   if (isLoading) {
     return (
       <Card className="h-full flex items-center justify-center">
-        <span className="text-muted-foreground">載入中...</span>
+        <div className="w-6 h-6 border border-border border-t-foreground/60 rounded-full animate-spin" />
       </Card>
     )
   }
