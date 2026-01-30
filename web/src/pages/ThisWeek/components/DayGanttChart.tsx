@@ -2,8 +2,6 @@ import { useEffect, useState, useMemo } from 'react'
 import { Clock, GitCommit, FileCode } from 'lucide-react'
 import { worklog } from '@/services'
 import type { WorklogDayProject, HourlyBreakdownItem } from '@/types/worklog'
-import { ClaudeIcon } from '@/pages/Settings/components/ProjectsSection/icons/ClaudeIcon'
-import { GeminiIcon } from '@/pages/Settings/components/ProjectsSection/icons/GeminiIcon'
 import {
   Tooltip,
   TooltipContent,
@@ -46,11 +44,6 @@ function parseHour(hourStr: string): number {
 // Format hour to full time string
 function formatHour(hour: number): string {
   return `${String(hour).padStart(2, '0')}:00`
-}
-
-const SOURCE_ICONS: Record<string, React.ReactNode> = {
-  claude_code: <ClaudeIcon className="w-3 h-3" />,
-  antigravity: <GeminiIcon className="w-3 h-3" />,
 }
 
 // Color palette for different projects
@@ -273,45 +266,25 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
                       <Tooltip key={spanIndex}>
                         <TooltipTrigger asChild>
                           <div
-                            className={`absolute top-1/2 -translate-y-1/2 h-7 rounded ${PROJECT_COLORS[rowIndex % PROJECT_COLORS.length]} cursor-pointer hover:opacity-90 transition-opacity flex items-center justify-center gap-1.5 px-2`}
+                            className={`absolute top-1/2 -translate-y-1/2 h-7 rounded ${PROJECT_COLORS[rowIndex % PROJECT_COLORS.length]} cursor-pointer hover:opacity-90 transition-opacity`}
                             style={{
                               left: `calc(${leftPercent}% + 2px)`,
                               width: `calc(${widthPercent}% - 4px)`,
                             }}
-                          >
-                            {/* Source icons */}
-                            <div className="flex items-center gap-0.5 text-white/90">
-                              {Array.from(span.sources).map((source) => (
-                                <span key={source}>{SOURCE_ICONS[source]}</span>
-                              ))}
-                            </div>
-
-                            {/* Time range */}
-                            <span className="text-[10px] text-white/90 font-medium whitespace-nowrap">
-                              {formatHour(span.startHour)}-{formatHour(span.endHour)}
-                            </span>
-
-                            {/* Commit count */}
-                            {span.totalCommits > 0 && (
-                              <span className="flex items-center gap-0.5 text-[10px] text-white/90">
-                                <GitCommit className="w-3 h-3" strokeWidth={1.5} />
-                                {span.totalCommits}
-                              </span>
-                            )}
-                          </div>
+                          />
                         </TooltipTrigger>
-                        <TooltipContent side="top" className="max-w-sm">
+                        <TooltipContent side="top" className="max-w-sm bg-popover border border-border shadow-lg">
                           <div className="space-y-2">
-                            <div className="font-medium text-xs">
+                            <div className="font-medium text-sm text-foreground">
                               {row.projectName}
                             </div>
-                            <div className="text-[10px] text-muted-foreground">
+                            <div className="text-xs text-muted-foreground">
                               {formatHour(span.startHour)} - {formatHour(span.endHour)} ({span.endHour - span.startHour}h)
                             </div>
                             <p className="text-xs text-muted-foreground whitespace-pre-line line-clamp-4">
                               {combinedSummary}
                             </p>
-                            <div className="flex items-center gap-3 text-[10px] text-muted-foreground pt-1 border-t border-border/50">
+                            <div className="flex items-center gap-3 text-[10px] text-muted-foreground pt-1 border-t border-border">
                               {span.totalCommits > 0 && (
                                 <span className="flex items-center gap-1">
                                   <GitCommit className="w-3 h-3" strokeWidth={1.5} />
