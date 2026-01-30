@@ -1,7 +1,8 @@
-import { Folder, Clock, EyeOff } from 'lucide-react'
+import { Folder, Clock, EyeOff, GitBranch } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { Badge } from '@/components/ui/badge'
 import type { ProjectInfo } from '@/types'
+import { ClaudeIcon } from '@/pages/Settings/components/ProjectsSection/icons/ClaudeIcon'
+import { GeminiIcon } from '@/pages/Settings/components/ProjectsSection/icons/GeminiIcon'
 
 interface ProjectCardProps {
   project: ProjectInfo
@@ -9,20 +10,32 @@ interface ProjectCardProps {
   onClick: () => void
 }
 
-const SOURCE_COLORS: Record<string, string> = {
-  claude_code: 'bg-orange-500/10 text-orange-600 border-orange-500/20',
-  antigravity: 'bg-purple-500/10 text-purple-600 border-purple-500/20',
-  git: 'bg-green-500/10 text-green-600 border-green-500/20',
-  gitlab: 'bg-blue-500/10 text-blue-600 border-blue-500/20',
-  manual: 'bg-gray-500/10 text-gray-600 border-gray-500/20',
-}
-
-const SOURCE_LABELS: Record<string, string> = {
-  claude_code: 'Claude',
-  antigravity: 'Gemini',
-  git: 'Git',
-  gitlab: 'GitLab',
-  manual: '手動',
+const SOURCE_CONFIG: Record<string, { icon: React.ReactNode; label: string; className: string }> = {
+  claude_code: {
+    icon: <ClaudeIcon className="w-2.5 h-2.5" />,
+    label: 'Claude',
+    className: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+  },
+  antigravity: {
+    icon: <GeminiIcon className="w-2.5 h-2.5" />,
+    label: 'Gemini',
+    className: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+  },
+  git: {
+    icon: <GitBranch className="w-2.5 h-2.5" />,
+    label: 'Git',
+    className: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
+  },
+  gitlab: {
+    icon: <GitBranch className="w-2.5 h-2.5" />,
+    label: 'GitLab',
+    className: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
+  },
+  manual: {
+    icon: null,
+    label: '手動',
+    className: 'bg-foreground/5 text-muted-foreground/60',
+  },
 }
 
 export function ProjectCard({ project, isSelected, onClick }: ProjectCardProps) {
@@ -58,15 +71,24 @@ export function ProjectCard({ project, isSelected, onClick }: ProjectCardProps) 
           </div>
 
           <div className="flex flex-wrap gap-1 mt-2">
-            {project.sources.map((source) => (
-              <Badge
-                key={source}
-                variant="outline"
-                className={cn('text-[10px] px-1.5 py-0', SOURCE_COLORS[source])}
-              >
-                {SOURCE_LABELS[source] || source}
-              </Badge>
-            ))}
+            {project.sources
+              .filter((source) => source !== 'aggregated')
+              .map((source) => {
+                const config = SOURCE_CONFIG[source]
+                if (!config) return null
+                return (
+                  <span
+                    key={source}
+                    className={cn(
+                      'inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded',
+                      config.className
+                    )}
+                  >
+                    {config.icon}
+                    {config.label}
+                  </span>
+                )
+              })}
           </div>
         </div>
       </div>
