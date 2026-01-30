@@ -5,7 +5,7 @@ import type { WorklogDay } from '@/types/worklog'
 
 interface WeekTimelineSectionProps {
   days: WorklogDay[]
-  today: string
+  today?: string // undefined when viewing past/future weeks
 }
 
 function formatDayDisplay(dateStr: string): string {
@@ -16,10 +16,11 @@ function formatDayDisplay(dateStr: string): string {
 export function WeekTimelineSection({ days, today }: WeekTimelineSectionProps) {
   const navigate = useNavigate()
 
-  // Filter out today (it's shown in TodayWorkSection)
-  const otherDays = days.filter(d => d.date !== today)
+  // Filter out today if viewing current week (it's shown in TodayWorkSection)
+  // Show all days when viewing past/future weeks
+  const displayDays = today ? days.filter(d => d.date !== today) : days
 
-  if (otherDays.length === 0) {
+  if (displayDays.length === 0) {
     return null
   }
 
@@ -28,12 +29,12 @@ export function WeekTimelineSection({ days, today }: WeekTimelineSectionProps) {
       <div className="flex items-center gap-2">
         <Calendar className="w-4 h-4 text-muted-foreground" strokeWidth={1.5} />
         <h2 className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-          本週時間軸
+          {today ? '本週時間軸' : '每日工作'}
         </h2>
       </div>
 
       <div className="space-y-2">
-        {otherDays.map((day) => (
+        {displayDays.map((day) => (
           <DaySummaryCard
             key={day.date}
             day={day}

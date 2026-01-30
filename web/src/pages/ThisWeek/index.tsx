@@ -155,26 +155,28 @@ export function ThisWeekPage() {
         endDate={tw.endDate}
       />
 
-      {/* Today's Work - detailed view */}
-      <TodayWorkSection
-        day={tw.days.find(d => d.date === tw.today) ?? null}
-        expandedProject={tw.expandedProject}
-        hourlyData={tw.hourlyData}
-        hourlyLoading={tw.hourlyLoading}
-        onToggleHourly={tw.toggleHourlyBreakdown}
-        onAddManualItem={tw.openCreateModal}
-        onEditManualItem={tw.openEditManualItem}
-        onDeleteManualItem={tw.confirmDeleteManualItem}
-        getSyncRecord={tw.jiraConfigured ? ts.getSyncRecord : undefined}
-        onSyncProject={tw.jiraConfigured ? ts.openSyncModal : undefined}
-        getMappedIssueKey={tw.jiraConfigured ? ts.getMappedIssueKey : undefined}
-        onIssueKeyChange={tw.jiraConfigured ? ts.updateIssueKey : undefined}
-      />
+      {/* Today's Work - only show when viewing current week */}
+      {tw.isCurrentWeek && (
+        <TodayWorkSection
+          day={tw.days.find(d => d.date === tw.today) ?? null}
+          expandedProject={tw.expandedProject}
+          hourlyData={tw.hourlyData}
+          hourlyLoading={tw.hourlyLoading}
+          onToggleHourly={tw.toggleHourlyBreakdown}
+          onAddManualItem={tw.openCreateModal}
+          onEditManualItem={tw.openEditManualItem}
+          onDeleteManualItem={tw.confirmDeleteManualItem}
+          getSyncRecord={tw.jiraConfigured ? ts.getSyncRecord : undefined}
+          onSyncProject={tw.jiraConfigured ? ts.openSyncModal : undefined}
+          getMappedIssueKey={tw.jiraConfigured ? ts.getMappedIssueKey : undefined}
+          onIssueKeyChange={tw.jiraConfigured ? ts.updateIssueKey : undefined}
+        />
+      )}
 
       {/* Week Timeline - summary cards that navigate to day details */}
       <WeekTimelineSection
         days={tw.days}
-        today={tw.today}
+        today={tw.isCurrentWeek ? tw.today : undefined}
       />
 
       {/* CRUD Modals */}
