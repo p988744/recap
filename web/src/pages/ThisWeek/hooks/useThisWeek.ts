@@ -2,7 +2,6 @@ import { useEffect, useState, useCallback, useMemo } from 'react'
 import { worklog, workItems, config as configService } from '@/services'
 import type { WorklogDay, HourlyBreakdownItem } from '@/types/worklog'
 import type { WorkItem, WorkItemStatsResponse } from '@/types'
-import type { TimelineSession } from '@/components/WorkGanttChart'
 import { useSyncContext } from '@/hooks/useAppSync'
 
 // =============================================================================
@@ -37,11 +36,16 @@ function getWeekRange(weekStartDay: number = 1): { start: string; end: string } 
 }
 
 function formatDate(d: Date): string {
-  return d.toISOString().split('T')[0]
+  // Use local date to avoid timezone issues
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 function shiftWeek(startDate: string, direction: -1 | 1): { start: string; end: string } {
-  const start = new Date(startDate)
+  // Parse as local date to avoid timezone issues
+  const start = new Date(startDate + 'T00:00:00')
   start.setDate(start.getDate() + direction * 7)
   const end = new Date(start)
   end.setDate(start.getDate() + 6)
@@ -85,12 +89,6 @@ export function useThisWeek(isAuthenticated: boolean) {
   const [hourlyData, setHourlyData] = useState<HourlyBreakdownItem[]>([])
   const [hourlyLoading, setHourlyLoading] = useState(false)
 
-  // Gantt chart state
-  const [ganttDate, setGanttDate] = useState(() => new Date().toISOString().split('T')[0])
-  const [ganttSessions, setGanttSessions] = useState<TimelineSession[]>([])
-  const [ganttLoading, setGanttLoading] = useState(false)
-  const [ganttSources, setGanttSources] = useState<string[]>(['claude_code', 'antigravity'])
-
   // CRUD state
   const [selectedItem, setSelectedItem] = useState<WorkItem | null>(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -121,10 +119,12 @@ export function useThisWeek(isAuthenticated: boolean) {
     if (!isAuthenticated) return
     configService.getConfig()
       .then((c) => {
+        console.log('[ThisWeek] Config loaded, week_start_day:', c.week_start_day)
         setJiraConfigured(c.jira_configured)
         if (c.week_start_day !== weekStartDay) {
           setWeekStartDay(c.week_start_day)
           const range = getWeekRange(c.week_start_day)
+          console.log('[ThisWeek] Week range:', range.start, '-', range.end)
           setStartDate(range.start)
           setEndDate(range.end)
         }
@@ -178,42 +178,6 @@ export function useThisWeek(isAuthenticated: boolean) {
     if (!isAuthenticated) return
     fetchData()
   }, [isAuthenticated, fetchData, dataSyncState])
-
-  // ==========================================================================
-  // Gantt timeline fetch effect
-  // ==========================================================================
-
-  useEffect(() => {
-    if (!isAuthenticated) return
-
-    async function fetchTimeline() {
-      setGanttLoading(true)
-      try {
-        const sourcesToPass = ganttSources.length === 2 ? undefined : ganttSources
-        const result = await workItems.getTimeline(ganttDate, sourcesToPass)
-        const sessions: TimelineSession[] = result.sessions.map(s => ({
-          id: s.id,
-          project: s.project,
-          title: s.title,
-          startTime: s.start_time,
-          endTime: s.end_time,
-          hours: s.hours,
-          commits: s.commits.map(c => ({
-            hash: c.hash,
-            message: c.message,
-            time: c.time,
-            author: c.author,
-          })),
-        }))
-        setGanttSessions(sessions)
-      } catch {
-        setGanttSessions([])
-      } finally {
-        setGanttLoading(false)
-      }
-    }
-    fetchTimeline()
-  }, [ganttDate, ganttSources, isAuthenticated, dataSyncState])
 
   // ==========================================================================
   // Date navigation
@@ -420,9 +384,14 @@ export function useThisWeek(isAuthenticated: boolean) {
 
   const weekNumber = useMemo(() => getWeekNumber(startDate), [startDate])
 
+  // Count unique projects from worklog days (same source as timeline heatmap)
   const projectCount = useMemo(() => {
-    return Object.keys(stats?.hours_by_project ?? {}).length
-  }, [stats])
+    const projectPaths = new Set<string>()
+    days.forEach(d => {
+      d.projects.forEach(p => projectPaths.add(p.project_path))
+    })
+    return projectPaths.size
+  }, [days])
 
   const daysWorked = useMemo(() => {
     const dates = new Set(days.filter(d => d.projects.length > 0 || d.manual_items.length > 0).map(d => d.date))
@@ -454,13 +423,8 @@ export function useThisWeek(isAuthenticated: boolean) {
     hourlyData,
     hourlyLoading,
     toggleHourlyBreakdown,
-    // Gantt chart
-    ganttDate,
-    setGanttDate,
-    ganttSessions,
-    ganttLoading,
-    ganttSources,
-    setGanttSources,
+    // Week config
+    weekStartDay,
     // CRUD
     showCreateModal,
     showEditModal,

@@ -139,14 +139,16 @@ export function WeekTimeline({ days, startDate }: WeekTimelineProps) {
     return Array.from(projectMap.values()).sort((a, b) => b.totalHours - a.totalHours)
   }, [days, weekDates])
 
-  // Week stats
+  // Week stats (projects from heatmap + manual items for total hours)
   const weekStats = useMemo(() => {
+    const projectHours = projectsData.reduce((sum, p) => sum + p.totalHours, 0)
+    const manualHours = days.reduce((sum, d) => sum + d.manual_items.reduce((s, m) => s + m.hours, 0), 0)
     return {
-      totalHours: projectsData.reduce((sum, p) => sum + p.totalHours, 0),
+      totalHours: projectHours + manualHours,
       totalCommits: projectsData.reduce((sum, p) => sum + p.totalCommits, 0),
-      totalProjects: projectsData.length,
+      totalProjects: projectsData.length, // Only count projects shown in heatmap
     }
-  }, [projectsData])
+  }, [projectsData, days])
 
   if (projectsData.length === 0) {
     return (

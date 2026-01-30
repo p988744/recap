@@ -3,9 +3,10 @@
 //! Provides commands for querying work summaries, viewing snapshot details,
 //! and triggering compaction manually.
 
-use chrono::{DateTime, Datelike, Local, NaiveDateTime, Timelike};
+use chrono::{DateTime, Datelike, Local, NaiveDate, NaiveDateTime, Timelike};
 use recap_core::auth::verify_token;
 use recap_core::models::{SnapshotRawData, WorkSummary};
+use recap_core::get_commits_for_date;
 use serde::Serialize;
 use tauri::State;
 
@@ -464,6 +465,20 @@ pub async fn get_worklog_overview(
                 existing.has_hourly_data = true;
             } else {
                 // New project (only has Antigravity data)
+                // Look up commit/file counts from snapshot_stats if available (from Claude Code data)
+                let (mut commits, files) = snapshot_stats.iter()
+                    .find(|(pp, d, _, _, _)| pp == project_path && d == date)
+                    .map(|(_, _, c, f, _)| (*c, *f))
+                    .unwrap_or((0, 0));
+
+                // If no commits from snapshots, query git directly
+                if commits == 0 {
+                    if let Ok(naive_date) = NaiveDate::parse_from_str(date, "%Y-%m-%d") {
+                        let git_commits = get_commits_for_date(project_path, &naive_date);
+                        commits = git_commits.len() as i32;
+                    }
+                }
+
                 let project_name = std::path::Path::new(&project_path)
                     .file_name()
                     .and_then(|n| n.to_str())
@@ -473,8 +488,8 @@ pub async fn get_worklog_overview(
                     project_path: project_path.clone(),
                     project_name,
                     daily_summary: Some(summary.clone()),
-                    total_commits: 0,
-                    total_files: 0,
+                    total_commits: commits,
+                    total_files: files,
                     total_hours: *hours,
                     has_hourly_data: true, // Antigravity items will show in breakdown
                 });
@@ -494,6 +509,18 @@ pub async fn get_worklog_overview(
                 hours: item.hours,
                 date: date.clone(),
             });
+        }
+    }
+
+    // Post-process: for any project with 0 commits, query git directly
+    for (date, day) in days_map.iter_mut() {
+        for project in day.projects.iter_mut() {
+            if project.total_commits == 0 {
+                if let Ok(naive_date) = NaiveDate::parse_from_str(date, "%Y-%m-%d") {
+                    let git_commits = get_commits_for_date(&project.project_path, &naive_date);
+                    project.total_commits = git_commits.len() as i32;
+                }
+            }
         }
     }
 
