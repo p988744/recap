@@ -558,4 +558,65 @@ mod tests {
         let commits = get_commits_in_time_range("/nonexistent/path", "2026-01-11T00:00:00+08:00", "2026-01-11T23:59:59+08:00");
         assert!(commits.is_empty(), "Nonexistent path should return no commits");
     }
+
+    #[test]
+    fn test_get_commits_in_time_range_current_repo() {
+        // Test with the current repository (recap)
+        // This test uses today's date range to find commits
+        let repo_path = env!("CARGO_MANIFEST_DIR"); // Points to crates/recap-core
+        // Go up: recap-core -> crates -> web -> recap (where .git is)
+        let git_root = std::path::Path::new(repo_path)
+            .parent() // crates/
+            .and_then(|p| p.parent()) // web/
+            .and_then(|p| p.parent()) // recap/ (git root)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        println!("Testing with repo path: {}", git_root);
+        println!(".git exists: {}", std::path::Path::new(&git_root).join(".git").exists());
+        let parent_path = git_root;
+
+        // Use a known date range that should have commits (2026-01-30)
+        let commits = get_commits_in_time_range(
+            &parent_path,
+            "2026-01-30T00:00:00+08:00",
+            "2026-01-30T23:59:59+08:00",
+        );
+
+        println!("Found {} commits for 2026-01-30", commits.len());
+        for c in &commits {
+            println!("  - {} | {} | {}", &c.hash[..7], c.time, c.message);
+        }
+
+        // We expect commits to exist for today
+        assert!(!commits.is_empty(), "Should find commits in the recap repo for 2026-01-30");
+    }
+
+    #[test]
+    fn test_get_commits_in_time_range_specific_hour() {
+        // Test fetching commits for a specific hour
+        let repo_path = env!("CARGO_MANIFEST_DIR");
+        // Go up: recap-core -> crates -> web -> recap (where .git is)
+        let parent_path = std::path::Path::new(repo_path)
+            .parent() // crates/
+            .and_then(|p| p.parent()) // web/
+            .and_then(|p| p.parent()) // recap/ (git root)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        // Test 09:00-10:00 on 2026-01-30 (should have at least 1 commit)
+        let commits = get_commits_in_time_range(
+            &parent_path,
+            "2026-01-30T09:00:00+08:00",
+            "2026-01-30T10:00:00+08:00",
+        );
+
+        println!("Found {} commits for 09:00-10:00", commits.len());
+        for c in &commits {
+            println!("  - {} | {} | {}", &c.hash[..7], c.time, c.message);
+        }
+
+        // Based on git log, there should be a commit at 09:28:59
+        assert!(!commits.is_empty(), "Should find commit at 09:28:59 in 09:00-10:00 range");
+    }
 }
