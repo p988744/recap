@@ -4,30 +4,27 @@ import { worklog } from '@/services'
 import type { WorklogDayProject, HourlyBreakdownItem } from '@/types/worklog'
 import { ClaudeIcon } from '@/pages/Settings/components/ProjectsSection/icons/ClaudeIcon'
 import { GeminiIcon } from '@/pages/Settings/components/ProjectsSection/icons/GeminiIcon'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 
 interface DayGanttChartProps {
   date: string
   projects: WorklogDayProject[]
 }
 
-interface HourlySlot {
-  hour: string // "09:00"
-  hourEnd: string // "10:00"
-  items: Array<{
-    projectName: string
-    projectPath: string
+interface ProjectHourData {
+  projectPath: string
+  projectName: string
+  hours: Map<number, {
     summary: string
     commits: number
     files: number
     source: string
   }>
-}
-
-// Generate hour labels from 00:00 to 23:00
-function generateHourLabels(): string[] {
-  return Array.from({ length: 24 }, (_, i) =>
-    `${String(i).padStart(2, '0')}:00`
-  )
 }
 
 // Parse hour string to number (e.g., "09:00" -> 9)
@@ -39,6 +36,18 @@ const SOURCE_ICONS: Record<string, React.ReactNode> = {
   claude_code: <ClaudeIcon className="w-3 h-3" />,
   antigravity: <GeminiIcon className="w-3 h-3" />,
 }
+
+// Color palette for different projects
+const PROJECT_COLORS = [
+  'bg-blue-500/70',
+  'bg-emerald-500/70',
+  'bg-violet-500/70',
+  'bg-amber-500/70',
+  'bg-rose-500/70',
+  'bg-cyan-500/70',
+  'bg-indigo-500/70',
+  'bg-orange-500/70',
+]
 
 export function DayGanttChart({ date, projects }: DayGanttChartProps) {
   const [hourlyData, setHourlyData] = useState<Map<string, HourlyBreakdownItem[]>>(new Map())
@@ -77,60 +86,66 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
     fetchAllHourly()
   }, [date, projects])
 
-  // Build timeline slots
-  const timelineSlots = useMemo(() => {
-    const slots: HourlySlot[] = []
-    const hourLabels = generateHourLabels()
-
-    // Create a map of hour -> items
-    const hourMap = new Map<string, HourlySlot['items']>()
+  // Build project hour data for Gantt chart
+  const { projectRows, minHour, maxHour } = useMemo(() => {
+    const rows: ProjectHourData[] = []
+    let min = 24
+    let max = 0
 
     hourlyData.forEach((items, projectPath) => {
       const project = projects.find(p => p.project_path === projectPath)
       if (!project) return
 
+      const hoursMap = new Map<number, {
+        summary: string
+        commits: number
+        files: number
+        source: string
+      }>()
+
       items.forEach(item => {
-        const hourKey = item.hour_start
-        if (!hourMap.has(hourKey)) {
-          hourMap.set(hourKey, [])
-        }
-        hourMap.get(hourKey)!.push({
-          projectName: project.project_name,
-          projectPath: project.project_path,
+        const hour = parseHour(item.hour_start)
+        min = Math.min(min, hour)
+        max = Math.max(max, hour)
+
+        hoursMap.set(hour, {
           summary: item.summary,
           commits: item.git_commits.length,
           files: item.files_modified.length,
           source: item.source,
         })
       })
-    })
 
-    // Only include hours that have data
-    hourLabels.forEach((hour, idx) => {
-      const items = hourMap.get(hour)
-      if (items && items.length > 0) {
-        slots.push({
-          hour,
-          hourEnd: hourLabels[idx + 1] || '24:00',
-          items,
+      if (hoursMap.size > 0) {
+        rows.push({
+          projectPath: project.project_path,
+          projectName: project.project_name,
+          hours: hoursMap,
         })
       }
     })
 
-    return slots
+    // Default to work hours if no data
+    if (min > max) {
+      min = 9
+      max = 18
+    } else {
+      // Add padding
+      min = Math.max(0, min - 1)
+      max = Math.min(23, max + 1)
+    }
+
+    return { projectRows: rows, minHour: min, maxHour: max }
   }, [hourlyData, projects])
 
-  // Find the range of active hours
-  const { minHour, maxHour } = useMemo(() => {
-    if (timelineSlots.length === 0) {
-      return { minHour: 9, maxHour: 18 } // Default work hours
+  // Generate hour columns
+  const hourColumns = useMemo(() => {
+    const cols: number[] = []
+    for (let h = minHour; h <= maxHour; h++) {
+      cols.push(h)
     }
-    const hours = timelineSlots.map(s => parseHour(s.hour))
-    return {
-      minHour: Math.min(...hours),
-      maxHour: Math.max(...hours) + 1,
-    }
-  }, [timelineSlots])
+    return cols
+  }, [minHour, maxHour])
 
   if (loading) {
     return (
@@ -140,7 +155,7 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
     )
   }
 
-  if (timelineSlots.length === 0) {
+  if (projectRows.length === 0) {
     return (
       <div className="py-6 text-center text-sm text-muted-foreground">
         無甘特圖資料
@@ -149,71 +164,109 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
   }
 
   return (
-    <div className="space-y-1">
-      {/* Gantt chart header - hour markers */}
-      <div className="flex items-center gap-1 px-2 py-1 text-[10px] text-muted-foreground">
-        <Clock className="w-3 h-3 mr-1" strokeWidth={1.5} />
-        <span>今日甘特圖</span>
-        <span className="ml-auto">
-          {String(minHour).padStart(2, '0')}:00 - {String(maxHour).padStart(2, '0')}:00
-        </span>
-      </div>
+    <TooltipProvider delayDuration={200}>
+      <div className="space-y-2">
+        {/* Header */}
+        <div className="flex items-center gap-1 px-1 text-[10px] text-muted-foreground">
+          <Clock className="w-3 h-3 mr-1" strokeWidth={1.5} />
+          <span>今日甘特圖</span>
+        </div>
 
-      {/* Timeline slots */}
-      <div className="space-y-1">
-        {timelineSlots.map((slot) => (
-          <div
-            key={slot.hour}
-            className="flex items-stretch gap-3 bg-muted/30 rounded-lg overflow-hidden"
-          >
-            {/* Time label */}
-            <div className="w-16 shrink-0 bg-muted/50 flex items-center justify-center py-2">
-              <span className="text-xs font-mono text-muted-foreground">
-                {slot.hour}
-              </span>
+        {/* Gantt Chart */}
+        <div className="overflow-x-auto">
+          <div className="min-w-fit">
+            {/* Hour header row */}
+            <div className="flex">
+              {/* Project name column */}
+              <div className="w-32 shrink-0" />
+
+              {/* Hour columns */}
+              <div className="flex-1 flex">
+                {hourColumns.map((hour) => (
+                  <div
+                    key={hour}
+                    className="flex-1 min-w-[40px] text-center text-[10px] text-muted-foreground font-mono py-1 border-l border-border/30 first:border-l-0"
+                  >
+                    {String(hour).padStart(2, '0')}
+                  </div>
+                ))}
+              </div>
             </div>
 
-            {/* Items */}
-            <div className="flex-1 py-2 pr-3 space-y-1">
-              {slot.items.map((item, idx) => (
-                <div key={idx} className="flex items-start gap-2">
-                  {/* Source icon */}
-                  <div className="mt-0.5 text-muted-foreground">
-                    {SOURCE_ICONS[item.source] || <div className="w-3 h-3" />}
-                  </div>
-
-                  {/* Content */}
-                  <div className="flex-1 min-w-0">
-                    {/* Project name and stats */}
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <span className="text-xs font-medium text-foreground">
-                        {item.projectName}
-                      </span>
-                      {item.commits > 0 && (
-                        <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground">
-                          <GitCommit className="w-2.5 h-2.5" strokeWidth={1.5} />
-                          {item.commits}
-                        </span>
-                      )}
-                      {item.files > 0 && (
-                        <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground">
-                          <FileCode className="w-2.5 h-2.5" strokeWidth={1.5} />
-                          {item.files}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Summary */}
-                    <p className="text-xs text-muted-foreground line-clamp-2">
-                      {item.summary}
-                    </p>
-                  </div>
+            {/* Project rows */}
+            {projectRows.map((row, rowIndex) => (
+              <div key={row.projectPath} className="flex items-center h-10 border-t border-border/20">
+                {/* Project name */}
+                <div className="w-32 shrink-0 pr-2 flex items-center gap-1.5">
+                  <span className="text-xs text-foreground truncate" title={row.projectName}>
+                    {row.projectName}
+                  </span>
                 </div>
-              ))}
-            </div>
+
+                {/* Hour cells */}
+                <div className="flex-1 flex h-full">
+                  {hourColumns.map((hour) => {
+                    const hourData = row.hours.get(hour)
+                    const hasWork = !!hourData
+
+                    return (
+                      <div
+                        key={hour}
+                        className="flex-1 min-w-[40px] h-full flex items-center justify-center border-l border-border/20 first:border-l-0"
+                      >
+                        {hasWork && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <div
+                                className={`w-[90%] h-6 rounded ${PROJECT_COLORS[rowIndex % PROJECT_COLORS.length]} cursor-pointer hover:opacity-80 transition-opacity flex items-center justify-center gap-1`}
+                              >
+                                {/* Source icon */}
+                                <div className="text-white/90">
+                                  {SOURCE_ICONS[hourData.source] || null}
+                                </div>
+                                {/* Commit indicator */}
+                                {hourData.commits > 0 && (
+                                  <span className="text-[9px] text-white/90 font-medium">
+                                    {hourData.commits}
+                                  </span>
+                                )}
+                              </div>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-xs">
+                              <div className="space-y-1">
+                                <div className="font-medium text-xs">
+                                  {row.projectName} · {String(hour).padStart(2, '0')}:00
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                  {hourData.summary}
+                                </p>
+                                <div className="flex items-center gap-3 text-[10px] text-muted-foreground pt-1">
+                                  {hourData.commits > 0 && (
+                                    <span className="flex items-center gap-1">
+                                      <GitCommit className="w-3 h-3" strokeWidth={1.5} />
+                                      {hourData.commits} commits
+                                    </span>
+                                  )}
+                                  {hourData.files > 0 && (
+                                    <span className="flex items-center gap-1">
+                                      <FileCode className="w-3 h-3" strokeWidth={1.5} />
+                                      {hourData.files} files
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
-        ))}
+        </div>
       </div>
-    </div>
+    </TooltipProvider>
   )
 }
