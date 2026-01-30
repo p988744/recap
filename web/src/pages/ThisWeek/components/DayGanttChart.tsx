@@ -15,10 +15,10 @@ interface DayGanttChartProps {
 }
 
 interface HourData {
-  summary: string
+  summaries: string[]
   commits: number
   files: number
-  source: string
+  sources: Set<string>
 }
 
 interface TimeSpan {
@@ -27,7 +27,7 @@ interface TimeSpan {
   data: HourData[]
   totalCommits: number
   totalFiles: number
-  sources: Set<string>
+  allSources: Set<string>
 }
 
 interface ProjectRowData {
@@ -105,19 +105,28 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
       const project = projects.find(p => p.project_path === projectPath)
       if (!project || items.length === 0) return
 
-      // Build hour -> data map
+      // Build hour -> data map (merge multiple sources for same hour)
       const hoursMap = new Map<number, HourData>()
       items.forEach(item => {
         const hour = parseHour(item.hour_start)
         globalMin = Math.min(globalMin, hour)
         globalMax = Math.max(globalMax, hour)
 
-        hoursMap.set(hour, {
-          summary: item.summary,
-          commits: item.git_commits.length,
-          files: item.files_modified.length,
-          source: item.source,
-        })
+        const existing = hoursMap.get(hour)
+        if (existing) {
+          // Merge with existing data for this hour
+          existing.summaries.push(item.summary)
+          existing.commits += item.git_commits.length
+          existing.files += item.files_modified.length
+          existing.sources.add(item.source)
+        } else {
+          hoursMap.set(hour, {
+            summaries: [item.summary],
+            commits: item.git_commits.length,
+            files: item.files_modified.length,
+            sources: new Set([item.source]),
+          })
+        }
       })
 
       // Merge consecutive hours into spans
@@ -135,7 +144,7 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
           currentSpan.data.push(data)
           currentSpan.totalCommits += data.commits
           currentSpan.totalFiles += data.files
-          currentSpan.sources.add(data.source)
+          data.sources.forEach(s => currentSpan!.allSources.add(s))
         } else {
           // Start new span
           if (currentSpan) spans.push(currentSpan)
@@ -145,7 +154,7 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
             data: [data],
             totalCommits: data.commits,
             totalFiles: data.files,
-            sources: new Set([data.source]),
+            allSources: new Set(data.sources),
           }
         }
       }
@@ -259,8 +268,16 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
                     const leftPercent = (startOffset / totalColumns) * 100
                     const widthPercent = (spanWidth / totalColumns) * 100
 
-                    // Combine summaries for tooltip
-                    const combinedSummary = span.data.map(d => d.summary).join('\n\n')
+                    // Combine summaries for tooltip (flatten all summaries from all hours)
+                    const combinedSummary = span.data
+                      .flatMap(d => d.summaries)
+                      .filter(s => s && s.trim())
+                      .join('\n\n')
+
+                    // Format sources for display
+                    const sourcesDisplay = Array.from(span.allSources)
+                      .map(s => s === 'claude_code' ? 'Claude Code' : s === 'antigravity' ? 'Antigravity' : s)
+                      .join(' + ')
 
                     return (
                       <Tooltip key={spanIndex}>
@@ -275,15 +292,22 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
                         </TooltipTrigger>
                         <TooltipContent side="top" className="max-w-sm bg-popover border border-border shadow-lg">
                           <div className="space-y-2">
-                            <div className="font-medium text-sm text-foreground">
-                              {row.projectName}
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-medium text-sm text-foreground">
+                                {row.projectName}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground/70">
+                                {sourcesDisplay}
+                              </span>
                             </div>
                             <div className="text-xs text-muted-foreground">
                               {formatHour(span.startHour)} - {formatHour(span.endHour)} ({span.endHour - span.startHour}h)
                             </div>
-                            <p className="text-xs text-muted-foreground whitespace-pre-line line-clamp-4">
-                              {combinedSummary}
-                            </p>
+                            {combinedSummary && (
+                              <p className="text-xs text-muted-foreground whitespace-pre-line line-clamp-4">
+                                {combinedSummary}
+                              </p>
+                            )}
                             <div className="flex items-center gap-3 text-[10px] text-muted-foreground pt-1 border-t border-border">
                               {span.totalCommits > 0 && (
                                 <span className="flex items-center gap-1">

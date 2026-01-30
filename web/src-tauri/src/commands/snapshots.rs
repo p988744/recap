@@ -572,8 +572,9 @@ pub async fn get_hourly_breakdown(
         .filter(|s| extract_local_date(&s.period_start) == date)
         .collect();
 
-    if !summaries.is_empty() {
-        let mut items: Vec<HourlyBreakdownItem> = summaries.into_iter().map(|s| {
+    // Build Claude Code items from hourly summaries if available
+    let mut items: Vec<HourlyBreakdownItem> = if !summaries.is_empty() {
+        summaries.into_iter().map(|s| {
             let hour_start = extract_local_hour(&s.period_start);
             let hour_end = extract_local_hour(&s.period_end);
             let files: Vec<String> = s.key_activities.as_ref()
@@ -607,81 +608,89 @@ pub async fn get_hourly_breakdown(
                 git_commits: commits,
                 source: "claude_code".to_string(),
             }
+        }).collect()
+    } else {
+        // No hourly summaries - will build from snapshots below
+        Vec::new()
+    };
+
+    // If no items from summaries, fall back to raw snapshots
+    if items.is_empty() {
+        // Fallback: build from raw snapshots
+        // Query broadly to handle both UTC-offset and naive-local hour_bucket formats.
+        // We widen the range by 1 day on each side, then filter by local date in Rust.
+        let prev_date = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+            .map(|d| d.pred_opt().unwrap_or(d).format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|_| date.clone());
+        let next_date = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+            .map(|d| d.succ_opt().unwrap_or(d).format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|_| date.clone());
+        let wide_start = format!("{}T00:00:00", &prev_date);
+        let wide_end = format!("{}T23:59:59", &next_date);
+
+        let all_snapshots: Vec<SnapshotRawData> = sqlx::query_as(
+            r#"SELECT * FROM snapshot_raw_data
+               WHERE user_id = ? AND project_path = ?
+                 AND hour_bucket >= ? AND hour_bucket <= ?
+               ORDER BY hour_bucket"#,
+        )
+        .bind(&claims.sub)
+        .bind(&project_path)
+        .bind(&wide_start)
+        .bind(&wide_end)
+        .fetch_all(&db.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        // Filter to only snapshots whose local date matches the requested date
+        let snapshots: Vec<&SnapshotRawData> = all_snapshots.iter()
+            .filter(|s| extract_local_date(&s.hour_bucket) == date)
+            .collect();
+
+        items = snapshots.into_iter().map(|s| {
+            let hour_start = extract_local_hour(&s.hour_bucket);
+            let hour_end = next_hour(&hour_start);
+
+            let files: Vec<String> = s.files_modified.as_ref()
+                .and_then(|f| serde_json::from_str(f).ok())
+                .unwrap_or_default();
+
+            let commits: Vec<GitCommitRef> = s.git_commits.as_ref()
+                .and_then(|g| {
+                    serde_json::from_str::<Vec<serde_json::Value>>(g).ok().map(|arr| {
+                        arr.iter().filter_map(|v| {
+                            Some(GitCommitRef {
+                                hash: v.get("hash")?.as_str()?.to_string(),
+                                message: v.get("message")?.as_str()?.to_string(),
+                                timestamp: v.get("timestamp").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+                            })
+                        }).collect()
+                    })
+                })
+                .unwrap_or_default();
+
+            let summary = s.user_messages.as_ref()
+                .and_then(|m| serde_json::from_str::<Vec<String>>(m).ok())
+                .map(|msgs| msgs.join("; "))
+                .unwrap_or_else(|| "工作進行中".to_string());
+
+            HourlyBreakdownItem {
+                hour_start,
+                hour_end,
+                summary,
+                files_modified: files,
+                git_commits: commits,
+                source: "claude_code".to_string(),
+            }
         }).collect();
-        // Sort by hour_start descending (newest first)
-        items.sort_by(|a, b| b.hour_start.cmp(&a.hour_start));
-        return Ok(items);
     }
 
-    // Fallback: build from raw snapshots
-    // Query broadly to handle both UTC-offset and naive-local hour_bucket formats.
-    // We widen the range by 1 day on each side, then filter by local date in Rust.
-    let prev_date = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
-        .map(|d| d.pred_opt().unwrap_or(d).format("%Y-%m-%d").to_string())
-        .unwrap_or_else(|_| date.clone());
-    let next_date = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
-        .map(|d| d.succ_opt().unwrap_or(d).format("%Y-%m-%d").to_string())
-        .unwrap_or_else(|_| date.clone());
-    let wide_start = format!("{}T00:00:00", &prev_date);
-    let wide_end = format!("{}T23:59:59", &next_date);
-
-    let all_snapshots: Vec<SnapshotRawData> = sqlx::query_as(
-        r#"SELECT * FROM snapshot_raw_data
-           WHERE user_id = ? AND project_path = ?
-             AND hour_bucket >= ? AND hour_bucket <= ?
-           ORDER BY hour_bucket"#,
-    )
-    .bind(&claims.sub)
-    .bind(&project_path)
-    .bind(&wide_start)
-    .bind(&wide_end)
-    .fetch_all(&db.pool)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    // Filter to only snapshots whose local date matches the requested date
-    let snapshots: Vec<&SnapshotRawData> = all_snapshots.iter()
-        .filter(|s| extract_local_date(&s.hour_bucket) == date)
+    // Build set of hours that already have items (from work_summaries or snapshots)
+    let existing_hours: std::collections::HashSet<String> = items.iter()
+        .map(|i| i.hour_start.clone())
         .collect();
 
-    let mut items: Vec<HourlyBreakdownItem> = snapshots.into_iter().map(|s| {
-        let hour_start = extract_local_hour(&s.hour_bucket);
-        let hour_end = next_hour(&hour_start);
-
-        let files: Vec<String> = s.files_modified.as_ref()
-            .and_then(|f| serde_json::from_str(f).ok())
-            .unwrap_or_default();
-
-        let commits: Vec<GitCommitRef> = s.git_commits.as_ref()
-            .and_then(|g| {
-                serde_json::from_str::<Vec<serde_json::Value>>(g).ok().map(|arr| {
-                    arr.iter().filter_map(|v| {
-                        Some(GitCommitRef {
-                            hash: v.get("hash")?.as_str()?.to_string(),
-                            message: v.get("message")?.as_str()?.to_string(),
-                            timestamp: v.get("timestamp").and_then(|t| t.as_str()).unwrap_or("").to_string(),
-                        })
-                    }).collect()
-                })
-            })
-            .unwrap_or_default();
-
-        let summary = s.user_messages.as_ref()
-            .and_then(|m| serde_json::from_str::<Vec<String>>(m).ok())
-            .map(|msgs| msgs.join("; "))
-            .unwrap_or_else(|| "工作進行中".to_string());
-
-        HourlyBreakdownItem {
-            hour_start,
-            hour_end,
-            summary,
-            files_modified: files,
-            git_commits: commits,
-            source: "claude_code".to_string(),
-        }
-    }).collect();
-
-    // Also query Antigravity work items for the same date and project
+    // Query Antigravity work items for the same date and project
     // First try exact path match, then fall back to matching by project name
     let mut antigravity_items: Vec<recap_core::WorkItem> = sqlx::query_as(
         r#"SELECT * FROM work_items
@@ -718,7 +727,36 @@ pub async fn get_hourly_breakdown(
         }
     }
 
-    // Add Antigravity items to the breakdown
+    // Build a map of Antigravity session_ids to their hours for source attribution
+    let mut antigravity_session_hours: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for item in &antigravity_items {
+        let hour_start = item
+            .start_time
+            .as_ref()
+            .and_then(|ts| {
+                chrono::DateTime::parse_from_rfc3339(ts)
+                    .ok()
+                    .map(|dt| dt.with_timezone(&chrono::Local).format("%H:00").to_string())
+            })
+            .unwrap_or_else(|| item.created_at.format("%H:00").to_string());
+
+        if let Some(session_id) = &item.session_id {
+            antigravity_session_hours.insert(session_id.clone(), hour_start);
+        }
+    }
+
+    // Update source for existing items that came from Antigravity snapshots
+    // Check if the work_summary's source_snapshot_ids reference Antigravity sessions
+    for item in &mut items {
+        // If this hour has an Antigravity work_item, mark the source as antigravity
+        // since the LLM summary was generated from Antigravity snapshot data
+        if antigravity_session_hours.values().any(|h| h == &item.hour_start) {
+            item.source = "antigravity".to_string();
+        }
+    }
+
+    // Only add Antigravity items for hours that DON'T already have entries
+    // (to avoid duplicates when we already have LLM-generated summaries)
     for item in antigravity_items {
         // Extract hour from start_time (actual session time), falling back to created_at
         let hour_start = item
@@ -731,22 +769,67 @@ pub async fn get_hourly_breakdown(
                     .map(|dt| dt.with_timezone(&chrono::Local).format("%H:00").to_string())
             })
             .unwrap_or_else(|| item.created_at.format("%H:00").to_string());
+
+        // Skip if we already have an entry for this hour (LLM summary exists)
+        if existing_hours.contains(&hour_start) {
+            continue;
+        }
+
         let hour_end = next_hour(&hour_start);
 
-        // Extract clean summary from description (find "📋 Summary:" line)
-        // or fall back to title (which contains the API summary)
+        // Extract summary from description, building a rich summary from available fields
         let summary = item
             .description
             .as_ref()
-            .and_then(|desc| {
-                // Look for "📋 Summary: " line and extract the text after it
-                desc.lines()
+            .map(|desc| {
+                // Extract key fields from the description
+                let mut parts: Vec<String> = Vec::new();
+
+                // Get the summary line
+                let summary_text = desc.lines()
                     .find(|line| line.starts_with("📋 Summary:"))
                     .map(|line| line.trim_start_matches("📋 Summary:").trim().to_string())
+                    .filter(|s| !s.is_empty() && s.len() > 10) // Only use if meaningful (>10 chars)
+                    .unwrap_or_default();
+
+                if !summary_text.is_empty() {
+                    parts.push(summary_text);
+                }
+
+                // If summary is too short, add context from other fields
+                if parts.is_empty() || parts[0].len() < 15 {
+                    // Extract steps/duration info
+                    if let Some(steps_line) = desc.lines().find(|line| line.contains("Steps:")) {
+                        let steps_info = steps_line
+                            .trim_start_matches("💬 ")
+                            .trim();
+                        if !steps_info.is_empty() {
+                            parts.push(steps_info.to_string());
+                        }
+                    }
+
+                    // Extract branch info
+                    if let Some(branch_line) = desc.lines().find(|line| line.starts_with("🌿 Branch:")) {
+                        let branch = branch_line.trim_start_matches("🌿 Branch:").trim();
+                        if !branch.is_empty() && branch != "N/A" {
+                            parts.push(format!("Branch: {}", branch));
+                        }
+                    }
+                }
+
+                if parts.is_empty() {
+                    // Fall back to title without project prefix
+                    item.title
+                        .split(']')
+                        .nth(1)
+                        .map(|s| s.trim().to_string())
+                        .unwrap_or_else(|| item.title.clone())
+                } else {
+                    parts.join(" | ")
+                }
             })
-            .filter(|s| !s.is_empty())
             .unwrap_or_else(|| {
-                // Fall back to title, removing the "[project_name] " prefix
+                // No description - use title
                 item.title
                     .split(']')
                     .nth(1)
