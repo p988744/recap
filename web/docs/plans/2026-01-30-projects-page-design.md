@@ -492,25 +492,83 @@ web/src-tauri/src/
 
 ---
 
+## 現有 API 盤點
+
+### ✅ 已實作（可直接使用）
+
+| 功能 | API | 說明 |
+|------|-----|------|
+| 專案列表 | `list_projects` | 自動從 work_items 發現專案 |
+| 專案詳情 | `get_project_detail` | 含來源統計、最近項目、基本 stats |
+| 專案可見性 | `set_project_visibility` | 顯示/隱藏專案 |
+| 隱藏專案列表 | `get_hidden_projects` | 取得已隱藏的專案名稱 |
+| 專案目錄 | `get_project_directories` | Claude Code 目錄 + Git repo 路徑 |
+| 手動新增專案 | `add_manual_project` | 手動加入非自動發現的專案 |
+| 移除專案 | `remove_manual_project` | 移除手動新增的專案 |
+| 單日時間軸 | `get_timeline` | **單日**的 sessions + commits |
+| LLM 摘要生成 | `LlmService::summarize_project_work` | 已有專案工作摘要功能 |
+| LLM 週期摘要 | `LlmService::summarize_work_period` | 支援 weekly/monthly 摘要 |
+
+### ⚠️ 部分實作（需擴充）
+
+| 功能 | 現況 | 需要擴充 |
+|------|------|----------|
+| 時間軸查詢 | 只支援**單日** | 需支援多時間單位（週/月/季/年）+ cursor 分頁 |
+| 專案 stats | 基本統計 | 需加入來源分別統計、活躍天數等 |
+
+### ❌ 尚未實作（需新增）
+
+| 功能 | 說明 | 複雜度 |
+|------|------|--------|
+| **專案描述 CRUD** | `project_descriptions` 資料表 + API | 中 |
+| **專案摘要快取** | `project_summaries` 資料表 + API | 中 |
+| **摘要新鮮度檢查** | 計算 data_hash 偵測變更 | 低 |
+| **多時間單位時間軸** | 依日/週/月/季/年分組 + 無限滾動 | 高 |
+| **Git Diff 查詢** | 呼叫本地 git show 取得 diff | 中 |
+| **Commit 檔案變更** | 取得 commit 的 files changed 詳情 | 中 |
+
+### 資料表狀態
+
+| 資料表 | 狀態 | 說明 |
+|--------|------|------|
+| `project_preferences` | ✅ 已存在 | 儲存可見性、display_name、手動專案 |
+| `project_descriptions` | ❌ 需新增 | 專案目標、技術棧、關鍵功能、備註 |
+| `project_summaries` | ❌ 需新增 | AI 生成的週/月摘要快取 |
+
+---
+
 ## 實作順序
 
-### Phase 1: 基礎架構
-1. 建立資料表 migration
-2. 新增 Rust types 和基本 CRUD commands
-3. 新增 TypeScript types 和 services
-4. 建立頁面骨架和 routing
+### Phase 1: 資料層（後端）
+1. 新增 `project_descriptions` 資料表（在現有 init 中加入）
+2. 新增 `project_summaries` 資料表
+3. 新增 `descriptions.rs` - 專案描述 CRUD commands
+4. 新增 `summaries.rs` - 摘要管理 commands（整合現有 LlmService）
+5. 擴充 `types.rs` - 新增 ProjectDescription, ProjectSummary 等類型
 
-### Phase 2: 核心功能
-5. 實作左側專案列表
-6. 實作專案資訊 Tab（含描述編輯）
-7. 實作設定 Tab
+### Phase 2: 前端基礎
+6. 擴充 `types/projects.ts` - 新增 TypeScript 類型
+7. 擴充 `services/projects.ts` - 新增 API 函數
+8. 建立 `pages/Projects/` 目錄結構
+9. 實作主頁面骨架 `index.tsx`（左右分欄）
 
-### Phase 3: 時間軸
-8. 實作時間軸控制列
-9. 實作時間軸內容和無限滾動
-10. 實作 Commit 展開和 Diff 視圖
+### Phase 3: 專案列表與詳情
+10. 實作 `ProjectList/` 元件（使用現有 `list_projects` API）
+11. 實作 `ProjectDetail/index.tsx` - Tab 容器
+12. 實作 `InfoTab.tsx` - 專案資訊（使用現有 `get_project_detail`）
+13. 實作 `EditDescriptionModal.tsx` - 編輯專案描述
+14. 實作 `SettingsTab.tsx` - 設定（使用現有可見性 API）
 
-### Phase 4: 摘要功能
-11. 實作摘要顯示和快取
-12. 實作摘要生成（整合 LLM）
-13. 實作新鮮度檢查
+### Phase 4: 時間軸
+15. 新增 `timeline.rs` - 多時間單位時間軸查詢
+16. 新增 `diff.rs` - Git diff 查詢
+17. 實作 `TimelineTab.tsx` + `TimelineControls.tsx`
+18. 實作 `TimelineGroup.tsx` + `SessionItem.tsx`
+19. 實作 `CommitItem.tsx` + `CommitDiff.tsx`
+20. 實作 `useProjectTimeline.ts` - 無限滾動 hook
+
+### Phase 5: 摘要功能
+21. 實作 `SummaryCard.tsx` - 摘要顯示
+22. 實作 `useProjectSummary.ts` - 摘要管理 hook
+23. 整合 LLM 摘要生成（使用現有 LlmService）
+24. 實作新鮮度檢查 UI
