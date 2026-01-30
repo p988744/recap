@@ -572,6 +572,41 @@ pub async fn get_hourly_breakdown(
         .filter(|s| extract_local_date(&s.period_start) == date)
         .collect();
 
+    // Build a map of commit hash -> timestamp from snapshot_raw_data
+    // This allows us to enrich commits from summaries (which lack timestamps)
+    let commit_timestamps: std::collections::HashMap<String, String> = {
+        let all_snapshots: Vec<SnapshotRawData> = sqlx::query_as(
+            r#"SELECT * FROM snapshot_raw_data
+               WHERE user_id = ? AND project_path = ?
+                 AND hour_bucket >= ? AND hour_bucket <= ?
+               ORDER BY hour_bucket"#,
+        )
+        .bind(&claims.sub)
+        .bind(&project_path)
+        .bind(&wide_start_summary)
+        .bind(&wide_end_summary)
+        .fetch_all(&db.pool)
+        .await
+        .unwrap_or_default();
+
+        let mut map = std::collections::HashMap::new();
+        for snapshot in all_snapshots {
+            if let Some(git_commits_json) = &snapshot.git_commits {
+                if let Ok(commits) = serde_json::from_str::<Vec<serde_json::Value>>(git_commits_json) {
+                    for commit in commits {
+                        if let (Some(hash), Some(timestamp)) = (
+                            commit.get("hash").and_then(|h| h.as_str()),
+                            commit.get("timestamp").and_then(|t| t.as_str()),
+                        ) {
+                            map.insert(hash.to_string(), timestamp.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        map
+    };
+
     // Build Claude Code items from hourly summaries if available
     let mut items: Vec<HourlyBreakdownItem> = if !summaries.is_empty() {
         summaries.into_iter().map(|s| {
@@ -587,10 +622,13 @@ pub async fn get_hourly_breakdown(
                             let parts: Vec<&str> = s.splitn(2, ": ").collect();
                             if parts.len() == 2 {
                                 let hash_part: Vec<&str> = parts[0].splitn(2, ' ').collect();
+                                let hash = hash_part[0].to_string();
+                                // Look up timestamp from snapshot_raw_data
+                                let timestamp = commit_timestamps.get(&hash).cloned().unwrap_or_default();
                                 Some(GitCommitRef {
-                                    hash: hash_part[0].to_string(),
+                                    hash,
                                     message: parts[1].to_string(),
-                                    timestamp: String::new(),
+                                    timestamp,
                                 })
                             } else {
                                 None
