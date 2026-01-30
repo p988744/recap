@@ -147,6 +147,10 @@ pub fn run() {
             commands::projects::queries::update_antigravity_session_path,
             commands::projects::queries::add_manual_project,
             commands::projects::queries::remove_manual_project,
+            // Projects - descriptions
+            commands::projects::descriptions::get_project_description,
+            commands::projects::descriptions::update_project_description,
+            commands::projects::descriptions::delete_project_description,
             // Danger Zone
             commands::danger_zone::clear_synced_data,
             commands::danger_zone::factory_reset,
