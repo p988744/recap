@@ -101,6 +101,54 @@ pub struct AntigravitySessionPathResponse {
     pub is_default: bool,
 }
 
+/// Project description for AI context
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProjectDescription {
+    pub project_name: String,
+    pub goal: Option<String>,
+    pub tech_stack: Option<String>,
+    pub key_features: Option<Vec<String>>,
+    pub notes: Option<String>,
+}
+
+/// Request to update project description
+#[derive(Debug, Deserialize)]
+pub struct UpdateProjectDescriptionRequest {
+    pub project_name: String,
+    pub goal: Option<String>,
+    pub tech_stack: Option<String>,
+    pub key_features: Option<Vec<String>>,
+    pub notes: Option<String>,
+}
+
+/// Project summary from cache
+#[derive(Debug, Serialize)]
+pub struct ProjectSummary {
+    pub period_type: String,
+    pub period_start: String,
+    pub period_end: String,
+    pub summary: String,
+    pub is_stale: bool,
+}
+
+/// Request to generate project summary
+#[derive(Debug, Deserialize)]
+pub struct GenerateSummaryRequest {
+    pub project_name: String,
+    pub period_type: String, // "week" | "month"
+    pub period_start: String,
+    pub period_end: String,
+}
+
+/// Summary freshness status
+#[derive(Debug, Serialize)]
+pub struct SummaryFreshness {
+    pub project_name: String,
+    pub has_new_activity: bool,
+    pub last_activity_date: Option<String>,
+    pub last_summary_date: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
