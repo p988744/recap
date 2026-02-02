@@ -25,6 +25,17 @@ pub enum SyncAction {
 
     /// Show sync status for all sources
     Status,
+
+    /// Run data compaction (hourly → daily → weekly → monthly summaries)
+    Compact {
+        /// Show database records after compaction for verification
+        #[arg(long)]
+        verify: bool,
+
+        /// Limit number of records to show in verification
+        #[arg(long, default_value = "10")]
+        limit: usize,
+    },
 }
 
 /// Sync status row for table display
@@ -49,6 +60,9 @@ pub async fn execute(ctx: &Context, action: SyncAction) -> Result<()> {
         }
         SyncAction::Status => {
             show_status(ctx).await
+        }
+        SyncAction::Compact { verify, limit } => {
+            run_compaction(ctx, verify, limit).await
         }
     }
 }
@@ -132,6 +146,129 @@ async fn run_sync(
     Ok(())
 }
 
+async fn run_compaction(ctx: &Context, verify: bool, limit: usize) -> Result<()> {
+    let user_id = get_default_user_id(&ctx.db).await?;
+
+    print_info("Running data compaction...", ctx.quiet);
+    print_info("  hourly → daily → weekly → monthly summaries", ctx.quiet);
+
+    // Run the same compaction function as the UI "立即壓縮" button
+    let result = recap_core::services::compaction::run_compaction_cycle(
+        &ctx.db.pool,
+        None, // No LLM service for CLI (rule-based compaction only)
+        &user_id,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Compaction failed: {}", e))?;
+
+    // Print results
+    println!();
+    print_success("Compaction completed!", ctx.quiet);
+    println!("  Hourly summaries:  {} compacted", result.hourly_compacted);
+    println!("  Daily summaries:   {} compacted", result.daily_compacted);
+    println!("  Weekly summaries:  {} compacted", result.weekly_compacted);
+    println!("  Monthly summaries: {} compacted", result.monthly_compacted);
+
+    if let Some(date) = &result.latest_compacted_date {
+        println!("  Latest date:       {}", date);
+    }
+
+    if !result.errors.is_empty() {
+        println!();
+        println!("  Errors:");
+        for err in &result.errors {
+            println!("    - {}", err);
+        }
+    }
+
+    // Verification: show database records
+    if verify {
+        println!();
+        print_info(&format!("Verifying database (showing up to {} records per scale)...", limit), ctx.quiet);
+
+        // Show work_summaries counts (all users for debugging)
+        let counts: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT scale, COUNT(*) as cnt FROM work_summaries GROUP BY scale ORDER BY scale"
+        )
+        .fetch_all(&ctx.db.pool)
+        .await?;
+
+        println!();
+        println!("  work_summaries table:");
+        for (scale, count) in &counts {
+            println!("    {}: {} records", scale, count);
+        }
+
+        // Show sample hourly records
+        println!();
+        println!("  Sample hourly summaries:");
+        let hourly: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT project_path, period_start, substr(summary, 1, 60) FROM work_summaries WHERE scale = 'hourly' ORDER BY period_start DESC LIMIT ?"
+        )
+        .bind(limit as i64)
+        .fetch_all(&ctx.db.pool)
+        .await?;
+
+        if hourly.is_empty() {
+            println!("    (no hourly summaries)");
+        } else {
+            for (path, period, summary) in &hourly {
+                let project_name = std::path::Path::new(path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(path);
+                println!("    {} | {} | {}...", period, project_name, summary.replace('\n', " "));
+            }
+        }
+
+        // Show sample daily records
+        println!();
+        println!("  Sample daily summaries:");
+        let daily: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT project_path, period_start, substr(summary, 1, 60) FROM work_summaries WHERE scale = 'daily' ORDER BY period_start DESC LIMIT ?"
+        )
+        .bind(limit as i64)
+        .fetch_all(&ctx.db.pool)
+        .await?;
+
+        if daily.is_empty() {
+            println!("    (no daily summaries)");
+        } else {
+            for (path, period, summary) in &daily {
+                let project_name = std::path::Path::new(path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(path);
+                println!("    {} | {} | {}...", period, project_name, summary.replace('\n', " "));
+            }
+        }
+
+        // Show sample weekly records
+        println!();
+        println!("  Sample weekly summaries:");
+        let weekly: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT project_path, period_start, substr(summary, 1, 60) FROM work_summaries WHERE scale = 'weekly' ORDER BY period_start DESC LIMIT ?"
+        )
+        .bind(limit as i64)
+        .fetch_all(&ctx.db.pool)
+        .await?;
+
+        if weekly.is_empty() {
+            println!("    (no weekly summaries)");
+        } else {
+            for (path, period, summary) in &weekly {
+                let project_name = std::path::Path::new(path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(path);
+                println!("    {} | {} | {}...", period, project_name, summary.replace('\n', " "));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 async fn show_status(ctx: &Context) -> Result<()> {
     let statuses: Vec<recap_core::SyncStatus> = sqlx::query_as(
         "SELECT * FROM sync_status ORDER BY source, source_path"
@@ -162,9 +299,16 @@ async fn show_status(ctx: &Context) -> Result<()> {
 }
 
 async fn get_default_user_id(db: &recap_core::Database) -> Result<String> {
-    let user: Option<(String,)> = sqlx::query_as("SELECT id FROM users LIMIT 1")
-        .fetch_optional(&db.pool)
-        .await?;
+    // Get the user with the most snapshot data (most likely the active user)
+    let user: Option<(String,)> = sqlx::query_as(
+        r#"SELECT u.id FROM users u
+           LEFT JOIN snapshot_raw_data s ON s.user_id = u.id
+           GROUP BY u.id
+           ORDER BY COUNT(s.id) DESC
+           LIMIT 1"#
+    )
+    .fetch_optional(&db.pool)
+    .await?;
 
     match user {
         Some((id,)) => Ok(id),
