@@ -98,6 +98,21 @@ export async function removeManualProject(projectName: string): Promise<string> 
 }
 
 /**
+ * Response type for project README
+ */
+export interface ProjectReadmeResponse {
+  content: string | null
+  file_name: string | null
+}
+
+/**
+ * Get the README content for a project
+ */
+export async function getProjectReadme(projectName: string): Promise<ProjectReadmeResponse> {
+  return invokeAuth<ProjectReadmeResponse>('get_project_readme', { projectName })
+}
+
+/**
  * Get project description (goal, tech stack, etc.)
  */
 export async function getProjectDescription(projectName: string): Promise<ProjectDescription | null> {

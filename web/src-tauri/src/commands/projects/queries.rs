@@ -747,3 +747,113 @@ pub async fn remove_manual_project(
 
     Ok("ok".to_string())
 }
+
+/// Response for README content
+#[derive(Debug, serde::Serialize)]
+pub struct ProjectReadmeResponse {
+    pub content: Option<String>,
+    pub file_name: Option<String>,
+}
+
+/// Get the README content for a project
+#[tauri::command]
+pub async fn get_project_readme(
+    state: State<'_, AppState>,
+    token: String,
+    project_name: String,
+) -> Result<ProjectReadmeResponse, String> {
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
+
+    // Get git_repo_path from project_preferences first
+    let pref: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT project_path, git_repo_path FROM project_preferences WHERE user_id = ? AND project_name = ?",
+    )
+    .bind(&claims.sub)
+    .bind(&project_name)
+    .fetch_optional(&db.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let mut project_path: Option<String> = None;
+
+    if let Some((pp, grp)) = pref {
+        // Prefer git_repo_path, then project_path
+        project_path = grp.or(pp);
+    }
+
+    // Fall back to work items if no preference
+    if project_path.is_none() {
+        let items: Vec<WorkItem> = sqlx::query_as(
+            "SELECT * FROM work_items WHERE user_id = ? ORDER BY date DESC LIMIT 100",
+        )
+        .bind(&claims.sub)
+        .fetch_all(&db.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        project_path = items
+            .iter()
+            .filter(|item| derive_project_name(item) == project_name)
+            .find_map(|item| item.project_path.clone());
+    }
+
+    let Some(path) = project_path else {
+        return Ok(ProjectReadmeResponse {
+            content: None,
+            file_name: None,
+        });
+    };
+
+    // Find the git root directory
+    let mut dir = std::path::PathBuf::from(&path);
+    loop {
+        let git_dir = dir.join(".git");
+        if git_dir.exists() {
+            break;
+        }
+        if !dir.pop() {
+            // No .git found, use original path
+            dir = std::path::PathBuf::from(&path);
+            break;
+        }
+    }
+
+    // Try to find README file with various naming conventions
+    let readme_names = [
+        "README.md",
+        "readme.md",
+        "README.MD",
+        "Readme.md",
+        "README",
+        "readme",
+        "README.txt",
+        "readme.txt",
+        "README.rst",
+        "readme.rst",
+    ];
+
+    for name in readme_names {
+        let readme_path = dir.join(name);
+        if readme_path.exists() && readme_path.is_file() {
+            match std::fs::read_to_string(&readme_path) {
+                Ok(content) => {
+                    return Ok(ProjectReadmeResponse {
+                        content: Some(content),
+                        file_name: Some(name.to_string()),
+                    });
+                }
+                Err(e) => {
+                    log::warn!("Failed to read README file {:?}: {}", readme_path, e);
+                    continue;
+                }
+            }
+        }
+    }
+
+    // No README found
+    Ok(ProjectReadmeResponse {
+        content: None,
+        file_name: None,
+    })
+}
