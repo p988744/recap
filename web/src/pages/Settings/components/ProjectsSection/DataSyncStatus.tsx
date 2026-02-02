@@ -281,16 +281,21 @@ export function DataCompactionStatus({
 
   const isCompacting = status.is_compacting || (compactionPhase !== 'idle' && compactionPhase !== 'done')
   const isActive = enabled && autoGenerateSummaries
+  const hasCompletedBefore = !!status.last_compaction_at
 
   // Determine phase states
+  // Priority: manual phase > backend is_compacting > completed history > idle
   const hourlyState: PhaseState =
     compactionPhase === 'hourly' ? 'syncing' :
     compactionPhase === 'timeline' || compactionPhase === 'done' ? 'done' :
-    status.is_compacting ? 'syncing' : 'idle'
+    status.is_compacting ? 'syncing' :
+    hasCompletedBefore ? 'done' : 'idle'
 
   const timelineState: PhaseState =
     compactionPhase === 'timeline' ? 'syncing' :
-    compactionPhase === 'done' ? 'done' : 'idle'
+    compactionPhase === 'done' ? 'done' :
+    status.is_compacting ? 'syncing' :
+    hasCompletedBefore ? 'done' : 'idle'
 
   // Format date to user-friendly format (e.g., "1月15日")
   const formatCompactedDate = (dateStr: string | null): string | null => {
@@ -383,7 +388,7 @@ export function DataCompactionStatus({
                 <span className="text-sm text-sage">完成</span>
               </>
             ) : (
-              <span className="text-sm text-muted-foreground">待執行</span>
+              <span className="text-sm text-muted-foreground">尚未執行</span>
             )}
           </div>
         </div>
@@ -403,9 +408,9 @@ export function DataCompactionStatus({
                 <span className="text-sm text-sage">完成</span>
               </>
             ) : hourlyState === 'syncing' ? (
-              <span className="text-sm text-muted-foreground">待處理</span>
+              <span className="text-sm text-muted-foreground">等待中</span>
             ) : (
-              <span className="text-sm text-muted-foreground">待執行</span>
+              <span className="text-sm text-muted-foreground">尚未執行</span>
             )}
           </div>
         </div>
