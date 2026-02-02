@@ -226,5 +226,6 @@ export function useSyncForm() {
     // Actions
     handleSave,
     handleTriggerSync,
+    refreshStatus,
   }
 }

@@ -103,6 +103,7 @@ export function SettingsPage() {
             summaryState={syncForm.summaryState}
             syncProgress={syncForm.syncProgress}
             onTriggerSync={() => syncForm.handleTriggerSync(settings.setMessage)}
+            onRefreshStatus={syncForm.refreshStatus}
           />
         )}
 

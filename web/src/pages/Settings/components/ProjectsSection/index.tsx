@@ -22,6 +22,7 @@ interface ProjectsSectionProps {
   summaryState?: PhaseState
   syncProgress?: SyncProgress | null
   onTriggerSync?: () => void
+  onRefreshStatus?: () => Promise<void>
 }
 
 export function ProjectsSection({
@@ -32,6 +33,7 @@ export function ProjectsSection({
   summaryState = 'idle',
   syncProgress = null,
   onTriggerSync,
+  onRefreshStatus,
 }: ProjectsSectionProps) {
   const [projectList, setProjectList] = useState<ProjectInfo[]>([])
   const [loading, setLoading] = useState(true)
@@ -95,6 +97,10 @@ export function ProjectsSection({
       await new Promise(resolve => setTimeout(resolve, 500))
       setCompactionPhase('done')
       console.log('Compaction complete:', result)
+      // Refresh backend status to update last_compaction_at
+      if (onRefreshStatus) {
+        await onRefreshStatus()
+      }
       // Reset phase after showing done state, but keep result for display
       setTimeout(() => setCompactionPhase('idle'), 2000)
     } catch (err) {
@@ -102,7 +108,7 @@ export function ProjectsSection({
       setCompactionPhase('idle')
       setCompactionResult(null)
     }
-  }, [compactionPhase])
+  }, [compactionPhase, onRefreshStatus])
 
   if (loading) {
     return (
