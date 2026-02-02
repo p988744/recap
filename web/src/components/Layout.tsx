@@ -3,7 +3,6 @@ import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
   CalendarDays,
   FolderKanban,
-  BarChart3,
   Settings,
   User,
   HelpCircle,
@@ -32,7 +31,6 @@ import {
 const navItems = [
   { to: '/', icon: CalendarDays, label: '本週工作' },
   { to: '/projects', icon: FolderKanban, label: '專案' },
-  { to: '/review', icon: BarChart3, label: '回顧' },
 ]
 
 export function Layout() {
