@@ -177,29 +177,43 @@ pub fn run() {
             commands::batch_compaction::process_completed_batch_job,
         ])
         .setup(|app| {
-            // Setup logging
+            // Setup Tauri logging plugin (for frontend) - must be first
             app.handle().plugin(
                 tauri_plugin_log::Builder::default()
                     .level(log::LevelFilter::Info)
                     .build(),
             )?;
 
+            // === Startup Info ===
+            log::info!("========================================");
+            log::info!("  Recap - Work Tracking & Reporting");
+            log::info!("========================================");
+            log::info!("Version: {}", env!("CARGO_PKG_VERSION"));
+            log::info!("Platform: {} ({})", std::env::consts::OS, std::env::consts::ARCH);
+            log::info!("Build: {}", if cfg!(debug_assertions) { "Debug" } else { "Release" });
+            log::info!("----------------------------------------");
+            log::info!("Setting up application...");
+            log::info!("  ✓ Tauri plugins loaded");
+
             // Initialize database and app state
+            log::info!("Initializing database...");
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 match recap_core::Database::new().await {
                     Ok(database) => {
-                        log::info!("Database initialized successfully");
+                        log::info!("  ✓ Database connected and migrated");
                         let state = commands::AppState::new(database);
                         app_handle.manage(state);
+                        log::info!("  ✓ Application state initialized");
                     }
                     Err(e) => {
-                        log::error!("Failed to initialize database: {}", e);
+                        log::error!("  ✗ Failed to initialize database: {}", e);
                     }
                 }
             });
 
             // Create tray menu
+            log::info!("Setting up system tray...");
             let show_item = MenuItem::with_id(app, "show", "開啟 Recap", true, None::<&str>)?;
             let sync_item = MenuItem::with_id(app, "sync_now", "立即同步", true, None::<&str>)?;
             let separator = MenuItem::with_id(app, "sep1", "─────────────", false, None::<&str>)?;
@@ -212,6 +226,7 @@ pub fn run() {
             let tray = app.tray_by_id("main-tray").expect("tray icon not found");
             tray.set_menu(Some(menu))?;
             tray.set_show_menu_on_left_click(false)?;
+            log::info!("  ✓ System tray configured");
             tray.on_menu_event(|app, event| match event.id.as_ref() {
                 "show" => {
                     if let Some(window) = app.get_webview_window("main") {
@@ -244,6 +259,10 @@ pub fn run() {
                     }
                 }
             });
+
+            log::info!("----------------------------------------");
+            log::info!("Recap is ready!");
+            log::info!("========================================");
 
             Ok(())
         })
