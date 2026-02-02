@@ -53,6 +53,17 @@ interface SyncSectionProps {
   setCompactionIntervalHours: (v: number) => void
   autoGenerateSummaries: boolean
   setAutoGenerateSummaries: (v: boolean) => void
+  // Source toggles
+  syncGit: boolean
+  setSyncGit: (v: boolean) => void
+  syncClaude: boolean
+  setSyncClaude: (v: boolean) => void
+  syncAntigravity: boolean
+  setSyncAntigravity: (v: boolean) => void
+  syncGitlab: boolean
+  setSyncGitlab: (v: boolean) => void
+  syncJira: boolean
+  setSyncJira: (v: boolean) => void
   // Sync UI
   loading: boolean
   saving: boolean
@@ -124,6 +135,16 @@ export function SyncSection({
   setCompactionIntervalHours,
   autoGenerateSummaries,
   setAutoGenerateSummaries,
+  syncGit,
+  setSyncGit,
+  syncClaude,
+  setSyncClaude,
+  syncAntigravity,
+  setSyncAntigravity,
+  syncGitlab,
+  setSyncGitlab,
+  syncJira,
+  setSyncJira,
   loading,
   saving,
   onSave,
@@ -174,6 +195,51 @@ export function SyncSection({
             label="啟用背景同步"
             description="自動定時同步工作項目"
           />
+
+          {/* Source Toggles */}
+          <div className={enabled ? '' : 'opacity-50 pointer-events-none'}>
+            <Label className="mb-3 block">同步來源</Label>
+            <p className="text-xs text-muted-foreground mb-3">
+              關閉特定來源可用於排查網路問題
+            </p>
+            <div className="space-y-3 pl-2 border-l-2 border-border">
+              <Toggle
+                checked={syncGit}
+                onChange={setSyncGit}
+                label="Git 本地儲存庫"
+                description="同步本地 Git commit 記錄"
+                disabled={!enabled}
+              />
+              <Toggle
+                checked={syncClaude}
+                onChange={setSyncClaude}
+                label="Claude Code"
+                description="同步 Claude Code 工作階段"
+                disabled={!enabled}
+              />
+              <Toggle
+                checked={syncAntigravity}
+                onChange={setSyncAntigravity}
+                label="Antigravity (Gemini Code)"
+                description="同步 Gemini Code Assist 工作階段（連接本地 localhost）"
+                disabled={!enabled}
+              />
+              <Toggle
+                checked={syncGitlab}
+                onChange={setSyncGitlab}
+                label="GitLab"
+                description="同步 GitLab 專案（需要在整合設定中配置）"
+                disabled={!enabled}
+              />
+              <Toggle
+                checked={syncJira}
+                onChange={setSyncJira}
+                label="Jira"
+                description="同步 Jira 工單（需要在整合設定中配置）"
+                disabled={!enabled}
+              />
+            </div>
+          </div>
 
           {/* Data Sync Interval */}
           <div className={enabled ? '' : 'opacity-50 pointer-events-none'}>

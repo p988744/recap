@@ -14,6 +14,12 @@ export interface SyncFormState {
   intervalMinutes: number
   compactionIntervalHours: number
   autoGenerateSummaries: boolean
+  // Source toggles
+  syncGit: boolean
+  syncClaude: boolean
+  syncAntigravity: boolean
+  syncGitlab: boolean
+  syncJira: boolean
   // UI State
   loading: boolean
   saving: boolean
@@ -29,6 +35,11 @@ export function useSyncForm() {
     intervalMinutes: 15,
     compactionIntervalHours: 6,
     autoGenerateSummaries: true,
+    syncGit: true,
+    syncClaude: true,
+    syncAntigravity: true,
+    syncGitlab: false,
+    syncJira: false,
     loading: true,
     saving: false,
   })
@@ -79,6 +90,11 @@ export function useSyncForm() {
           intervalMinutes: config.interval_minutes,
           compactionIntervalHours: config.compaction_interval_hours,
           autoGenerateSummaries: config.auto_generate_summaries,
+          syncGit: config.sync_git,
+          syncClaude: config.sync_claude,
+          syncAntigravity: config.sync_antigravity,
+          syncGitlab: config.sync_gitlab,
+          syncJira: config.sync_jira,
           loading: false,
         }))
       } catch (err) {
@@ -106,6 +122,26 @@ export function useSyncForm() {
     setState((prev) => ({ ...prev, autoGenerateSummaries }))
   }, [])
 
+  const setSyncGit = useCallback((syncGit: boolean) => {
+    setState((prev) => ({ ...prev, syncGit }))
+  }, [])
+
+  const setSyncClaude = useCallback((syncClaude: boolean) => {
+    setState((prev) => ({ ...prev, syncClaude }))
+  }, [])
+
+  const setSyncAntigravity = useCallback((syncAntigravity: boolean) => {
+    setState((prev) => ({ ...prev, syncAntigravity }))
+  }, [])
+
+  const setSyncGitlab = useCallback((syncGitlab: boolean) => {
+    setState((prev) => ({ ...prev, syncGitlab }))
+  }, [])
+
+  const setSyncJira = useCallback((syncJira: boolean) => {
+    setState((prev) => ({ ...prev, syncJira }))
+  }, [])
+
   // Save config (backend handles restart/stop internally via update_config)
   const handleSave = useCallback(
     async (setMessage: (msg: SettingsMessage | null) => void) => {
@@ -115,10 +151,11 @@ export function useSyncForm() {
           enabled: state.enabled,
           interval_minutes: state.intervalMinutes,
           compaction_interval_hours: state.compactionIntervalHours,
-          sync_git: true,
-          sync_claude: true,
-          sync_gitlab: false,
-          sync_jira: false,
+          sync_git: state.syncGit,
+          sync_claude: state.syncClaude,
+          sync_antigravity: state.syncAntigravity,
+          sync_gitlab: state.syncGitlab,
+          sync_jira: state.syncJira,
           auto_generate_summaries: state.autoGenerateSummaries,
         })
 
@@ -135,7 +172,7 @@ export function useSyncForm() {
         setState((prev) => ({ ...prev, saving: false }))
       }
     },
-    [state.enabled, state.intervalMinutes, state.compactionIntervalHours, state.autoGenerateSummaries, refreshStatus]
+    [state, refreshStatus]
   )
 
   // Trigger immediate sync via app-level sync
@@ -165,6 +202,17 @@ export function useSyncForm() {
     setCompactionIntervalHours,
     autoGenerateSummaries: state.autoGenerateSummaries,
     setAutoGenerateSummaries,
+    // Source toggles
+    syncGit: state.syncGit,
+    setSyncGit,
+    syncClaude: state.syncClaude,
+    setSyncClaude,
+    syncAntigravity: state.syncAntigravity,
+    setSyncAntigravity,
+    syncGitlab: state.syncGitlab,
+    setSyncGitlab,
+    syncJira: state.syncJira,
+    setSyncJira,
     // Status (merged: backend + frontend phase states)
     status,
     // Phase states (for split display)

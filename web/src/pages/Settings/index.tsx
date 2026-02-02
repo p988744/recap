@@ -117,6 +117,16 @@ export function SettingsPage() {
             setCompactionIntervalHours={syncForm.setCompactionIntervalHours}
             autoGenerateSummaries={syncForm.autoGenerateSummaries}
             setAutoGenerateSummaries={syncForm.setAutoGenerateSummaries}
+            syncGit={syncForm.syncGit}
+            setSyncGit={syncForm.setSyncGit}
+            syncClaude={syncForm.syncClaude}
+            setSyncClaude={syncForm.setSyncClaude}
+            syncAntigravity={syncForm.syncAntigravity}
+            setSyncAntigravity={syncForm.setSyncAntigravity}
+            syncGitlab={syncForm.syncGitlab}
+            setSyncGitlab={syncForm.setSyncGitlab}
+            syncJira={syncForm.syncJira}
+            setSyncJira={syncForm.setSyncJira}
             loading={syncForm.loading}
             saving={syncForm.saving}
             onSave={syncForm.handleSave}
