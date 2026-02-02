@@ -60,10 +60,6 @@ interface SyncSectionProps {
   setSyncClaude: (v: boolean) => void
   syncAntigravity: boolean
   setSyncAntigravity: (v: boolean) => void
-  syncGitlab: boolean
-  setSyncGitlab: (v: boolean) => void
-  syncJira: boolean
-  setSyncJira: (v: boolean) => void
   // Sync UI
   loading: boolean
   saving: boolean
@@ -141,10 +137,6 @@ export function SyncSection({
   setSyncClaude,
   syncAntigravity,
   setSyncAntigravity,
-  syncGitlab,
-  setSyncGitlab,
-  syncJira,
-  setSyncJira,
   loading,
   saving,
   onSave,
@@ -222,20 +214,6 @@ export function SyncSection({
                 onChange={setSyncAntigravity}
                 label="Antigravity (Gemini Code)"
                 description="同步 Gemini Code Assist 工作階段（連接本地 localhost）"
-                disabled={!enabled}
-              />
-              <Toggle
-                checked={syncGitlab}
-                onChange={setSyncGitlab}
-                label="GitLab"
-                description="同步 GitLab 專案（需要在整合設定中配置）"
-                disabled={!enabled}
-              />
-              <Toggle
-                checked={syncJira}
-                onChange={setSyncJira}
-                label="Jira"
-                description="同步 Jira 工單（需要在整合設定中配置）"
                 disabled={!enabled}
               />
             </div>
