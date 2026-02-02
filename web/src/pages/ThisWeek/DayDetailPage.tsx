@@ -1,12 +1,19 @@
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Clock, FolderKanban, GitCommit } from 'lucide-react'
+import { ArrowLeft, Clock, FolderKanban, GitCommit, Copy, Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { useAuth } from '@/lib/auth'
 import { useDayDetail } from './hooks/useDayDetail'
 import { ProjectCard } from '@/pages/Worklog/components/ProjectCard'
 import { ManualItemCard } from '@/pages/Worklog/components/ManualItemCard'
 import { DayGanttChart } from './components'
+
+import type { WorklogDay } from '@/types/worklog'
 
 // Get weekday label in Chinese based on actual day of week (0=Sunday, 1=Monday, ...)
 function getWeekdayLabel(dayOfWeek: number): string {
@@ -19,6 +26,54 @@ function formatDateDisplay(dateStr: string): string {
   const d = new Date(dateStr + 'T00:00:00')
   const weekday = getWeekdayLabel(d.getDay())
   return `${weekday} ${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
+}
+
+// Generate day report in Markdown format
+function generateDayReport(
+  date: string,
+  day: WorklogDay | null,
+  totalHours: number,
+  totalCommits: number
+): string {
+  const lines: string[] = []
+  const formattedDate = formatDateDisplay(date)
+
+  lines.push(`# ${formattedDate} 工作報告`)
+  lines.push('')
+  lines.push(`- **總工時**: ${totalHours.toFixed(1)} 小時`)
+  lines.push(`- **Commits**: ${totalCommits}`)
+  lines.push('')
+
+  if (day?.projects && day.projects.length > 0) {
+    lines.push('## 專案工作')
+    lines.push('')
+    for (const project of day.projects) {
+      const projectName = project.project_path.split(/[/\\]/).pop() || project.project_path
+      lines.push(`### ${projectName}`)
+      lines.push('')
+      lines.push(`- 工時: ${project.total_hours.toFixed(1)}h`)
+      lines.push(`- Commits: ${project.total_commits}`)
+      if (project.daily_summary) {
+        lines.push('')
+        lines.push(project.daily_summary)
+      }
+      lines.push('')
+    }
+  }
+
+  if (day?.manual_items && day.manual_items.length > 0) {
+    lines.push('## 手動項目')
+    lines.push('')
+    for (const item of day.manual_items) {
+      lines.push(`- **${item.title}** (${item.hours.toFixed(1)}h)`)
+      if (item.description) {
+        lines.push(`  ${item.description}`)
+      }
+    }
+    lines.push('')
+  }
+
+  return lines.join('\n')
 }
 
 export function DayDetailPage() {
@@ -36,6 +91,26 @@ export function DayDetailPage() {
     hourlyLoading,
     toggleHourlyBreakdown,
   } = useDayDetail(date ?? '', isAuthenticated)
+
+  // Copy report to clipboard
+  const handleCopy = () => {
+    if (!date) return
+    const report = generateDayReport(date, day, totalHours, totalCommits)
+    navigator.clipboard.writeText(report)
+  }
+
+  // Export report as Markdown file
+  const handleExportMarkdown = () => {
+    if (!date) return
+    const report = generateDayReport(date, day, totalHours, totalCommits)
+    const blob = new Blob([report], { type: 'text/markdown' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `worklog_${date}.md`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   if (!date) {
     return (
@@ -75,9 +150,33 @@ export function DayDetailPage() {
 
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-semibold text-foreground mb-2">
-          {formatDateDisplay(date)}
-        </h1>
+        <div className="flex items-start justify-between">
+          <h1 className="text-2xl font-semibold text-foreground mb-2">
+            {formatDateDisplay(date)}
+          </h1>
+          {!isEmpty && (
+            <div className="flex items-center gap-2">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="outline" size="sm" onClick={handleCopy}>
+                    <Copy className="w-4 h-4 mr-1.5" strokeWidth={1.5} />
+                    複製
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>複製報告到剪貼簿</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="sm" onClick={handleExportMarkdown}>
+                    <Download className="w-4 h-4 mr-1.5" strokeWidth={1.5} />
+                    匯出
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>下載 Markdown 檔案</TooltipContent>
+              </Tooltip>
+            </div>
+          )}
+        </div>
         {!isEmpty && (
           <div className="flex items-center gap-6 text-sm text-muted-foreground">
             <span className="flex items-center gap-1.5">

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
   CalendarDays,
   FolderKanban,
@@ -40,6 +40,16 @@ export function Layout() {
   const { showOnboarding, completeOnboarding, openOnboarding } = useOnboarding()
   const [taskPopoverOpen, setTaskPopoverOpen] = useState(false)
   const navigate = useNavigate()
+  const location = useLocation()
+
+  // Check if a nav item should be active (including sub-routes)
+  const isNavItemActive = (to: string) => {
+    if (to === '/') {
+      // "本週工作" should be active for / and /day/*
+      return location.pathname === '/' || location.pathname.startsWith('/day/')
+    }
+    return location.pathname === to || location.pathname.startsWith(to + '/')
+  }
 
   // App-level background sync: starts service, listens for tray events, runs initial sync
   const syncValue = useAppSync(isAuthenticated, token)
@@ -75,14 +85,12 @@ export function Layout() {
               <li key={item.to}>
                 <NavLink
                   to={item.to}
-                  className={({ isActive }) =>
-                    cn(
-                      "flex items-center gap-3 px-3 py-2.5 text-sm transition-all duration-200",
-                      isActive
-                        ? "text-foreground border-l-2 border-l-charcoal -ml-px font-medium"
-                        : "text-muted-foreground hover:text-foreground"
-                    )
-                  }
+                  className={cn(
+                    "flex items-center gap-3 px-3 py-2.5 text-sm transition-all duration-200",
+                    isNavItemActive(item.to)
+                      ? "text-foreground border-l-2 border-l-charcoal -ml-px font-medium"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
                 >
                   <item.icon className="w-4 h-4" strokeWidth={1.5} />
                   <span>{item.label}</span>
