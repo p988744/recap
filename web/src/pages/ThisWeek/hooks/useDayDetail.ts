@@ -12,26 +12,26 @@ export function useDayDetail(date: string, isAuthenticated: boolean) {
   const [hourlyLoading, setHourlyLoading] = useState(false)
 
   // Fetch day data
-  useEffect(() => {
+  const fetchData = useCallback(async () => {
     if (!isAuthenticated || !date) return
 
-    const fetchData = async () => {
-      setLoading(true)
-      try {
-        const result = await worklog.getOverview(date, date)
-        // Find the day in the result
-        const foundDay = result.days.find((d) => d.date === date) ?? null
-        setDay(foundDay)
-      } catch (err) {
-        console.error('Failed to fetch day data:', err)
-        setDay(null)
-      } finally {
-        setLoading(false)
-      }
+    setLoading(true)
+    try {
+      const result = await worklog.getOverview(date, date)
+      // Find the day in the result
+      const foundDay = result.days.find((d) => d.date === date) ?? null
+      setDay(foundDay)
+    } catch (err) {
+      console.error('Failed to fetch day data:', err)
+      setDay(null)
+    } finally {
+      setLoading(false)
     }
-
-    fetchData()
   }, [date, isAuthenticated])
+
+  useEffect(() => {
+    fetchData()
+  }, [fetchData])
 
   // Toggle hourly breakdown
   const toggleHourlyBreakdown = useCallback(
@@ -75,5 +75,6 @@ export function useDayDetail(date: string, isAuthenticated: boolean) {
     hourlyData,
     hourlyLoading,
     toggleHourlyBreakdown,
+    fetchData,
   }
 }
