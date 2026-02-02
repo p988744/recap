@@ -6,6 +6,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
+  TooltipProvider,
 } from '@/components/ui/tooltip'
 import { useAuth } from '@/lib/auth'
 import { useDayDetail } from './hooks/useDayDetail'
@@ -155,26 +156,28 @@ export function DayDetailPage() {
             {formatDateDisplay(date)}
           </h1>
           {!isEmpty && (
-            <div className="flex items-center gap-2">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="outline" size="sm" onClick={handleCopy}>
-                    <Copy className="w-4 h-4 mr-1.5" strokeWidth={1.5} />
-                    複製
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>複製報告到剪貼簿</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="ghost" size="sm" onClick={handleExportMarkdown}>
-                    <Download className="w-4 h-4 mr-1.5" strokeWidth={1.5} />
-                    匯出
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>下載 Markdown 檔案</TooltipContent>
-              </Tooltip>
-            </div>
+            <TooltipProvider>
+              <div className="flex items-center gap-2">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="outline" size="sm" onClick={handleCopy}>
+                      <Copy className="w-4 h-4 mr-1.5" strokeWidth={1.5} />
+                      複製
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>複製報告到剪貼簿</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="ghost" size="sm" onClick={handleExportMarkdown}>
+                      <Download className="w-4 h-4 mr-1.5" strokeWidth={1.5} />
+                      匯出
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>下載 Markdown 檔案</TooltipContent>
+                </Tooltip>
+              </div>
+            </TooltipProvider>
           )}
         </div>
         {!isEmpty && (
