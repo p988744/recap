@@ -174,6 +174,89 @@ fn get_manual_projects_dir() -> Result<std::path::PathBuf, String> {
     Ok(home.join(".recap").join("manual-projects"))
 }
 
+/// Generate the filename for a manual work item
+fn get_manual_item_filename(date: &NaiveDate, id: &str) -> String {
+    format!("{}_{}.md", date.format("%Y-%m-%d"), &id[..8])
+}
+
+/// Save a manual work item as a markdown file
+fn save_manual_item_file(
+    project_path: &str,
+    id: &str,
+    date: &NaiveDate,
+    title: &str,
+    description: Option<&str>,
+    hours: f64,
+    jira_issue_key: Option<&str>,
+) -> Result<(), String> {
+    let filename = get_manual_item_filename(date, id);
+    let file_path = std::path::Path::new(project_path).join(&filename);
+
+    // Build markdown content with YAML frontmatter
+    let mut content = String::new();
+    content.push_str("---\n");
+    content.push_str(&format!("id: {}\n", id));
+    content.push_str(&format!("date: {}\n", date.format("%Y-%m-%d")));
+    content.push_str(&format!("hours: {}\n", hours));
+    if let Some(key) = jira_issue_key {
+        if !key.is_empty() {
+            content.push_str(&format!("jira_issue_key: {}\n", key));
+        }
+    }
+    content.push_str("---\n\n");
+    content.push_str(&format!("# {}\n", title));
+    if let Some(desc) = description {
+        if !desc.is_empty() {
+            content.push_str(&format!("\n{}\n", desc));
+        }
+    }
+
+    std::fs::write(&file_path, content)
+        .map_err(|e| format!("Failed to save manual item file: {}", e))?;
+
+    Ok(())
+}
+
+/// Delete a manual work item file
+fn delete_manual_item_file(project_path: &str, date: &NaiveDate, id: &str) -> Result<(), String> {
+    let filename = get_manual_item_filename(date, id);
+    let file_path = std::path::Path::new(project_path).join(&filename);
+
+    if file_path.exists() {
+        std::fs::remove_file(&file_path)
+            .map_err(|e| format!("Failed to delete manual item file: {}", e))?;
+    }
+
+    Ok(())
+}
+
+/// Update a manual work item file (delete old, create new if date changed)
+fn update_manual_item_file(
+    old_project_path: Option<&str>,
+    new_project_path: Option<&str>,
+    old_date: &NaiveDate,
+    new_date: &NaiveDate,
+    id: &str,
+    title: &str,
+    description: Option<&str>,
+    hours: f64,
+    jira_issue_key: Option<&str>,
+) -> Result<(), String> {
+    // Delete old file if project or date changed
+    if let Some(old_path) = old_project_path {
+        if old_date != new_date || old_project_path != new_project_path {
+            let _ = delete_manual_item_file(old_path, old_date, id);
+        }
+    }
+
+    // Save new file
+    if let Some(new_path) = new_project_path {
+        save_manual_item_file(new_path, id, new_date, title, description, hours, jira_issue_key)?;
+    }
+
+    Ok(())
+}
+
 /// Get the project path for a manual project
 fn get_manual_project_path(project_name: &str) -> Result<String, String> {
     let dir = get_manual_projects_dir()?;
@@ -256,7 +339,7 @@ pub async fn create_work_item(
         .await
         .map_err(|e| e.to_string())?;
 
-    // Create snapshot for manual items with project_path (for unified workflow)
+    // Create snapshot and file for manual items with project_path (for unified workflow)
     if source == "manual" {
         if let Some(ref path) = project_path {
             create_manual_snapshot(
@@ -269,6 +352,17 @@ pub async fn create_work_item(
                 request.description.as_deref(),
                 request.hours.unwrap_or(0.0),
             ).await?;
+
+            // Save as markdown file
+            save_manual_item_file(
+                path,
+                &id,
+                &request.date,
+                &title,
+                request.description.as_deref(),
+                request.hours.unwrap_or(0.0),
+                request.jira_issue_key.as_deref(),
+            )?;
         }
     }
 
@@ -432,8 +526,10 @@ pub async fn update_work_item(
         .await
         .map_err(|e| e.to_string())?;
 
-    // Update snapshot for manual items (for unified workflow)
+    // Update snapshot and file for manual items (for unified workflow)
     if item.source == "manual" {
+        let existing_item = existing.as_ref().unwrap();
+
         update_manual_snapshot(
             &db.pool,
             &claims.sub,
@@ -444,6 +540,19 @@ pub async fn update_work_item(
             request.description.as_deref(),
             request.hours,
         ).await?;
+
+        // Update markdown file
+        update_manual_item_file(
+            existing_item.project_path.as_deref(),
+            item.project_path.as_deref(),
+            &existing_item.date,
+            &item.date,
+            &id,
+            &item.title,
+            item.description.as_deref(),
+            item.hours,
+            item.jira_issue_key.as_deref(),
+        )?;
     }
 
     Ok(item)
@@ -482,9 +591,16 @@ pub async fn delete_work_item(
         return Err("Work item not found".to_string());
     }
 
-    // Delete associated snapshot for manual items
+    // Delete associated snapshot and file for manual items
     if is_manual {
         delete_manual_snapshot(&db.pool, &claims.sub, &id).await?;
+
+        // Delete markdown file
+        if let Some(ref item) = existing {
+            if let Some(ref path) = item.project_path {
+                let _ = delete_manual_item_file(path, &item.date, &id);
+            }
+        }
     }
 
     Ok(())
