@@ -192,9 +192,13 @@ pub async fn start_background_sync(
     token: String,
 ) -> Result<(), String> {
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let user_id = claims.sub.clone();
 
     // Set user ID for sync operations
-    state.background_sync.set_user_id(claims.sub).await;
+    state.background_sync.set_user_id(user_id.clone()).await;
+
+    // Initialize timestamps from database (restore last known sync/compaction times)
+    state.background_sync.initialize_timestamps_from_db(&user_id).await;
 
     state.background_sync.start().await;
     log::info!("Background sync service started");

@@ -176,7 +176,7 @@ pub async fn list_projects(
         .collect();
 
     // Add manually-added projects that don't appear in work items
-    let discovered_names: std::collections::HashSet<String> =
+    let mut discovered_names: std::collections::HashSet<String> =
         projects.iter().map(|p| p.project_name.clone()).collect();
 
     for (name, (hidden, display_name, pref_path, manual)) in &pref_map {
@@ -192,6 +192,41 @@ pub async fn list_projects(
                 hidden: *hidden,
                 display_name: display_name.clone(),
             });
+            discovered_names.insert(name.clone());
+        }
+    }
+
+    // Scan manual-projects directory for empty projects not yet discovered
+    if let Some(home) = dirs::home_dir() {
+        let manual_projects_dir = home.join(".recap").join("manual-projects");
+        if manual_projects_dir.exists() {
+            if let Ok(entries) = std::fs::read_dir(&manual_projects_dir) {
+                for entry in entries.flatten() {
+                    if entry.path().is_dir() {
+                        if let Some(name) = entry.file_name().to_str() {
+                            if !discovered_names.contains(name) {
+                                let project_path = entry.path().to_string_lossy().to_string();
+                                let (hidden, display_name) = pref_map
+                                    .get(name)
+                                    .map(|(h, d, _, _)| (*h, d.clone()))
+                                    .unwrap_or((false, None));
+                                projects.push(ProjectInfo {
+                                    project_name: name.to_string(),
+                                    project_path: Some(project_path),
+                                    source: "manual".to_string(),
+                                    sources: vec!["manual".to_string()],
+                                    work_item_count: 0,
+                                    total_hours: 0.0,
+                                    latest_date: None,
+                                    hidden,
+                                    display_name,
+                                });
+                                discovered_names.insert(name.to_string());
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

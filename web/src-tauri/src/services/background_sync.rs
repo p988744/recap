@@ -371,6 +371,48 @@ impl BackgroundSyncService {
         self.last_compaction_at.read().await.clone()
     }
 
+    /// Initialize timestamps from database on startup
+    ///
+    /// This should be called after the service is created to restore
+    /// the last known sync and compaction timestamps from persistent storage.
+    ///
+    /// - `last_sync_at`: Read from sync_status table (MAX of all sources)
+    /// - `last_compaction_at`: Read from work_summaries table (MAX created_at)
+    pub async fn initialize_timestamps_from_db(&self, user_id: &str) {
+        let pool = {
+            let db = self.db.lock().await;
+            db.pool.clone()
+        };
+
+        // Load last_sync_at from sync_status table
+        let sync_result = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT MAX(last_sync_at) FROM sync_status WHERE user_id = ? AND last_sync_at IS NOT NULL"
+        )
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await;
+
+        if let Ok(Some(last_sync)) = sync_result {
+            log::info!("Restored last_sync_at from database: {}", last_sync);
+            let mut sync_time = self.last_sync_at.write().await;
+            *sync_time = Some(last_sync);
+        }
+
+        // Load last_compaction_at from work_summaries table (MAX created_at)
+        let compaction_result = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT MAX(created_at) FROM work_summaries WHERE user_id = ?"
+        )
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await;
+
+        if let Ok(Some(last_compaction)) = compaction_result {
+            log::info!("Restored last_compaction_at from database: {}", last_compaction);
+            let mut compaction_time = self.last_compaction_at.write().await;
+            *compaction_time = Some(last_compaction);
+        }
+    }
+
     /// Set the user ID for sync operations
     pub async fn set_user_id(&self, user_id: String) {
         let mut uid = self.user_id.write().await;
