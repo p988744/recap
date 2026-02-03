@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { FolderKanban } from 'lucide-react'
 import { ProjectList } from './components/ProjectList'
 import { ProjectDetail } from './components/ProjectDetail'
@@ -8,16 +9,28 @@ import { useProjects } from './hooks/useProjects'
 export { TimelinePeriodDetailPage } from './TimelinePeriodDetailPage'
 
 export function ProjectsPage() {
-  const [selectedProject, setSelectedProject] = useState<string | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
   const [showHidden, setShowHidden] = useState(false)
   const { projects, isLoading } = useProjects({ showHidden })
 
-  // Auto-select first project when loaded
+  // Get selected project from URL or default to first project
+  const selectedProject = searchParams.get('project')
+
+  // Update URL when selecting a project
+  const setSelectedProject = useCallback((projectName: string | null) => {
+    if (projectName) {
+      setSearchParams({ project: projectName })
+    } else {
+      setSearchParams({})
+    }
+  }, [setSearchParams])
+
+  // Auto-select first project when loaded (only if no project in URL)
   useEffect(() => {
     if (!isLoading && projects.length > 0 && !selectedProject) {
       setSelectedProject(projects[0].project_name)
     }
-  }, [isLoading, projects, selectedProject])
+  }, [isLoading, projects, selectedProject, setSelectedProject])
 
   return (
     <div className="h-[calc(100vh-5rem)] flex flex-col">

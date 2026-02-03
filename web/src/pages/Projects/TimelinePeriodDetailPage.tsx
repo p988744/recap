@@ -611,7 +611,7 @@ export function TimelinePeriodDetailPage() {
   return (
     <div className="space-y-8 animate-fade-up">
       {/* Back button */}
-      <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
+      <Button variant="ghost" size="sm" onClick={() => navigate(`/projects?project=${encodeURIComponent(decodedProjectName)}`)}>
         <ArrowLeft className="w-4 h-4 mr-2" strokeWidth={1.5} />
         返回時間軸
       </Button>
