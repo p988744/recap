@@ -15,6 +15,7 @@ export interface WorkItemFormData {
   date: string
   jira_issue_key: string
   category: string
+  project_name: string
 }
 
 // =============================================================================
@@ -103,6 +104,7 @@ export function useThisWeek(isAuthenticated: boolean) {
     date: new Date().toISOString().split('T')[0],
     jira_issue_key: '',
     category: '',
+    project_name: '',
   })
 
   // Consume app-level sync state to know when to refetch data
@@ -262,6 +264,7 @@ export function useThisWeek(isAuthenticated: boolean) {
       date: new Date().toISOString().split('T')[0],
       jira_issue_key: '',
       category: '',
+      project_name: '',
     })
   }, [])
 
@@ -289,6 +292,7 @@ export function useThisWeek(isAuthenticated: boolean) {
         date: formData.date,
         jira_issue_key: formData.jira_issue_key || undefined,
         category: formData.category || undefined,
+        project_name: formData.project_name || undefined,
       })
       setShowCreateModal(false)
       resetForm()
@@ -300,13 +304,24 @@ export function useThisWeek(isAuthenticated: boolean) {
 
   const openEditModal = useCallback((item: WorkItem) => {
     setSelectedItem(item)
+
+    // Extract project_name from title if it has [ProjectName] prefix
+    let title = item.title
+    let project_name = ''
+    if (item.title.startsWith('[') && item.title.includes('] ')) {
+      const endIndex = item.title.indexOf('] ')
+      project_name = item.title.substring(1, endIndex)
+      title = item.title.substring(endIndex + 2)
+    }
+
     setFormData({
-      title: item.title,
+      title,
       description: item.description || '',
       hours: item.hours,
       date: item.date,
       jira_issue_key: item.jira_issue_key || '',
       category: item.category || '',
+      project_name,
     })
     setShowEditModal(true)
   }, [])
@@ -328,6 +343,7 @@ export function useThisWeek(isAuthenticated: boolean) {
         date: formData.date,
         jira_issue_key: formData.jira_issue_key || undefined,
         category: formData.category || undefined,
+        project_name: formData.project_name || undefined,
       })
       setShowEditModal(false)
       setSelectedItem(null)

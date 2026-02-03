@@ -5,7 +5,7 @@ import type { SettingsMessage } from './types'
 
 export function useLlmForm(config: ConfigResponse | null) {
   const [llmProvider, setLlmProvider] = useState('openai')
-  const [llmModel, setLlmModel] = useState('gpt-4o-mini')
+  const [llmModel, setLlmModel] = useState('gpt-5-nano')
   const [llmApiKey, setLlmApiKey] = useState('')
   const [llmBaseUrl, setLlmBaseUrl] = useState('')
   const [showLlmKey, setShowLlmKey] = useState(false)
@@ -14,14 +14,14 @@ export function useLlmForm(config: ConfigResponse | null) {
   useEffect(() => {
     if (config) {
       setLlmProvider(config.llm_provider || 'openai')
-      setLlmModel(config.llm_model || 'gpt-4o-mini')
+      setLlmModel(config.llm_model || 'gpt-5-nano')
       setLlmBaseUrl(config.llm_base_url || '')
     }
   }, [config])
 
   const handleProviderChange = (providerId: string) => {
     setLlmProvider(providerId)
-    if (providerId === 'openai') setLlmModel('gpt-4o-mini')
+    if (providerId === 'openai') setLlmModel('gpt-5-nano')
     else if (providerId === 'anthropic') setLlmModel('claude-3-5-sonnet-20241022')
     else if (providerId === 'ollama') setLlmModel('llama3.2')
     else setLlmModel('')

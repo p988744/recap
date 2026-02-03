@@ -38,7 +38,7 @@ describe('useLlmForm', () => {
     const { result } = renderHook(() => useLlmForm(null))
 
     expect(result.current.llmProvider).toBe('openai')
-    expect(result.current.llmModel).toBe('gpt-4o-mini')
+    expect(result.current.llmModel).toBe('gpt-5-nano')
     expect(result.current.llmBaseUrl).toBe('')
   })
 
@@ -57,7 +57,7 @@ describe('useLlmForm', () => {
     })
 
     expect(result.current.llmProvider).toBe('openai')
-    expect(result.current.llmModel).toBe('gpt-4o-mini')
+    expect(result.current.llmModel).toBe('gpt-5-nano')
   })
 
   it('should change model when provider changes to anthropic', () => {

@@ -231,24 +231,46 @@ impl<'a> ConfigRepository for SqliteConfigRepository<'a> {
         base_url: Option<&str>,
     ) -> Result<(), String> {
         let now = Utc::now();
-        sqlx::query(
-            r#"UPDATE users SET
-                llm_provider = ?,
-                llm_model = ?,
-                llm_api_key = ?,
-                llm_base_url = ?,
-                updated_at = ?
-            WHERE id = ?"#,
-        )
-        .bind(provider)
-        .bind(model)
-        .bind(api_key)
-        .bind(base_url)
-        .bind(now)
-        .bind(user_id)
-        .execute(self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
+
+        // If api_key is provided, update it; otherwise keep existing value
+        if let Some(key) = api_key {
+            sqlx::query(
+                r#"UPDATE users SET
+                    llm_provider = ?,
+                    llm_model = ?,
+                    llm_api_key = ?,
+                    llm_base_url = ?,
+                    updated_at = ?
+                WHERE id = ?"#,
+            )
+            .bind(provider)
+            .bind(model)
+            .bind(key)
+            .bind(base_url)
+            .bind(now)
+            .bind(user_id)
+            .execute(self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        } else {
+            // Keep existing api_key, only update other fields
+            sqlx::query(
+                r#"UPDATE users SET
+                    llm_provider = ?,
+                    llm_model = ?,
+                    llm_base_url = ?,
+                    updated_at = ?
+                WHERE id = ?"#,
+            )
+            .bind(provider)
+            .bind(model)
+            .bind(base_url)
+            .bind(now)
+            .bind(user_id)
+            .execute(self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        }
         Ok(())
     }
 
@@ -386,7 +408,7 @@ pub(crate) fn build_config_response(user: &UserConfigRow) -> ConfigResponse {
         llm_model: user
             .llm_model
             .clone()
-            .unwrap_or_else(|| "gpt-4o-mini".to_string()),
+            .unwrap_or_else(|| "gpt-5-nano".to_string()),
         llm_base_url: user.llm_base_url.clone(),
         llm_configured: user.llm_api_key.is_some(),
 
@@ -564,6 +586,112 @@ pub async fn update_jira_config(
     update_jira_config_impl(&repo, &token, request).await
 }
 
+/// Test LLM connection
+/// Sends a simple request to verify the API key and model are working
+#[tauri::command]
+pub async fn test_llm_connection(
+    state: State<'_, AppState>,
+    token: String,
+) -> Result<recap_core::services::llm::LlmTestResult, String> {
+    use recap_core::auth::verify_token;
+
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
+
+    // Get LLM config for the user
+    let row: (Option<String>, Option<String>, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT llm_provider, llm_model, llm_api_key, llm_base_url FROM users WHERE id = ?"
+    )
+    .bind(&claims.sub)
+    .fetch_optional(&db.pool)
+    .await
+    .map_err(|e| format!("Database error: {}", e))?
+    .ok_or_else(|| "User not found".to_string())?;
+
+    let config = recap_core::services::llm::LlmConfig {
+        provider: row.0.unwrap_or_else(|| "openai".to_string()),
+        model: row.1.unwrap_or_else(|| "gpt-5-nano".to_string()),
+        api_key: row.2,
+        base_url: row.3,
+    };
+
+    // Check if configured
+    let is_configured = match config.provider.as_str() {
+        "ollama" => true,
+        _ => config.api_key.is_some(),
+    };
+
+    if !is_configured {
+        return Ok(recap_core::services::llm::LlmTestResult {
+            success: false,
+            message: "LLM 尚未設定 API Key".to_string(),
+            latency_ms: 0,
+            prompt_tokens: None,
+            completion_tokens: None,
+            model_response: None,
+        });
+    }
+
+    let service = recap_core::services::llm::LlmService::new(config);
+    service.test_connection().await
+}
+
+/// Response for onboarding status
+#[derive(Debug, Clone, Serialize)]
+pub struct OnboardingStatusResponse {
+    pub completed: bool,
+}
+
+/// Get onboarding status for current user
+#[tauri::command]
+pub async fn get_onboarding_status(
+    state: State<'_, AppState>,
+    token: String,
+) -> Result<OnboardingStatusResponse, String> {
+    use recap_core::auth::verify_token;
+
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
+
+    let row: Option<(Option<bool>,)> = sqlx::query_as(
+        "SELECT onboarding_completed FROM users WHERE id = ?"
+    )
+    .bind(&claims.sub)
+    .fetch_optional(&db.pool)
+    .await
+    .map_err(|e| format!("Database error: {}", e))?;
+
+    let completed = row
+        .and_then(|r| r.0)
+        .unwrap_or(false);
+
+    Ok(OnboardingStatusResponse { completed })
+}
+
+/// Mark onboarding as completed for current user
+#[tauri::command]
+pub async fn complete_onboarding(
+    state: State<'_, AppState>,
+    token: String,
+) -> Result<MessageResponse, String> {
+    use recap_core::auth::verify_token;
+
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
+    let now = chrono::Utc::now();
+
+    sqlx::query("UPDATE users SET onboarding_completed = 1, updated_at = ? WHERE id = ?")
+        .bind(now)
+        .bind(&claims.sub)
+        .execute(&db.pool)
+        .await
+        .map_err(|e| format!("Database error: {}", e))?;
+
+    Ok(MessageResponse {
+        message: "Onboarding completed".to_string(),
+    })
+}
+
 // ============================================================================
 // Tests with Mock Repository
 // ============================================================================
@@ -654,7 +782,10 @@ mod tests {
             if let Some(config) = self.config.lock().unwrap().as_mut() {
                 config.llm_provider = Some(provider.to_string());
                 config.llm_model = Some(model.to_string());
-                config.llm_api_key = api_key.map(|s| s.to_string());
+                // Only update api_key if provided (preserve existing if None)
+                if let Some(key) = api_key {
+                    config.llm_api_key = Some(key.to_string());
+                }
                 config.llm_base_url = base_url.map(|s| s.to_string());
             }
             Ok(())
@@ -816,7 +947,7 @@ mod tests {
         assert!(!response.jira_configured);
         assert!(!response.tempo_configured);
         assert_eq!(response.llm_provider, "openai");
-        assert_eq!(response.llm_model, "gpt-4o-mini");
+        assert_eq!(response.llm_model, "gpt-5-nano");
         assert!(!response.llm_configured);
         assert_eq!(response.daily_work_hours, 8.0);
         assert!(response.normalize_hours);

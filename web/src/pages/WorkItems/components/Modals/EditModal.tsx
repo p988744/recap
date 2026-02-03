@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import type { WorkItemFormData } from '../../hooks/useWorkItems'
+import { ProjectSelector } from '../ProjectSelector'
 
 interface EditModalProps {
   open: boolean
@@ -71,6 +72,14 @@ export function EditModal({
                 onChange={(e) => setFormData({ ...formData, hours: parseFloat(e.target.value) || 0 })}
               />
             </div>
+          </div>
+          <div className="space-y-2">
+            <Label>所屬專案</Label>
+            <ProjectSelector
+              value={formData.project_name}
+              onChange={(value) => setFormData({ ...formData, project_name: value })}
+              placeholder="選擇或新增專案..."
+            />
           </div>
           <div className="space-y-2">
             <Label>Jira Issue Key</Label>

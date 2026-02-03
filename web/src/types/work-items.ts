@@ -24,6 +24,8 @@ export interface WorkItem {
   created_at: string
   updated_at: string
   parent_id?: string
+  project_path?: string
+  project_name?: string
 }
 
 export interface WorkItemWithChildren extends WorkItem {
@@ -63,6 +65,7 @@ export interface CreateWorkItemRequest {
   jira_issue_title?: string
   category?: string
   tags?: string[]
+  project_name?: string
 }
 
 export interface UpdateWorkItemRequest {
@@ -76,6 +79,7 @@ export interface UpdateWorkItemRequest {
   tags?: string[]
   synced_to_tempo?: boolean
   tempo_worklog_id?: string
+  project_name?: string
 }
 
 // Grouped view types

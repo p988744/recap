@@ -84,7 +84,7 @@ async fn get_llm_config(pool: &sqlx::SqlitePool, user_id: &str) -> Result<LlmCon
 
     Ok(LlmConfig {
         provider: row.0.unwrap_or_else(|| "openai".to_string()),
-        model: row.1.unwrap_or_else(|| "gpt-4o-mini".to_string()),
+        model: row.1.unwrap_or_else(|| "gpt-5-nano".to_string()),
         api_key: row.2,
         base_url: row.3,
     })

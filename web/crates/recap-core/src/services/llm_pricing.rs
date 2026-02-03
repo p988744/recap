@@ -19,6 +19,12 @@ pub fn estimate_cost(
 fn get_pricing(provider: &str, model: &str) -> (f64, f64) {
     match provider {
         "openai" | "openai-compatible" => match model {
+            m if m.starts_with("gpt-5-nano") => (0.10, 0.40),
+            m if m.starts_with("gpt-5-mini") => (0.15, 0.60),
+            m if m.starts_with("gpt-5") => (2.00, 8.00),
+            m if m.starts_with("gpt-4.1-nano") => (0.10, 0.40),
+            m if m.starts_with("gpt-4.1-mini") => (0.15, 0.60),
+            m if m.starts_with("gpt-4.1") => (2.00, 8.00),
             m if m.starts_with("gpt-4o-mini") => (0.15, 0.60),
             m if m.starts_with("gpt-4o") => (2.50, 10.00),
             m if m.starts_with("gpt-4-turbo") => (10.00, 30.00),

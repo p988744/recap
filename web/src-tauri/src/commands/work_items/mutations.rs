@@ -26,6 +26,17 @@ pub async fn create_work_item(
     let source = request.source.unwrap_or_else(|| "manual".to_string());
     let tags_json = request.tags.map(|t| serde_json::to_string(&t).unwrap_or_default());
 
+    // For manual items with project_name, prepend to title as [ProjectName]
+    let title = if let Some(ref project_name) = request.project_name {
+        if !project_name.is_empty() {
+            format!("[{}] {}", project_name, request.title)
+        } else {
+            request.title.clone()
+        }
+    } else {
+        request.title.clone()
+    };
+
     sqlx::query(
         r#"INSERT INTO work_items (id, user_id, source, source_id, title, description, hours, date,
             jira_issue_key, jira_issue_title, category, tags, created_at, updated_at)
@@ -35,7 +46,7 @@ pub async fn create_work_item(
     .bind(&claims.sub)
     .bind(&source)
     .bind(&request.source_id)
-    .bind(&request.title)
+    .bind(&title)
     .bind(&request.description)
     .bind(request.hours.unwrap_or(0.0))
     .bind(&request.date)
@@ -180,6 +191,36 @@ pub async fn update_work_item(
     if let Some(synced) = request.synced_to_tempo {
         sqlx::query("UPDATE work_items SET synced_to_tempo = ? WHERE id = ?")
             .bind(synced)
+            .bind(&id)
+            .execute(&db.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    // Handle project_name update - update title prefix
+    if let Some(ref project_name) = request.project_name {
+        let existing = existing.as_ref().unwrap();
+        let current_title = &existing.title;
+
+        // Remove existing [Project] prefix if present
+        let base_title = if current_title.starts_with('[') && current_title.contains("] ") {
+            current_title
+                .find("] ")
+                .map(|idx| &current_title[idx + 2..])
+                .unwrap_or(current_title)
+        } else {
+            current_title.as_str()
+        };
+
+        // Add new prefix if project_name is not empty
+        let new_title = if !project_name.is_empty() {
+            format!("[{}] {}", project_name, base_title)
+        } else {
+            base_title.to_string()
+        };
+
+        sqlx::query("UPDATE work_items SET title = ? WHERE id = ?")
+            .bind(&new_title)
             .bind(&id)
             .execute(&db.pool)
             .await

@@ -18,14 +18,14 @@ import {
   Eye,
   EyeOff,
 } from 'lucide-react'
-import { projects as projectsService, config as configService } from '@/services'
+import { projects as projectsService, config as configService, auth as authService } from '@/services'
 import { antigravity } from '@/services/integrations'
 import type { AntigravityApiStatus } from '@/types'
 import { ClaudeIcon } from '@/pages/Settings/components/ProjectsSection/icons/ClaudeIcon'
 import { GeminiIcon } from '@/pages/Settings/components/ProjectsSection/icons/GeminiIcon'
 
 const LLM_PROVIDERS = [
-  { id: 'openai', label: 'OpenAI', desc: 'GPT-4o, GPT-4 等', defaultModel: 'gpt-4o-mini' },
+  { id: 'openai', label: 'OpenAI', desc: 'GPT-5 系列', defaultModel: 'gpt-5-nano' },
   { id: 'anthropic', label: 'Anthropic', desc: 'Claude 系列', defaultModel: 'claude-sonnet-4-20250514' },
   { id: 'ollama', label: 'Ollama', desc: '本地部署', defaultModel: 'llama3.2' },
   { id: 'openai-compatible', label: '相容 API', desc: '自架 OpenAI 相容服務', defaultModel: '' },
@@ -33,7 +33,7 @@ const LLM_PROVIDERS = [
 
 export function OnboardingPage() {
   const navigate = useNavigate()
-  const { register, isAuthenticated } = useAuth()
+  const { user, appStatus, register, onboardingCompleted, completeOnboarding } = useAuth()
   const [step, setStep] = useState(1)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -43,25 +43,39 @@ export function OnboardingPage() {
   const [email, setEmail] = useState('')
   const [title, setTitle] = useState('')
 
+  // If user already exists, skip profile step and go to step 3 (only on initial load)
+  const [initialSkipDone, setInitialSkipDone] = useState(false)
+  useEffect(() => {
+    if (!initialSkipDone && user && appStatus?.has_users) {
+      // Pre-fill with existing user data
+      setName(user.name || '')
+      setEmail(user.email || '')
+      setTitle(user.title || '')
+      // Skip to step 3 (data sources)
+      setStep(3)
+      setInitialSkipDone(true)
+    }
+  }, [user, appStatus, initialSkipDone])
+
   // Step 3: Data Sources
   const [claudePath, setClaudePath] = useState('')
   const [claudePathLoading, setClaudePathLoading] = useState(true)
   const [antigravityStatus, setAntigravityStatus] = useState<AntigravityApiStatus | null>(null)
-  const [antigravityLoading, setAntigravityLoading] = useState(true)
+  const [antigravityLoading, setAntigravityLoading] = useState(false)
 
   // Step 4: LLM
   const [llmProvider, setLlmProvider] = useState('openai')
-  const [llmModel, setLlmModel] = useState('gpt-4o-mini')
+  const [llmModel, setLlmModel] = useState('gpt-5-nano')
   const [llmApiKey, setLlmApiKey] = useState('')
   const [llmBaseUrl, setLlmBaseUrl] = useState('')
   const [showLlmKey, setShowLlmKey] = useState(false)
 
-  // If already authenticated, redirect to home
+  // If onboarding already completed, redirect to home
   useEffect(() => {
-    if (isAuthenticated) {
-      navigate('/')
+    if (onboardingCompleted) {
+      navigate('/', { replace: true })
     }
-  }, [isAuthenticated, navigate])
+  }, [onboardingCompleted, navigate])
 
   // Fetch Claude path
   const fetchClaudePath = useCallback(async () => {
@@ -94,9 +108,9 @@ export function OnboardingPage() {
   useEffect(() => {
     if (step === 3) {
       fetchClaudePath()
-      checkAntigravity()
+      // Don't auto-check Antigravity - let user click to test
     }
-  }, [step, fetchClaudePath, checkAntigravity])
+  }, [step, fetchClaudePath])
 
   const handleProviderChange = (providerId: string) => {
     setLlmProvider(providerId)
@@ -122,12 +136,22 @@ export function OnboardingPage() {
     setError('')
 
     try {
-      const userEmail = email.trim() || `${name.toLowerCase().replace(/\s+/g, '.')}@local`
-      const password = 'local-mode-password'
-      await register(userEmail, password, name.trim(), title.trim() || undefined)
+      if (user) {
+        // User exists, update profile
+        await authService.updateProfile({
+          name: name.trim(),
+          email: email.trim() || undefined,
+          title: title.trim() || undefined,
+        })
+      } else {
+        // New user, register
+        const userEmail = email.trim() || `${name.toLowerCase().replace(/\s+/g, '.')}@local`
+        const password = 'local-mode-password'
+        await register(userEmail, password, name.trim(), title.trim() || undefined)
+      }
       setStep(3)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '建立帳號失敗')
+      setError(err instanceof Error ? err.message : user ? '更新資料失敗' : '建立帳號失敗')
     } finally {
       setLoading(false)
     }
@@ -166,8 +190,16 @@ export function OnboardingPage() {
     }
   }
 
-  const handleComplete = () => {
-    navigate('/')
+  const handleComplete = async () => {
+    try {
+      // Mark onboarding as completed in database
+      await completeOnboarding()
+      navigate('/', { replace: true })
+    } catch (err) {
+      console.error('Failed to complete onboarding:', err)
+      // Navigate anyway to avoid blocking user
+      navigate('/', { replace: true })
+    }
   }
 
   const progress = (step / 5) * 100
@@ -376,30 +408,31 @@ export function OnboardingPage() {
                     <span className="text-[10px] text-muted-foreground ml-auto">選用</span>
                   )}
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  {antigravityLoading
-                    ? '檢查中...'
-                    : antigravityStatus?.healthy
-                      ? `已連線 (${antigravityStatus.session_count || 0} sessions)`
-                      : '未連線（可稍後設定）'}
-                </p>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs text-muted-foreground">
+                    {antigravityLoading
+                      ? '檢查中...'
+                      : antigravityStatus?.healthy
+                        ? `已連線 (${antigravityStatus.session_count || 0} sessions)`
+                        : '未連線（可稍後設定）'}
+                  </p>
+                  {!antigravityStatus?.healthy && (
+                    <button
+                      type="button"
+                      onClick={checkAntigravity}
+                      disabled={antigravityLoading}
+                      className="text-[10px] text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+                    >
+                      {antigravityLoading ? '測試中...' : '測試連線'}
+                    </button>
+                  )}
+                </div>
               </div>
 
-              {/* Git */}
-              <div className="p-3 border border-border rounded-lg">
-                <div className="flex items-center gap-2 mb-2">
-                  <FolderOpen className="w-4 h-4 text-emerald-600" />
-                  <span className="text-sm font-medium">Git 本地儲存庫</span>
-                  <CheckCircle2 className="w-3.5 h-3.5 text-sage ml-auto" />
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  自動從專案目錄讀取 commit 記錄
-                </p>
-              </div>
             </div>
 
             <p className="text-xs text-muted-foreground mb-4 p-2.5 bg-muted/50 rounded">
-              這些設定可以稍後在「設定 → 專案」中修改
+              Git 專案目錄可以稍後在「設定 → 專案」中新增
             </p>
 
             <div className="flex gap-3">

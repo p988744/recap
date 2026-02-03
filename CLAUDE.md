@@ -926,3 +926,67 @@ sqlite3 ~/Library/Application\ Support/com.recap.Recap/recap.db \
 sqlite3 ~/Library/Application\ Support/com.recap.Recap/recap.db \
   "SELECT period_start, git_commits_summary FROM work_summaries WHERE scale = 'hourly'"
 ```
+
+### OpenAI API 整合注意事項
+
+#### GPT-5 系列模型需使用 Responses API
+
+**問題背景：** GPT-5 系列模型（如 gpt-5-mini）使用 Chat Completions API 時會回傳空白或簡短回應（如 "OK"），無法正常生成摘要。
+
+**根本原因：**
+1. GPT-5 系列使用 **Reasoning Tokens** 進行推理，會先消耗 token 額度
+2. 預設 token 限制不足，導致推理完後沒有空間輸出實際內容
+3. 需要使用新的 **Responses API** 而非 Chat Completions API
+
+**API 差異對照：**
+
+| 項目 | Chat Completions API | Responses API |
+|------|---------------------|---------------|
+| Endpoint | `/v1/chat/completions` | `/v1/responses` |
+| 輸入格式 | `messages` 陣列 | `input` 字串 |
+| 輸出格式 | `choices[0].message.content` | `output` 陣列（含 reasoning + message） |
+| Token 參數 | `max_tokens` | `max_output_tokens` |
+
+**實作要點：**
+
+```rust
+// 1. 判斷是否為 GPT-5 系列
+fn uses_responses_api(model: &str) -> bool {
+    model.starts_with("gpt-5")
+}
+
+// 2. Responses API Request 結構
+#[derive(Serialize)]
+struct ResponsesApiRequest {
+    model: String,
+    input: String,
+    max_output_tokens: Option<u32>,  // 建議設 1000+
+    text: Option<ResponsesTextConfig>,
+}
+
+// 3. 解析 Response - 需處理 reasoning 和 message 兩種類型
+for item in result.output {
+    if item.item_type == "message" {
+        // 從 content 中提取 text
+    }
+}
+```
+
+**Fallback 機制：**
+- 偵測 trivial response（< 20 字元如 "OK"、"好的"）
+- 自動 fallback 到規則式摘要生成
+- 避免因 LLM 異常導致功能完全失效
+
+**相關檔案：**
+- `crates/recap-core/src/services/llm.rs` - LLM 服務實作
+- `complete_openai_responses_api()` - Responses API 實作
+- `uses_responses_api()` - 模型判斷函數
+
+**除錯技巧：**
+```bash
+# 檢查 LLM 生成的摘要
+sqlite3 ~/Library/Application\ Support/com.recap.Recap/recap.db \
+  "SELECT project_path, summary_source, LENGTH(summary) FROM work_summaries WHERE scale = 'daily'"
+```
+
+> 更新日期：2026-02-03
