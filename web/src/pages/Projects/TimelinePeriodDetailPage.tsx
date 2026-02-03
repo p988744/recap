@@ -1,14 +1,20 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Clock, Calendar, GitCommit, FileCode, ChevronDown, ChevronRight } from 'lucide-react'
+import { ArrowLeft, Clock, Calendar, GitCommit, FileCode, ChevronDown, ChevronRight, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useProjectDetail } from './hooks/useProjectDetail'
-import { worklog } from '@/services'
+import { worklog, workItems } from '@/services'
 import type { HourlyBreakdownItem } from '@/types/worklog'
+import type { WorkItem } from '@/types'
 import { MarkdownSummary } from '@/components/MarkdownSummary'
 import { ClaudeIcon } from '@/pages/Settings/components/ProjectsSection/icons/ClaudeIcon'
 import { GeminiIcon } from '@/pages/Settings/components/ProjectsSection/icons/GeminiIcon'
 import { CommitDiffModal } from './components/Modals/CommitDiffModal'
+
+// Check if a path is a manual project path
+function isManualProjectPath(path: string | null): boolean {
+  return path ? path.includes('.recap') && path.includes('manual-projects') : false
+}
 
 // Format period label for display
 function formatPeriodLabel(label: string): string {
@@ -301,6 +307,43 @@ function DaySection({ date, items, projectPath }: DaySectionProps) {
   )
 }
 
+// Manual item card
+interface ManualItemCardProps {
+  item: WorkItem
+}
+
+function ManualItemCard({ item }: ManualItemCardProps) {
+  return (
+    <div className="border border-border rounded-lg bg-white/60 dark:bg-white/5 overflow-hidden">
+      <div className="px-4 py-3 bg-amber-50/50 dark:bg-amber-900/10 border-b border-border">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <FileText className="w-4 h-4 text-amber-600 dark:text-amber-400" strokeWidth={1.5} />
+            <span className="text-sm font-medium text-foreground">
+              {formatDateDisplay(item.date)}
+            </span>
+            <span className="text-xs px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300">
+              手動
+            </span>
+          </div>
+          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1">
+              <Clock className="w-3 h-3" strokeWidth={1.5} />
+              {item.hours}h
+            </span>
+          </div>
+        </div>
+      </div>
+      <div className="px-4 py-3">
+        <h3 className="text-sm font-medium text-foreground mb-1">{item.title}</h3>
+        {item.description && (
+          <p className="text-sm text-muted-foreground">{item.description}</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function TimelinePeriodDetailPage() {
   const { projectName } = useParams<{ projectName: string }>()
   const [searchParams] = useSearchParams()
@@ -315,12 +358,15 @@ export function TimelinePeriodDetailPage() {
   // Get project detail for project path
   const { detail } = useProjectDetail(decodedProjectName)
   const projectPath = detail?.project_path ?? null
+  const isManual = isManualProjectPath(projectPath)
 
-  // State for hourly breakdown data
+  // State for hourly breakdown data (for non-manual projects)
   const [hourlyData, setHourlyData] = useState<Record<string, HourlyBreakdownItem[]>>({})
+  // State for manual work items
+  const [manualItems, setManualItems] = useState<WorkItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
 
-  // Fetch hourly breakdown for each day in the period
+  // Fetch data based on project type
   useEffect(() => {
     if (!projectPath || !periodStart || !periodEnd) {
       setIsLoading(false)
@@ -329,31 +375,68 @@ export function TimelinePeriodDetailPage() {
 
     const fetchData = async () => {
       setIsLoading(true)
-      const dates = getDateRange(periodStart, periodEnd)
-      const dataByDate: Record<string, HourlyBreakdownItem[]> = {}
 
-      await Promise.all(
-        dates.map(async (date) => {
-          try {
-            const items = await worklog.getHourlyBreakdown(date, projectPath)
-            if (items.length > 0) {
-              dataByDate[date] = items
+      if (isManual) {
+        // Fetch manual work items for this project
+        try {
+          const response = await workItems.list({
+            source: 'manual',
+            start_date: periodStart,
+            end_date: periodEnd,
+            per_page: 100,
+            show_all: true,
+          })
+          // Filter by project name (derive from project_path)
+          const filtered = response.items.filter((item: WorkItem) => {
+            if (item.project_path && isManualProjectPath(item.project_path)) {
+              const itemProjectName = item.project_path.split(/[/\\]/).pop() || ''
+              return itemProjectName === decodedProjectName
             }
-          } catch (err) {
-            console.error(`Failed to fetch hourly breakdown for ${date}:`, err)
-          }
-        })
-      )
+            return false
+          })
+          setManualItems(filtered)
+        } catch (err) {
+          console.error('Failed to fetch manual items:', err)
+          setManualItems([])
+        }
+      } else {
+        // Fetch hourly breakdown for non-manual projects
+        const dates = getDateRange(periodStart, periodEnd)
+        const dataByDate: Record<string, HourlyBreakdownItem[]> = {}
 
-      setHourlyData(dataByDate)
+        await Promise.all(
+          dates.map(async (date) => {
+            try {
+              const items = await worklog.getHourlyBreakdown(date, projectPath)
+              if (items.length > 0) {
+                dataByDate[date] = items
+              }
+            } catch (err) {
+              console.error(`Failed to fetch hourly breakdown for ${date}:`, err)
+            }
+          })
+        )
+
+        setHourlyData(dataByDate)
+      }
+
       setIsLoading(false)
     }
 
     fetchData()
-  }, [projectPath, periodStart, periodEnd])
+  }, [projectPath, periodStart, periodEnd, isManual, decodedProjectName])
 
   // Calculate stats
   const { totalHours, totalCommits, datesWithData } = useMemo(() => {
+    if (isManual) {
+      // For manual items
+      const hours = manualItems.reduce((sum, item) => sum + item.hours, 0)
+      const sortedItems = [...manualItems].sort((a, b) => b.date.localeCompare(a.date))
+      const dates = [...new Set(sortedItems.map((item) => item.date))]
+      return { totalHours: hours, totalCommits: 0, datesWithData: dates }
+    }
+
+    // For non-manual projects
     const sortedDates = Object.keys(hourlyData).sort((a, b) => b.localeCompare(a))
     let hours = 0
     let commits = 0
@@ -364,7 +447,7 @@ export function TimelinePeriodDetailPage() {
     }
 
     return { totalHours: hours, totalCommits: commits, datesWithData: sortedDates }
-  }, [hourlyData])
+  }, [hourlyData, manualItems, isManual])
 
   const formattedLabel = formatPeriodLabel(periodLabel)
   const dateRange = formatDateRange(periodStart, periodEnd)
@@ -417,34 +500,57 @@ export function TimelinePeriodDetailPage() {
             <Clock className="w-4 h-4" strokeWidth={1.5} />
             {totalHours}h total
           </span>
-          <span className="flex items-center gap-1.5">
-            <GitCommit className="w-4 h-4" strokeWidth={1.5} />
-            {totalCommits} commits
-          </span>
+          {!isManual && (
+            <span className="flex items-center gap-1.5">
+              <GitCommit className="w-4 h-4" strokeWidth={1.5} />
+              {totalCommits} commits
+            </span>
+          )}
         </div>
       </div>
 
-      {/* Hourly breakdown by date */}
-      {datesWithData.length > 0 ? (
-        <div className="space-y-4">
-          <h2 className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-            工作紀錄 ({datesWithData.length} 天)
-          </h2>
+      {/* Work records */}
+      {isManual ? (
+        // Manual items display
+        manualItems.length > 0 ? (
           <div className="space-y-4">
-            {datesWithData.map((date) => (
-              <DaySection
-                key={date}
-                date={date}
-                items={hourlyData[date]}
-                projectPath={projectPath}
-              />
-            ))}
+            <h2 className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+              工作紀錄 ({manualItems.length} 項)
+            </h2>
+            <div className="space-y-4">
+              {manualItems.map((item) => (
+                <ManualItemCard key={item.id} item={item} />
+              ))}
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="py-16 text-center">
+            <p className="text-muted-foreground">此期間無工作紀錄</p>
+          </div>
+        )
       ) : (
-        <div className="py-16 text-center">
-          <p className="text-muted-foreground">此期間無工作紀錄</p>
-        </div>
+        // Hourly breakdown display for non-manual projects
+        datesWithData.length > 0 ? (
+          <div className="space-y-4">
+            <h2 className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+              工作紀錄 ({datesWithData.length} 天)
+            </h2>
+            <div className="space-y-4">
+              {datesWithData.map((date) => (
+                <DaySection
+                  key={date}
+                  date={date}
+                  items={hourlyData[date]}
+                  projectPath={projectPath}
+                />
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="py-16 text-center">
+            <p className="text-muted-foreground">此期間無工作紀錄</p>
+          </div>
+        )
       )}
     </div>
   )

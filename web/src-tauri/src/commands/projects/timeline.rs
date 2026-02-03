@@ -15,6 +15,11 @@ use super::types::{
 };
 use crate::commands::AppState;
 
+/// Check if a path is a manual project path
+fn is_manual_project_path(path: &str) -> bool {
+    path.contains(".recap") && path.contains("manual-projects")
+}
+
 /// Extract project name from work item title "[ProjectName] ..." pattern
 fn extract_project_name(title: &str) -> Option<String> {
     if title.starts_with('[') {
@@ -27,13 +32,29 @@ fn extract_project_name(title: &str) -> Option<String> {
     }
 }
 
-/// Derive project name from either title pattern or project_path
+/// Derive project name from project_path or title pattern
+/// For manual projects, always use project_path
 fn derive_project_name(item: &WorkItem) -> String {
+    // For manual projects, always use project_path
+    if let Some(path) = &item.project_path {
+        if is_manual_project_path(path) {
+            if let Some(last) = std::path::Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+            {
+                return last.to_string();
+            }
+        }
+    }
+
+    // For other items, try title pattern first
     if let Some(name) = extract_project_name(&item.title) {
         if !name.is_empty() {
             return name;
         }
     }
+
+    // Fall back to project_path
     if let Some(path) = &item.project_path {
         if let Some(last) = std::path::Path::new(path)
             .file_name()

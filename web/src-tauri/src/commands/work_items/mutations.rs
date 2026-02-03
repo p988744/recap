@@ -2,7 +2,7 @@
 //!
 //! Commands for creating, updating, and deleting work items.
 
-use chrono::Utc;
+use chrono::{NaiveDate, Utc};
 use tauri::State;
 use uuid::Uuid;
 
@@ -10,6 +10,163 @@ use recap_core::auth::verify_token;
 use recap_core::models::{CreateWorkItem, UpdateWorkItem, WorkItem};
 
 use crate::commands::AppState;
+
+/// Create a snapshot record for a manual work item
+/// This allows manual items to use the same workflow as automatic items
+async fn create_manual_snapshot(
+    pool: &sqlx::SqlitePool,
+    user_id: &str,
+    work_item_id: &str,
+    project_path: &str,
+    date: &NaiveDate,
+    title: &str,
+    description: Option<&str>,
+    hours: f64,
+) -> Result<(), String> {
+    let snapshot_id = Uuid::new_v4().to_string();
+    let session_id = format!("manual:{}", work_item_id);
+
+    // Create hour_bucket from date (use 09:00 as default work start time)
+    let hour_bucket = format!("{}T09:00:00", date.format("%Y-%m-%d"));
+
+    // Build user_messages JSON with title and description
+    let content = if let Some(desc) = description {
+        format!("{}\n\n{}", title, desc)
+    } else {
+        title.to_string()
+    };
+    let user_messages = serde_json::json!([{
+        "role": "user",
+        "content": content,
+        "hours": hours
+    }]).to_string();
+
+    sqlx::query(
+        r#"INSERT OR REPLACE INTO snapshot_raw_data
+           (id, user_id, session_id, project_path, hour_bucket, user_messages,
+            assistant_messages, tool_calls, files_modified, git_commits,
+            message_count, raw_size_bytes, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, 1, 0, CURRENT_TIMESTAMP)"#
+    )
+    .bind(&snapshot_id)
+    .bind(user_id)
+    .bind(&session_id)
+    .bind(project_path)
+    .bind(&hour_bucket)
+    .bind(&user_messages)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to create snapshot for manual item: {}", e))?;
+
+    Ok(())
+}
+
+/// Update the snapshot record for a manual work item
+async fn update_manual_snapshot(
+    pool: &sqlx::SqlitePool,
+    user_id: &str,
+    work_item_id: &str,
+    project_path: Option<&str>,
+    date: Option<&NaiveDate>,
+    title: Option<&str>,
+    description: Option<&str>,
+    hours: Option<f64>,
+) -> Result<(), String> {
+    let session_id = format!("manual:{}", work_item_id);
+
+    // Check if snapshot exists
+    let existing: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM snapshot_raw_data WHERE session_id = ? AND user_id = ?"
+    )
+    .bind(&session_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if existing.is_none() {
+        // No existing snapshot, nothing to update
+        return Ok(());
+    }
+
+    // Update project_path if provided
+    if let Some(path) = project_path {
+        sqlx::query("UPDATE snapshot_raw_data SET project_path = ? WHERE session_id = ? AND user_id = ?")
+            .bind(path)
+            .bind(&session_id)
+            .bind(user_id)
+            .execute(pool)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    // Update hour_bucket if date changed
+    if let Some(naive_date) = date {
+        let hour_bucket = format!("{}T09:00:00", naive_date.format("%Y-%m-%d"));
+
+        sqlx::query("UPDATE snapshot_raw_data SET hour_bucket = ? WHERE session_id = ? AND user_id = ?")
+            .bind(&hour_bucket)
+            .bind(&session_id)
+            .bind(user_id)
+            .execute(pool)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    // Update user_messages if title or description changed
+    if title.is_some() || description.is_some() || hours.is_some() {
+        // Fetch current work item to get complete data
+        let item: Option<WorkItem> = sqlx::query_as(
+            "SELECT * FROM work_items WHERE id = ? AND user_id = ?"
+        )
+        .bind(work_item_id)
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        if let Some(item) = item {
+            let content = if let Some(desc) = &item.description {
+                format!("{}\n\n{}", item.title, desc)
+            } else {
+                item.title.clone()
+            };
+            let user_messages = serde_json::json!([{
+                "role": "user",
+                "content": content,
+                "hours": item.hours
+            }]).to_string();
+
+            sqlx::query("UPDATE snapshot_raw_data SET user_messages = ? WHERE session_id = ? AND user_id = ?")
+                .bind(&user_messages)
+                .bind(&session_id)
+                .bind(user_id)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Delete the snapshot record for a manual work item
+async fn delete_manual_snapshot(
+    pool: &sqlx::SqlitePool,
+    user_id: &str,
+    work_item_id: &str,
+) -> Result<(), String> {
+    let session_id = format!("manual:{}", work_item_id);
+
+    sqlx::query("DELETE FROM snapshot_raw_data WHERE session_id = ? AND user_id = ?")
+        .bind(&session_id)
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
 
 /// Get the manual projects directory path
 fn get_manual_projects_dir() -> Result<std::path::PathBuf, String> {
@@ -98,6 +255,22 @@ pub async fn create_work_item(
         .fetch_one(&db.pool)
         .await
         .map_err(|e| e.to_string())?;
+
+    // Create snapshot for manual items with project_path (for unified workflow)
+    if source == "manual" {
+        if let Some(ref path) = project_path {
+            create_manual_snapshot(
+                &db.pool,
+                &claims.sub,
+                &id,
+                path,
+                &request.date,
+                &title,
+                request.description.as_deref(),
+                request.hours.unwrap_or(0.0),
+            ).await?;
+        }
+    }
 
     Ok(item)
 }
@@ -259,6 +432,20 @@ pub async fn update_work_item(
         .await
         .map_err(|e| e.to_string())?;
 
+    // Update snapshot for manual items (for unified workflow)
+    if item.source == "manual" {
+        update_manual_snapshot(
+            &db.pool,
+            &claims.sub,
+            &id,
+            item.project_path.as_deref(),
+            request.date.as_ref(),
+            request.title.as_deref(),
+            request.description.as_deref(),
+            request.hours,
+        ).await?;
+    }
+
     Ok(item)
 }
 
@@ -272,6 +459,18 @@ pub async fn delete_work_item(
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
     let db = state.db.lock().await;
 
+    // Check if it's a manual item before deleting
+    let existing: Option<WorkItem> = sqlx::query_as(
+        "SELECT * FROM work_items WHERE id = ? AND user_id = ?"
+    )
+    .bind(&id)
+    .bind(&claims.sub)
+    .fetch_optional(&db.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let is_manual = existing.as_ref().map(|w| w.source == "manual").unwrap_or(false);
+
     let result = sqlx::query("DELETE FROM work_items WHERE id = ? AND user_id = ?")
         .bind(&id)
         .bind(&claims.sub)
@@ -281,6 +480,11 @@ pub async fn delete_work_item(
 
     if result.rows_affected() == 0 {
         return Err("Work item not found".to_string());
+    }
+
+    // Delete associated snapshot for manual items
+    if is_manual {
+        delete_manual_snapshot(&db.pool, &claims.sub, &id).await?;
     }
 
     Ok(())
