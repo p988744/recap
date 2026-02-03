@@ -11,6 +11,31 @@ use recap_core::models::{CreateWorkItem, UpdateWorkItem, WorkItem};
 
 use crate::commands::AppState;
 
+/// Get the manual projects directory path
+fn get_manual_projects_dir() -> Result<std::path::PathBuf, String> {
+    let home = dirs::home_dir().ok_or("Cannot find home directory")?;
+    Ok(home.join(".recap").join("manual-projects"))
+}
+
+/// Get the project path for a manual project
+fn get_manual_project_path(project_name: &str) -> Result<String, String> {
+    let dir = get_manual_projects_dir()?;
+    Ok(dir.join(project_name).to_string_lossy().to_string())
+}
+
+/// Ensure the manual project directory exists
+fn ensure_manual_project_dir(project_name: &str) -> Result<String, String> {
+    let dir = get_manual_projects_dir()?;
+    let project_dir = dir.join(project_name);
+
+    if !project_dir.exists() {
+        std::fs::create_dir_all(&project_dir)
+            .map_err(|e| format!("Failed to create manual project directory: {}", e))?;
+    }
+
+    Ok(project_dir.to_string_lossy().to_string())
+}
+
 /// Create a new work item
 #[tauri::command]
 pub async fn create_work_item(
@@ -26,21 +51,28 @@ pub async fn create_work_item(
     let source = request.source.unwrap_or_else(|| "manual".to_string());
     let tags_json = request.tags.map(|t| serde_json::to_string(&t).unwrap_or_default());
 
-    // For manual items with project_name, prepend to title as [ProjectName]
-    let title = if let Some(ref project_name) = request.project_name {
-        if !project_name.is_empty() {
-            format!("[{}] {}", project_name, request.title)
+    // For manual items with project_name, set project_path to manual-projects directory
+    let (title, project_path) = if source == "manual" {
+        if let Some(ref project_name) = request.project_name {
+            if !project_name.is_empty() {
+                // Create the manual project directory and set project_path
+                let path = ensure_manual_project_dir(project_name)?;
+                (request.title.clone(), Some(path))
+            } else {
+                (request.title.clone(), None)
+            }
         } else {
-            request.title.clone()
+            (request.title.clone(), None)
         }
     } else {
-        request.title.clone()
+        // Non-manual items keep their original behavior
+        (request.title.clone(), None)
     };
 
     sqlx::query(
         r#"INSERT INTO work_items (id, user_id, source, source_id, title, description, hours, date,
-            jira_issue_key, jira_issue_title, category, tags, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            jira_issue_key, jira_issue_title, category, tags, project_path, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
     )
     .bind(&id)
     .bind(&claims.sub)
@@ -54,6 +86,7 @@ pub async fn create_work_item(
     .bind(&request.jira_issue_title)
     .bind(&request.category)
     .bind(&tags_json)
+    .bind(&project_path)
     .bind(now)
     .bind(now)
     .execute(&db.pool)
@@ -197,34 +230,26 @@ pub async fn update_work_item(
             .map_err(|e| e.to_string())?;
     }
 
-    // Handle project_name update - update title prefix
+    // Handle project_name update - update project_path for manual items
     if let Some(ref project_name) = request.project_name {
         let existing = existing.as_ref().unwrap();
-        let current_title = &existing.title;
 
-        // Remove existing [Project] prefix if present
-        let base_title = if current_title.starts_with('[') && current_title.contains("] ") {
-            current_title
-                .find("] ")
-                .map(|idx| &current_title[idx + 2..])
-                .unwrap_or(current_title)
-        } else {
-            current_title.as_str()
-        };
+        // Only update project_path for manual source items
+        if existing.source == "manual" {
+            let project_path = if !project_name.is_empty() {
+                // Create the manual project directory and set project_path
+                Some(ensure_manual_project_dir(project_name)?)
+            } else {
+                None
+            };
 
-        // Add new prefix if project_name is not empty
-        let new_title = if !project_name.is_empty() {
-            format!("[{}] {}", project_name, base_title)
-        } else {
-            base_title.to_string()
-        };
-
-        sqlx::query("UPDATE work_items SET title = ? WHERE id = ?")
-            .bind(&new_title)
-            .bind(&id)
-            .execute(&db.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+            sqlx::query("UPDATE work_items SET project_path = ? WHERE id = ?")
+                .bind(&project_path)
+                .bind(&id)
+                .execute(&db.pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
     }
 
     // Fetch updated item

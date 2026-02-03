@@ -33,7 +33,7 @@ describe('useCommitDiff', () => {
       files: [
         {
           path: 'test.ts',
-          status: 'modified',
+          status: 'modified' as const,
           old_path: null,
           insertions: 10,
           deletions: 5,

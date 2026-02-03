@@ -16,8 +16,25 @@ use super::types::{
     ProjectSourceInfo, ProjectStats, SetProjectVisibilityRequest, WorkItemSummary,
 };
 
-/// Extract project name from work item title "[ProjectName] ..." pattern
-fn extract_project_name(title: &str) -> Option<String> {
+/// Check if a path is a manual project path (~/.recap/manual-projects/xxx)
+fn is_manual_project_path(path: &str) -> bool {
+    path.contains(".recap") && path.contains("manual-projects")
+}
+
+/// Extract project name from manual project path
+fn extract_project_name_from_manual_path(path: &str) -> Option<String> {
+    if is_manual_project_path(path) {
+        std::path::Path::new(path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_string())
+    } else {
+        None
+    }
+}
+
+/// Extract project name from work item title "[ProjectName] ..." pattern (legacy support)
+fn extract_project_name_from_title(title: &str) -> Option<String> {
     if title.starts_with('[') {
         title.split(']').next().map(|s| s.trim_start_matches('[').to_string())
     } else {
@@ -25,18 +42,29 @@ fn extract_project_name(title: &str) -> Option<String> {
     }
 }
 
-/// Derive project name from either title pattern or project_path
+/// Derive project name from project_path or title pattern
 fn derive_project_name(item: &WorkItem) -> String {
-    if let Some(name) = extract_project_name(&item.title) {
-        if !name.is_empty() {
+    // 1. First try to get from manual project path
+    if let Some(path) = &item.project_path {
+        if let Some(name) = extract_project_name_from_manual_path(path) {
             return name;
         }
     }
+
+    // 2. Then try to get from regular project_path (last segment)
     if let Some(path) = &item.project_path {
         if let Some(last) = std::path::Path::new(path).file_name().and_then(|n| n.to_str()) {
             return last.to_string();
         }
     }
+
+    // 3. Legacy: try to extract from title prefix [ProjectName]
+    if let Some(name) = extract_project_name_from_title(&item.title) {
+        if !name.is_empty() {
+            return name;
+        }
+    }
+
     "unknown".to_string()
 }
 

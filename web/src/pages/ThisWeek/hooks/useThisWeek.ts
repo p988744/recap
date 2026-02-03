@@ -305,17 +305,24 @@ export function useThisWeek(isAuthenticated: boolean) {
   const openEditModal = useCallback((item: WorkItem) => {
     setSelectedItem(item)
 
-    // Extract project_name from title if it has [ProjectName] prefix
-    let title = item.title
+    // Derive project_name from project_path for manual items
     let project_name = ''
-    if (item.title.startsWith('[') && item.title.includes('] ')) {
+    if (item.project_path?.includes('manual-projects')) {
+      const segments = item.project_path.split(/[/\\]/)
+      project_name = segments[segments.length - 1] || ''
+    } else if (item.project_path) {
+      const segments = item.project_path.split(/[/\\]/)
+      project_name = segments[segments.length - 1] || ''
+    }
+
+    // Legacy: check title prefix for backward compatibility
+    if (!project_name && item.title.startsWith('[') && item.title.includes('] ')) {
       const endIndex = item.title.indexOf('] ')
       project_name = item.title.substring(1, endIndex)
-      title = item.title.substring(endIndex + 2)
     }
 
     setFormData({
-      title,
+      title: item.title,
       description: item.description || '',
       hours: item.hours,
       date: item.date,
