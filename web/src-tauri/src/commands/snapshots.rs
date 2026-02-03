@@ -399,6 +399,12 @@ pub async fn get_worklog_overview(
     for summary in &daily_summaries {
         let date = summary.period_start.get(..10).unwrap_or(&summary.period_start).to_string();
         let project_path = summary.project_path.clone().unwrap_or_default();
+
+        // Skip manual projects - they're shown in manual_items, not as projects
+        if project_path.contains("manual-projects") {
+            continue;
+        }
+
         let project_name = std::path::Path::new(&project_path).file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string();
 
         // Parse commit/file counts from summary metadata
@@ -435,6 +441,10 @@ pub async fn get_worklog_overview(
 
     // Add snapshot-only data (projects with snapshots but no daily summary)
     for (project_path, day, commits, files, hours) in &snapshot_stats {
+        // Skip manual projects - they're shown in manual_items, not as projects
+        if project_path.contains("manual-projects") {
+            continue;
+        }
         get_or_create_day(&mut days_map, day);
         if let Some(day_entry) = days_map.get_mut(day.as_str()) {
             // Skip if already have a daily summary for this project
