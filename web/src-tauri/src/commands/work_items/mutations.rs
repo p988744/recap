@@ -174,13 +174,71 @@ fn get_manual_projects_dir() -> Result<std::path::PathBuf, String> {
     Ok(home.join(".recap").join("manual-projects"))
 }
 
-/// Generate the filename for a manual work item
-fn get_manual_item_filename(date: &NaiveDate, id: &str) -> String {
-    format!("{}_{}.md", date.format("%Y-%m-%d"), &id[..8])
+/// Manual item entry for JSONL file
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct ManualItemEntry {
+    id: String,
+    date: String,
+    hours: f64,
+    title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    jira_issue_key: Option<String>,
+    created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    updated_at: Option<String>,
 }
 
-/// Save a manual work item as a markdown file
-fn save_manual_item_file(
+/// Get the JSONL file path for a project
+fn get_items_jsonl_path(project_path: &str) -> std::path::PathBuf {
+    std::path::Path::new(project_path).join("items.jsonl")
+}
+
+/// Read all items from the JSONL file
+fn read_items_jsonl(project_path: &str) -> Result<Vec<ManualItemEntry>, String> {
+    let file_path = get_items_jsonl_path(project_path);
+
+    if !file_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let content = std::fs::read_to_string(&file_path)
+        .map_err(|e| format!("Failed to read items.jsonl: {}", e))?;
+
+    let mut items = Vec::new();
+    for line in content.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let item: ManualItemEntry = serde_json::from_str(line)
+            .map_err(|e| format!("Failed to parse JSONL line: {}", e))?;
+        items.push(item);
+    }
+
+    Ok(items)
+}
+
+/// Write all items to the JSONL file
+fn write_items_jsonl(project_path: &str, items: &[ManualItemEntry]) -> Result<(), String> {
+    let file_path = get_items_jsonl_path(project_path);
+
+    let mut content = String::new();
+    for item in items {
+        let line = serde_json::to_string(item)
+            .map_err(|e| format!("Failed to serialize item: {}", e))?;
+        content.push_str(&line);
+        content.push('\n');
+    }
+
+    std::fs::write(&file_path, content)
+        .map_err(|e| format!("Failed to write items.jsonl: {}", e))?;
+
+    Ok(())
+}
+
+/// Append a manual work item to the JSONL file
+fn append_manual_item_jsonl(
     project_path: &str,
     id: &str,
     date: &NaiveDate,
@@ -189,71 +247,81 @@ fn save_manual_item_file(
     hours: f64,
     jira_issue_key: Option<&str>,
 ) -> Result<(), String> {
-    let filename = get_manual_item_filename(date, id);
-    let file_path = std::path::Path::new(project_path).join(&filename);
+    let entry = ManualItemEntry {
+        id: id.to_string(),
+        date: date.format("%Y-%m-%d").to_string(),
+        hours,
+        title: title.to_string(),
+        description: description.map(|s| s.to_string()),
+        jira_issue_key: jira_issue_key.map(|s| s.to_string()),
+        created_at: Utc::now().to_rfc3339(),
+        updated_at: None,
+    };
 
-    // Build markdown content with YAML frontmatter
-    let mut content = String::new();
-    content.push_str("---\n");
-    content.push_str(&format!("id: {}\n", id));
-    content.push_str(&format!("date: {}\n", date.format("%Y-%m-%d")));
-    content.push_str(&format!("hours: {}\n", hours));
-    if let Some(key) = jira_issue_key {
-        if !key.is_empty() {
-            content.push_str(&format!("jira_issue_key: {}\n", key));
-        }
-    }
-    content.push_str("---\n\n");
-    content.push_str(&format!("# {}\n", title));
-    if let Some(desc) = description {
-        if !desc.is_empty() {
-            content.push_str(&format!("\n{}\n", desc));
-        }
-    }
+    let file_path = get_items_jsonl_path(project_path);
+    let line = serde_json::to_string(&entry)
+        .map_err(|e| format!("Failed to serialize item: {}", e))?;
 
-    std::fs::write(&file_path, content)
-        .map_err(|e| format!("Failed to save manual item file: {}", e))?;
+    // Append to file
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&file_path)
+        .map_err(|e| format!("Failed to open items.jsonl: {}", e))?;
 
-    Ok(())
-}
-
-/// Delete a manual work item file
-fn delete_manual_item_file(project_path: &str, date: &NaiveDate, id: &str) -> Result<(), String> {
-    let filename = get_manual_item_filename(date, id);
-    let file_path = std::path::Path::new(project_path).join(&filename);
-
-    if file_path.exists() {
-        std::fs::remove_file(&file_path)
-            .map_err(|e| format!("Failed to delete manual item file: {}", e))?;
-    }
+    writeln!(file, "{}", line)
+        .map_err(|e| format!("Failed to append to items.jsonl: {}", e))?;
 
     Ok(())
 }
 
-/// Update a manual work item file (delete old, create new if date changed)
-fn update_manual_item_file(
+/// Update a manual work item in the JSONL file
+fn update_manual_item_jsonl(
     old_project_path: Option<&str>,
     new_project_path: Option<&str>,
-    old_date: &NaiveDate,
-    new_date: &NaiveDate,
     id: &str,
+    date: &NaiveDate,
     title: &str,
     description: Option<&str>,
     hours: f64,
     jira_issue_key: Option<&str>,
 ) -> Result<(), String> {
-    // Delete old file if project or date changed
-    if let Some(old_path) = old_project_path {
-        if old_date != new_date || old_project_path != new_project_path {
-            let _ = delete_manual_item_file(old_path, old_date, id);
+    // If project changed, remove from old and add to new
+    if old_project_path != new_project_path {
+        if let Some(old_path) = old_project_path {
+            let _ = delete_manual_item_jsonl(old_path, id);
         }
+        if let Some(new_path) = new_project_path {
+            append_manual_item_jsonl(new_path, id, date, title, description, hours, jira_issue_key)?;
+        }
+        return Ok(());
     }
 
-    // Save new file
-    if let Some(new_path) = new_project_path {
-        save_manual_item_file(new_path, id, new_date, title, description, hours, jira_issue_key)?;
+    // Update in place
+    if let Some(project_path) = new_project_path {
+        let mut items = read_items_jsonl(project_path)?;
+
+        if let Some(item) = items.iter_mut().find(|i| i.id == id) {
+            item.date = date.format("%Y-%m-%d").to_string();
+            item.title = title.to_string();
+            item.description = description.map(|s| s.to_string());
+            item.hours = hours;
+            item.jira_issue_key = jira_issue_key.map(|s| s.to_string());
+            item.updated_at = Some(Utc::now().to_rfc3339());
+        }
+
+        write_items_jsonl(project_path, &items)?;
     }
 
+    Ok(())
+}
+
+/// Delete a manual work item from the JSONL file
+fn delete_manual_item_jsonl(project_path: &str, id: &str) -> Result<(), String> {
+    let mut items = read_items_jsonl(project_path)?;
+    items.retain(|item| item.id != id);
+    write_items_jsonl(project_path, &items)?;
     Ok(())
 }
 
@@ -353,8 +421,8 @@ pub async fn create_work_item(
                 request.hours.unwrap_or(0.0),
             ).await?;
 
-            // Save as markdown file
-            save_manual_item_file(
+            // Append to items.jsonl
+            append_manual_item_jsonl(
                 path,
                 &id,
                 &request.date,
@@ -541,13 +609,12 @@ pub async fn update_work_item(
             request.hours,
         ).await?;
 
-        // Update markdown file
-        update_manual_item_file(
+        // Update items.jsonl
+        update_manual_item_jsonl(
             existing_item.project_path.as_deref(),
             item.project_path.as_deref(),
-            &existing_item.date,
-            &item.date,
             &id,
+            &item.date,
             &item.title,
             item.description.as_deref(),
             item.hours,
@@ -595,10 +662,10 @@ pub async fn delete_work_item(
     if is_manual {
         delete_manual_snapshot(&db.pool, &claims.sub, &id).await?;
 
-        // Delete markdown file
+        // Delete from items.jsonl
         if let Some(ref item) = existing {
             if let Some(ref path) = item.project_path {
-                let _ = delete_manual_item_file(path, &item.date, &id);
+                let _ = delete_manual_item_jsonl(path, &id);
             }
         }
     }
