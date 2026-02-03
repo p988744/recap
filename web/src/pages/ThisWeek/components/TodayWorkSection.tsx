@@ -96,7 +96,7 @@ export function TodayWorkSection({
           ) : (
             <div className="space-y-6">
               {/* Gantt Chart - hourly timeline */}
-              <DayGanttChart date={today} projects={day.projects} />
+              <DayGanttChart date={today} projects={day.projects} manualItems={day.manual_items} />
 
               {/* Detailed work items */}
               <DayDetails

@@ -376,10 +376,10 @@ export function DayDetailPage() {
       ) : (
         <div className="space-y-6">
           {/* Gantt Chart - hourly timeline */}
-          {hasProjects && (
+          {(hasProjects || hasManualItems) && (
             <Card>
               <CardContent className="py-4">
-                <DayGanttChart date={date} projects={day.projects} />
+                <DayGanttChart date={date} projects={day.projects} manualItems={day.manual_items} />
               </CardContent>
             </Card>
           )}

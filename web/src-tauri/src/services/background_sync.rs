@@ -378,11 +378,14 @@ impl BackgroundSyncService {
     ///
     /// - `last_sync_at`: Read from sync_status table (MAX of all sources)
     /// - `last_compaction_at`: Read from work_summaries table (MAX created_at)
+    /// - `next_compaction_at`: Calculated from last_compaction_at + interval
     pub async fn initialize_timestamps_from_db(&self, user_id: &str) {
         let pool = {
             let db = self.db.lock().await;
             db.pool.clone()
         };
+
+        let compaction_interval = self.config.read().await.compaction_interval_minutes;
 
         // Load last_sync_at from sync_status table
         let sync_result = sqlx::query_scalar::<_, Option<String>>(
@@ -408,8 +411,31 @@ impl BackgroundSyncService {
 
         if let Ok(Some(last_compaction)) = compaction_result {
             log::info!("Restored last_compaction_at from database: {}", last_compaction);
-            let mut compaction_time = self.last_compaction_at.write().await;
-            *compaction_time = Some(last_compaction);
+            {
+                let mut compaction_time = self.last_compaction_at.write().await;
+                *compaction_time = Some(last_compaction.clone());
+            }
+
+            // Calculate next_compaction_at based on last + interval
+            if let Ok(last_dt) = chrono::DateTime::parse_from_rfc3339(&last_compaction) {
+                let next_dt = last_dt + chrono::Duration::minutes(compaction_interval as i64);
+                let now = chrono::Utc::now();
+                // If next time is in the past, schedule for now + interval
+                let next_compaction = if next_dt < now {
+                    Self::calculate_next_compaction(compaction_interval)
+                } else {
+                    next_dt.to_rfc3339()
+                };
+                log::info!("Calculated next_compaction_at: {}", next_compaction);
+                let mut next_time = self.next_compaction_at.write().await;
+                *next_time = Some(next_compaction);
+            }
+        } else {
+            // No previous compaction, set next compaction to now + interval
+            let next_compaction = Self::calculate_next_compaction(compaction_interval);
+            log::info!("No previous compaction, setting next_compaction_at: {}", next_compaction);
+            let mut next_time = self.next_compaction_at.write().await;
+            *next_time = Some(next_compaction);
         }
     }
 

@@ -18,7 +18,7 @@ const SOURCE_CONFIG: Record<string, { icon: React.ReactNode; label: string; clas
   },
   antigravity: {
     icon: <GeminiIcon className="w-2.5 h-2.5" />,
-    label: 'Gemini',
+    label: 'Antigravity',
     className: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
   },
   git: {

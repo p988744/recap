@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from 'react'
 import { Clock, GitCommit, FileCode } from 'lucide-react'
 import { worklog } from '@/services'
-import type { WorklogDayProject, HourlyBreakdownItem } from '@/types/worklog'
+import type { WorklogDayProject, HourlyBreakdownItem, ManualWorkItem } from '@/types/worklog'
 import {
   Tooltip,
   TooltipContent,
@@ -12,6 +12,8 @@ import {
 interface DayGanttChartProps {
   date: string
   projects: WorklogDayProject[]
+  /** Manual items with time info for Gantt display */
+  manualItems?: ManualWorkItem[]
 }
 
 interface CommitMarker {
@@ -44,6 +46,23 @@ interface ProjectRowData {
   projectPath: string
   projectName: string
   spans: TimeSpan[]
+  isManual?: boolean
+  /** True if manual item has no time info - show as full-width semi-transparent */
+  isUnknownTime?: boolean
+  /** Total hours for unknown time items */
+  totalHours?: number
+  /** Summary text for unknown time items */
+  summaryText?: string
+}
+
+// Parse time string (HH:MM) to hour and minute
+function parseTimeToHourMinute(timeStr: string): { hour: number; minute: number } | null {
+  if (!timeStr) return null
+  const parts = timeStr.split(':')
+  const h = parseInt(parts[0], 10)
+  const m = parseInt(parts[1] || '0', 10)
+  if (isNaN(h)) return null
+  return { hour: h, minute: isNaN(m) ? 0 : m }
 }
 
 // Parse hour string to number (e.g., "09:00" -> 9)
@@ -83,7 +102,10 @@ const PROJECT_COLORS = [
   'bg-orange-500/80',
 ]
 
-export function DayGanttChart({ date, projects }: DayGanttChartProps) {
+// Color for manual items
+const MANUAL_COLOR = 'bg-sage/70'
+
+export function DayGanttChart({ date, projects, manualItems = [] }: DayGanttChartProps) {
   const [hourlyData, setHourlyData] = useState<Map<string, HourlyBreakdownItem[]>>(new Map())
   const [loading, setLoading] = useState(true)
 
@@ -213,6 +235,83 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
       }
     })
 
+    // Add manual items (grouped by project)
+    // Separate items with time info from those without
+    const manualWithTime = new Map<string, ManualWorkItem[]>()
+    const manualWithoutTime = new Map<string, ManualWorkItem[]>()
+
+    for (const item of manualItems) {
+      const key = item.project_path ?? `manual:${item.project_name ?? '未分類'}`
+      if (item.start_time && item.end_time) {
+        if (!manualWithTime.has(key)) {
+          manualWithTime.set(key, [])
+        }
+        manualWithTime.get(key)!.push(item)
+      } else {
+        if (!manualWithoutTime.has(key)) {
+          manualWithoutTime.set(key, [])
+        }
+        manualWithoutTime.get(key)!.push(item)
+      }
+    }
+
+    // Add manual items WITH time info
+    manualWithTime.forEach((items, projectKey) => {
+      const spans: TimeSpan[] = []
+      for (const item of items) {
+        const startTime = parseTimeToHourMinute(item.start_time!)
+        const endTime = parseTimeToHourMinute(item.end_time!)
+        if (!startTime || !endTime) continue
+
+        const startHour = startTime.hour
+        const endHour = endTime.minute > 0 ? endTime.hour + 1 : endTime.hour
+
+        globalMin = Math.min(globalMin, startHour)
+        globalMax = Math.max(globalMax, endHour - 1)
+
+        spans.push({
+          startHour,
+          endHour,
+          data: [{
+            summaries: [item.title],
+            commits: 0,
+            files: 0,
+            sources: new Set(['manual']),
+            commitMarkers: [],
+          }],
+          totalCommits: 0,
+          totalFiles: 0,
+          allSources: new Set(['manual']),
+          allCommitMarkers: [],
+        })
+      }
+
+      if (spans.length > 0) {
+        rows.push({
+          projectPath: projectKey,
+          projectName: items[0].project_name ?? '未分類',
+          spans,
+          isManual: true,
+        })
+      }
+    })
+
+    // Add manual items WITHOUT time info (show as full-width semi-transparent)
+    manualWithoutTime.forEach((items, projectKey) => {
+      const totalHours = items.reduce((sum, item) => sum + item.hours, 0)
+      const summaries = items.map(item => item.title).filter(Boolean)
+
+      rows.push({
+        projectPath: projectKey,
+        projectName: items[0].project_name ?? '未分類',
+        spans: [], // No specific time spans
+        isManual: true,
+        isUnknownTime: true,
+        totalHours,
+        summaryText: summaries.join('\n'),
+      })
+    })
+
     // Default to work hours if no data
     if (globalMin > globalMax) {
       globalMin = 9
@@ -224,7 +323,7 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
     }
 
     return { projectRows: rows, minHour: globalMin, maxHour: globalMax }
-  }, [hourlyData, projects])
+  }, [hourlyData, projects, manualItems])
 
   // Generate hour columns
   const hourColumns = useMemo(() => {
@@ -305,7 +404,51 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
                     ))}
                   </div>
 
-                  {/* Time spans */}
+                  {/* Unknown time - full width semi-transparent bar */}
+                  {row.isUnknownTime && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div
+                          className="absolute top-1/2 -translate-y-1/2 h-7 rounded bg-sage/25 cursor-pointer hover:bg-sage/35 transition-colors overflow-hidden border border-dashed border-sage/40"
+                          style={{
+                            left: '2px',
+                            right: '2px',
+                          }}
+                        >
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <span className="text-[10px] text-sage/70 font-medium">
+                              {row.totalHours?.toFixed(1)}h (時段未知)
+                            </span>
+                          </div>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-sm bg-popover border border-border shadow-lg">
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-medium text-sm text-foreground">
+                              {row.projectName}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground/70">
+                              手動項目
+                            </span>
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            總工時: {row.totalHours?.toFixed(1)}h
+                          </div>
+                          <div className="text-[10px] text-amber-600 dark:text-amber-400">
+                            未設定具體時段
+                          </div>
+                          {row.summaryText && (
+                            <p className="text-xs text-muted-foreground whitespace-pre-line line-clamp-4 pt-1 border-t border-border">
+                              {row.summaryText}
+                            </p>
+                          )}
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+
+                  {/* Time spans (for items with known time) */}
                   {row.spans.map((span, spanIndex) => {
                     const startOffset = span.startHour - minHour
                     const spanWidth = span.endHour - span.startHour
@@ -320,7 +463,7 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
 
                     // Format sources for display
                     const sourcesDisplay = Array.from(span.allSources)
-                      .map(s => s === 'claude_code' ? 'Claude Code' : s === 'antigravity' ? 'Antigravity' : s)
+                      .map(s => s === 'claude_code' ? 'Claude Code' : s === 'antigravity' ? 'Antigravity' : s === 'manual' ? '手動項目' : s)
                       .join(' + ')
 
                     // Calculate commit marker positions within the span
@@ -332,18 +475,23 @@ export function DayGanttChart({ date, projects }: DayGanttChartProps) {
                       return { ...marker, positionPercent }
                     })
 
+                    // Use different color for manual items
+                    const spanColor = row.isManual
+                      ? MANUAL_COLOR
+                      : PROJECT_COLORS[rowIndex % PROJECT_COLORS.length]
+
                     return (
                       <Tooltip key={spanIndex}>
                         <TooltipTrigger asChild>
                           <div
-                            className={`absolute top-1/2 -translate-y-1/2 h-7 rounded ${PROJECT_COLORS[rowIndex % PROJECT_COLORS.length]} cursor-pointer hover:opacity-90 transition-opacity overflow-hidden`}
+                            className={`absolute top-1/2 -translate-y-1/2 h-7 rounded ${spanColor} cursor-pointer hover:opacity-90 transition-opacity overflow-hidden`}
                             style={{
                               left: `calc(${leftPercent}% + 2px)`,
                               width: `calc(${widthPercent}% - 4px)`,
                             }}
                           >
-                            {/* Commit markers */}
-                            {commitPositions.map((commit, idx) => (
+                            {/* Commit markers (only for non-manual items) */}
+                            {!row.isManual && commitPositions.map((commit, idx) => (
                               <div
                                 key={`${commit.hash}-${idx}`}
                                 className="absolute top-0 bottom-0 w-0.5 bg-white/60"

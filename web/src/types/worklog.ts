@@ -27,6 +27,10 @@ export interface ManualWorkItem {
   project_path?: string
   project_name?: string
   jira_issue_key?: string
+  /** Start time for Gantt chart display (HH:MM format, e.g. "09:00") */
+  start_time?: string
+  /** End time for Gantt chart display (HH:MM format, e.g. "10:30") */
+  end_time?: string
 }
 
 export interface WorklogDayProject {

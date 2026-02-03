@@ -101,10 +101,11 @@ export function WeekTimeline({ days, startDate }: WeekTimelineProps) {
     return dates
   }, [startDate])
 
-  // Aggregate project data across the week
+  // Aggregate project data across the week (including manual projects)
   const projectsData = useMemo(() => {
     const projectMap = new Map<string, ProjectWeekData>()
 
+    // Add automatic projects
     days.forEach(day => {
       day.projects.forEach(project => {
         if (!projectMap.has(project.project_path)) {
@@ -133,22 +134,62 @@ export function WeekTimeline({ days, startDate }: WeekTimelineProps) {
           data.totalFiles += project.total_files
         }
       })
+
+      // Add manual projects (grouped by project_path or project_name)
+      day.manual_items.forEach(item => {
+        const projectKey = item.project_path ?? `manual:${item.project_name ?? '未分類'}`
+        const projectName = item.project_name ?? '未分類'
+
+        if (!projectMap.has(projectKey)) {
+          projectMap.set(projectKey, {
+            projectName: projectName,
+            projectPath: projectKey,
+            dailyData: weekDates.map(() => null),
+            totalHours: 0,
+            totalCommits: 0,
+            totalFiles: 0,
+          })
+        }
+
+        const data = projectMap.get(projectKey)!
+        const dayIndex = weekDates.indexOf(day.date)
+        if (dayIndex !== -1) {
+          // Merge with existing data for that day (multiple manual items same project)
+          const existing = data.dailyData[dayIndex]
+          if (existing) {
+            existing.hours += item.hours
+            // Append to summary if exists
+            if (item.title) {
+              existing.summary = existing.summary
+                ? `${existing.summary}\n• ${item.title}`
+                : `• ${item.title}`
+            }
+          } else {
+            data.dailyData[dayIndex] = {
+              date: day.date,
+              hours: item.hours,
+              commits: 0,
+              files: 0,
+              summary: item.title ? `• ${item.title}` : undefined,
+            }
+          }
+          data.totalHours += item.hours
+        }
+      })
     })
 
     // Sort by total hours descending
     return Array.from(projectMap.values()).sort((a, b) => b.totalHours - a.totalHours)
   }, [days, weekDates])
 
-  // Week stats (projects from heatmap + manual items for total hours)
+  // Week stats (all projects including manual)
   const weekStats = useMemo(() => {
-    const projectHours = projectsData.reduce((sum, p) => sum + p.totalHours, 0)
-    const manualHours = days.reduce((sum, d) => sum + d.manual_items.reduce((s, m) => s + m.hours, 0), 0)
     return {
-      totalHours: projectHours + manualHours,
+      totalHours: projectsData.reduce((sum, p) => sum + p.totalHours, 0),
       totalCommits: projectsData.reduce((sum, p) => sum + p.totalCommits, 0),
-      totalProjects: projectsData.length, // Only count projects shown in heatmap
+      totalProjects: projectsData.length,
     }
-  }, [projectsData, days])
+  }, [projectsData])
 
   if (projectsData.length === 0) {
     return (

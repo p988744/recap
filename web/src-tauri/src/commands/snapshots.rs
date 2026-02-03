@@ -218,6 +218,10 @@ pub struct ManualWorkItem {
     pub project_path: Option<String>,
     pub project_name: Option<String>,
     pub jira_issue_key: Option<String>,
+    /// Start time for Gantt chart display (HH:MM format, e.g. "09:00")
+    pub start_time: Option<String>,
+    /// End time for Gantt chart display (HH:MM format, e.g. "10:30")
+    pub end_time: Option<String>,
 }
 
 /// A project's daily summary within a worklog day
@@ -537,6 +541,8 @@ pub async fn get_worklog_overview(
                 project_path: item.project_path.clone(),
                 project_name,
                 jira_issue_key: item.jira_issue_key.clone(),
+                start_time: item.start_time.clone(),
+                end_time: item.end_time.clone(),
             });
         }
     }
