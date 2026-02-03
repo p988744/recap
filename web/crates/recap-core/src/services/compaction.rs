@@ -967,6 +967,7 @@ pub async fn run_compaction_cycle(
             AND ws.scale = 'hourly'
             AND ws.period_start = s.hour_bucket
         WHERE s.user_id = ? AND ws.id IS NULL
+            AND s.project_path NOT LIKE '%manual-projects%'
         ORDER BY s.hour_bucket
         "#,
     )
@@ -988,6 +989,7 @@ pub async fn run_compaction_cycle(
         SELECT DISTINCT s.project_path, s.hour_bucket
         FROM snapshot_raw_data s
         WHERE s.user_id = ? AND s.hour_bucket = ?
+            AND s.project_path NOT LIKE '%manual-projects%'
         "#,
     )
     .bind(user_id)
@@ -1034,6 +1036,7 @@ pub async fn run_compaction_cycle(
             AND ds.scale = 'daily'
             AND DATE(ds.period_start) = DATE(ws.period_start)
         WHERE ws.user_id = ? AND ws.scale = 'hourly' AND ds.id IS NULL
+            AND ws.project_path NOT LIKE '%manual-projects%'
         ORDER BY day
         "#,
     )
@@ -1052,6 +1055,7 @@ pub async fn run_compaction_cycle(
         SELECT DISTINCT ws.project_path
         FROM work_summaries ws
         WHERE ws.user_id = ? AND ws.scale = 'hourly' AND DATE(ws.period_start) = ?
+            AND ws.project_path NOT LIKE '%manual-projects%'
         "#,
     )
     .bind(user_id)
@@ -1109,6 +1113,7 @@ pub async fn run_compaction_cycle(
             AND ww.scale = 'weekly'
             AND DATE(ww.period_start) = DATE(ws.period_start, 'weekday 0', '-6 days')
         WHERE ws.user_id = ? AND ws.scale = 'daily' AND ww.id IS NULL
+            AND ws.project_path NOT LIKE '%manual-projects%'
         ORDER BY week_start
         "#,
     )
@@ -1127,6 +1132,7 @@ pub async fn run_compaction_cycle(
         FROM work_summaries ws
         WHERE ws.user_id = ? AND ws.scale = 'daily'
             AND DATE(ws.period_start, 'weekday 0', '-6 days') = DATE(?, 'weekday 0', '-6 days')
+            AND ws.project_path NOT LIKE '%manual-projects%'
         "#,
     )
     .bind(user_id)
@@ -1193,6 +1199,7 @@ pub async fn run_compaction_cycle(
         FROM work_summaries ws
         WHERE ws.user_id = ? AND ws.scale = 'weekly'
             AND ws.period_start >= ? AND ws.period_start < ?
+            AND ws.project_path NOT LIKE '%manual-projects%'
         "#,
     )
     .bind(user_id)
