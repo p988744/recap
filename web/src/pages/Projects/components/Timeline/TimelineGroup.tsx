@@ -1,7 +1,12 @@
 import { useNavigate } from 'react-router-dom'
-import { Calendar, Clock, ChevronRight } from 'lucide-react'
+import { Calendar, Clock, ChevronRight, FileText } from 'lucide-react'
 import type { TimelineGroup as TimelineGroupType } from '@/types'
 import { MarkdownSummary } from '@/components/MarkdownSummary'
+
+// Check if all sessions are from manual source
+function isManualProject(sessions: TimelineGroupType['sessions']): boolean {
+  return sessions.length > 0 && sessions.every(s => s.source === 'manual')
+}
 
 interface TimelineGroupProps {
   group: TimelineGroupType
@@ -116,15 +121,49 @@ export function TimelineGroupComponent({ group, projectName, summary }: Timeline
         </div>
       )}
 
-      {/* View details link - replaces session list */}
+      {/* Manual projects: show items as list; Others: show link to details */}
       {group.sessions.length > 0 ? (
-        <button
-          onClick={handleViewDetails}
-          className="w-full flex items-center justify-between px-4 py-3 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-md transition-colors cursor-pointer group"
-        >
-          <span>{group.sessions.length} sessions in this period</span>
-          <ChevronRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
-        </button>
+        isManualProject(group.sessions) ? (
+          // Manual project: display items as a simple list (條列)
+          <div className="space-y-2">
+            {group.sessions.map((session) => (
+              <div
+                key={session.id}
+                className="flex items-start gap-3 px-4 py-2 text-sm rounded-md hover:bg-muted/30 transition-colors"
+              >
+                <FileText className="w-4 h-4 mt-0.5 text-muted-foreground flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium truncate">{session.title || '未命名項目'}</div>
+                  {session.summary && (
+                    <div className="text-muted-foreground text-xs mt-0.5 line-clamp-2">
+                      {session.summary}
+                    </div>
+                  )}
+                </div>
+                <div className="text-muted-foreground flex-shrink-0">
+                  {session.hours.toFixed(1)}h
+                </div>
+              </div>
+            ))}
+            {/* Edit link for manual items */}
+            <button
+              onClick={handleViewDetails}
+              className="w-full flex items-center justify-center gap-1 px-4 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+            >
+              <span>編輯項目</span>
+              <ChevronRight className="w-3 h-3" />
+            </button>
+          </div>
+        ) : (
+          // Non-manual project: show link to period details
+          <button
+            onClick={handleViewDetails}
+            className="w-full flex items-center justify-between px-4 py-3 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-md transition-colors cursor-pointer group"
+          >
+            <span>{group.sessions.length} sessions in this period</span>
+            <ChevronRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
+          </button>
+        )
       ) : (
         <div className="py-4 text-center text-sm text-muted-foreground">
           No sessions in this period
