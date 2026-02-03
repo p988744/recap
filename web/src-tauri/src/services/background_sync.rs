@@ -30,8 +30,8 @@ pub struct BackgroundSyncConfig {
     pub enabled: bool,
     /// Data sync interval in minutes (5, 15, 30, 60)
     pub interval_minutes: u32,
-    /// Data compaction interval in hours (1, 3, 6, 12, 24)
-    pub compaction_interval_hours: u32,
+    /// Data compaction interval in minutes (30, 60, 180, 360, 720, 1440)
+    pub compaction_interval_minutes: u32,
     /// Sync local Git repositories
     pub sync_git: bool,
     /// Sync Claude Code sessions
@@ -51,7 +51,7 @@ impl Default for BackgroundSyncConfig {
         Self {
             enabled: true,
             interval_minutes: 15,
-            compaction_interval_hours: 6,
+            compaction_interval_minutes: 30,
             sync_git: true,
             sync_claude: true,
             sync_antigravity: true,
@@ -534,7 +534,7 @@ impl BackgroundSyncService {
         }
 
         let interval_minutes = config.interval_minutes;
-        let compaction_interval_hours = config.compaction_interval_hours;
+        let compaction_interval_minutes = config.compaction_interval_minutes;
         let auto_generate_summaries = config.auto_generate_summaries;
         drop(config);
 
@@ -568,9 +568,9 @@ impl BackgroundSyncService {
         }
 
         log::info!(
-            "Starting background sync service: data sync every {}min, compaction every {}h",
+            "Starting background sync service: data sync every {}min, compaction every {}min",
             interval_minutes,
-            compaction_interval_hours
+            compaction_interval_minutes
         );
 
         // ===== Task 1: Data Sync (frequent) =====
@@ -638,13 +638,13 @@ impl BackgroundSyncService {
 
             // Set initial next_compaction_at
             {
-                let next = Self::calculate_next_compaction(compaction_interval_hours);
+                let next = Self::calculate_next_compaction(compaction_interval_minutes);
                 let mut nca = self.next_compaction_at.write().await;
                 *nca = Some(next);
             }
 
             tokio::spawn(async move {
-                let mut timer = interval(Duration::from_secs(compaction_interval_hours as u64 * 3600));
+                let mut timer = interval(Duration::from_secs(compaction_interval_minutes as u64 * 60));
                 timer.tick().await; // Skip first tick
 
                 loop {
@@ -655,10 +655,10 @@ impl BackgroundSyncService {
                                 log::info!("Compaction disabled, skipping");
                                 // Update next compaction time
                                 let mut nca = next_compaction_at.write().await;
-                                *nca = Some(Self::calculate_next_compaction(cfg.compaction_interval_hours));
+                                *nca = Some(Self::calculate_next_compaction(cfg.compaction_interval_minutes));
                                 continue;
                             }
-                            let interval_hours = cfg.compaction_interval_hours;
+                            let interval_minutes = cfg.compaction_interval_minutes;
                             drop(cfg);
 
                             let uid = user_id.read().await.clone();
@@ -676,7 +676,7 @@ impl BackgroundSyncService {
 
                             // Update next compaction time after completion
                             let mut nca = next_compaction_at.write().await;
-                            *nca = Some(Self::calculate_next_compaction(interval_hours));
+                            *nca = Some(Self::calculate_next_compaction(interval_minutes));
                         }
                         _ = &mut compaction_shutdown_rx => {
                             log::info!("Compaction task received shutdown signal");
@@ -1011,6 +1011,10 @@ impl BackgroundSyncService {
                         cr.daily_compacted
                     );
                 }
+                // Log LLM warnings
+                if !cr.llm_warnings.is_empty() {
+                    log::warn!("LLM warnings: {}", cr.llm_warnings.join("; "));
+                }
             }
             Err(e) => {
                 log::warn!("Compaction cycle error: {}", e);
@@ -1192,6 +1196,11 @@ impl BackgroundSyncService {
                             cr.daily_compacted
                         );
                     }
+                    // Surface LLM warnings to last_error so users can see them
+                    if !cr.llm_warnings.is_empty() {
+                        let mut error = last_error.write().await;
+                        *error = Some(cr.llm_warnings.join("; "));
+                    }
                 }
                 Err(e) => {
                     log::warn!("Compaction cycle error: {}", e);
@@ -1264,8 +1273,8 @@ impl BackgroundSyncService {
     }
 
     /// Calculate the next compaction timestamp
-    fn calculate_next_compaction(interval_hours: u32) -> String {
-        let next = chrono::Utc::now() + chrono::Duration::hours(interval_hours as i64);
+    fn calculate_next_compaction(interval_minutes: u32) -> String {
+        let next = chrono::Utc::now() + chrono::Duration::minutes(interval_minutes as i64);
         next.to_rfc3339()
     }
 }

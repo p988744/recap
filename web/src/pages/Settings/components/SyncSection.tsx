@@ -49,7 +49,7 @@ interface SyncSectionProps {
   setEnabled: (v: boolean) => void
   intervalMinutes: number
   setIntervalMinutes: (v: number) => void
-  compactionIntervalHours: number
+  compactionIntervalMinutes: number
   setCompactionIntervalHours: (v: number) => void
   autoGenerateSummaries: boolean
   setAutoGenerateSummaries: (v: boolean) => void
@@ -127,7 +127,7 @@ export function SyncSection({
   setEnabled,
   intervalMinutes,
   setIntervalMinutes,
-  compactionIntervalHours,
+  compactionIntervalMinutes,
   setCompactionIntervalHours,
   autoGenerateSummaries,
   setAutoGenerateSummaries,
@@ -250,7 +250,7 @@ export function SyncSection({
             <div className="flex items-center gap-2">
               <Clock className="w-4 h-4 text-muted-foreground" />
               <select
-                value={compactionIntervalHours}
+                value={compactionIntervalMinutes}
                 onChange={(e) => setCompactionIntervalHours(Number(e.target.value))}
                 className="px-3 py-2 bg-background border border-border text-sm focus:outline-none focus:ring-1 focus:ring-foreground"
                 disabled={!enabled || !autoGenerateSummaries}

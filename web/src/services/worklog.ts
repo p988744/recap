@@ -12,6 +12,8 @@ export interface CompactionResult {
   weekly_compacted: number
   monthly_compacted: number
   errors: string[]
+  /** LLM-related warnings (API errors that were handled with fallback) */
+  llm_warnings: string[]
   /** Latest date that was compacted (YYYY-MM-DD format) */
   latest_compacted_date: string | null
 }
@@ -24,6 +26,8 @@ export interface ForceRecompactResult {
   weekly_compacted: number
   monthly_compacted: number
   errors: string[]
+  /** LLM-related warnings (API errors that were handled with fallback) */
+  llm_warnings: string[]
   /** Latest date that was compacted (YYYY-MM-DD format) */
   latest_compacted_date: string | null
 }

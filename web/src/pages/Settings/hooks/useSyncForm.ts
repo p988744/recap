@@ -12,7 +12,7 @@ export interface SyncFormState {
   // Config
   enabled: boolean
   intervalMinutes: number
-  compactionIntervalHours: number
+  compactionIntervalMinutes: number
   autoGenerateSummaries: boolean
   // Source toggles
   syncGit: boolean
@@ -33,7 +33,7 @@ export function useSyncForm() {
   const [state, setState] = useState<SyncFormState>({
     enabled: true,
     intervalMinutes: 15,
-    compactionIntervalHours: 6,
+    compactionIntervalMinutes: 30,
     autoGenerateSummaries: true,
     syncGit: true,
     syncClaude: true,
@@ -88,7 +88,7 @@ export function useSyncForm() {
           ...prev,
           enabled: config.enabled,
           intervalMinutes: config.interval_minutes,
-          compactionIntervalHours: config.compaction_interval_hours,
+          compactionIntervalMinutes: config.compaction_interval_minutes,
           autoGenerateSummaries: config.auto_generate_summaries,
           syncGit: config.sync_git,
           syncClaude: config.sync_claude,
@@ -114,8 +114,8 @@ export function useSyncForm() {
     setState((prev) => ({ ...prev, intervalMinutes }))
   }, [])
 
-  const setCompactionIntervalHours = useCallback((compactionIntervalHours: number) => {
-    setState((prev) => ({ ...prev, compactionIntervalHours }))
+  const setCompactionIntervalHours = useCallback((compactionIntervalMinutes: number) => {
+    setState((prev) => ({ ...prev, compactionIntervalMinutes }))
   }, [])
 
   const setAutoGenerateSummaries = useCallback((autoGenerateSummaries: boolean) => {
@@ -150,7 +150,7 @@ export function useSyncForm() {
         await backgroundSync.updateConfig({
           enabled: state.enabled,
           interval_minutes: state.intervalMinutes,
-          compaction_interval_hours: state.compactionIntervalHours,
+          compaction_interval_minutes: state.compactionIntervalMinutes,
           sync_git: state.syncGit,
           sync_claude: state.syncClaude,
           sync_antigravity: state.syncAntigravity,
@@ -198,7 +198,7 @@ export function useSyncForm() {
     setEnabled,
     intervalMinutes: state.intervalMinutes,
     setIntervalMinutes,
-    compactionIntervalHours: state.compactionIntervalHours,
+    compactionIntervalMinutes: state.compactionIntervalMinutes,
     setCompactionIntervalHours,
     autoGenerateSummaries: state.autoGenerateSummaries,
     setAutoGenerateSummaries,

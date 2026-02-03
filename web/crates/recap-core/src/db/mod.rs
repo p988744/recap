@@ -395,6 +395,12 @@ impl Database {
             .await
             .ok(); // 0=Sun, 1=Mon, ..., 6=Sat
 
+        // Add onboarding_completed column to track if user has completed initial setup
+        sqlx::query("ALTER TABLE users ADD COLUMN onboarding_completed BOOLEAN DEFAULT 0")
+            .execute(&self.pool)
+            .await
+            .ok();
+
         // Create snapshot_raw_data table for hourly session snapshots
         sqlx::query(
             r#"

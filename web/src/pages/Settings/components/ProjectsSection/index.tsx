@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Plus } from 'lucide-react'
 import { projects as projectsService, worklog } from '@/services'
-import type { ProjectInfo } from '@/types'
+import { antigravity } from '@/services/integrations'
+import type { ProjectInfo, AntigravityApiStatus } from '@/types'
 import type { CompactionResult } from '@/services/worklog'
 import type { BackgroundSyncStatus, SyncProgress } from '@/services/background-sync'
 import { ProjectList } from './ProjectList'
@@ -41,6 +42,7 @@ export function ProjectsSection({
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [compactionPhase, setCompactionPhase] = useState<CompactionPhase>('idle')
   const [compactionResult, setCompactionResult] = useState<CompactionResult | null>(null)
+  const [antigravityStatus, setAntigravityStatus] = useState<AntigravityApiStatus | null>(null)
 
   const fetchProjects = useCallback(async () => {
     try {
@@ -56,6 +58,19 @@ export function ProjectsSection({
   useEffect(() => {
     fetchProjects()
   }, [fetchProjects])
+
+  // Check Antigravity API status
+  useEffect(() => {
+    const checkAntigravity = async () => {
+      try {
+        const status = await antigravity.checkApiStatus()
+        setAntigravityStatus(status)
+      } catch {
+        setAntigravityStatus({ running: false, healthy: false })
+      }
+    }
+    checkAntigravity()
+  }, [])
 
   const handleToggleVisibility = useCallback(async (projectName: string, hidden: boolean) => {
     try {
@@ -138,6 +153,7 @@ export function ProjectsSection({
             summaryState={summaryState}
             syncProgress={syncProgress}
             onTriggerSync={onTriggerSync}
+            antigravityConnected={antigravityStatus?.running && antigravityStatus?.healthy}
           />
           <DataCompactionStatus
             status={syncStatus}

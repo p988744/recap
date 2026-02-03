@@ -35,6 +35,9 @@ pub fn run() {
             commands::config::update_config,
             commands::config::update_llm_config,
             commands::config::update_jira_config,
+            commands::config::test_llm_connection,
+            commands::config::get_onboarding_status,
+            commands::config::complete_onboarding,
             // Work Items - queries
             commands::work_items::queries::list_work_items,
             commands::work_items::queries::get_stats_summary,

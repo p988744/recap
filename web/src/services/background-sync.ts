@@ -14,7 +14,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 export interface BackgroundSyncConfig {
   enabled: boolean
   interval_minutes: number
-  compaction_interval_hours: number
+  compaction_interval_minutes: number
   sync_git: boolean
   sync_claude: boolean
   sync_antigravity: boolean

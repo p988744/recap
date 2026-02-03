@@ -1,4 +1,4 @@
-import { Loader2, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react'
+import { Loader2, CheckCircle2, AlertCircle, RefreshCw, XCircle } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
@@ -7,6 +7,7 @@ import { ClaudeIcon } from './icons/ClaudeIcon'
 import { GeminiIcon } from './icons/GeminiIcon'
 
 type PhaseState = 'idle' | 'syncing' | 'done'
+type SourceState = PhaseState | 'disconnected'
 
 interface DataSyncStatusProps {
   status: BackgroundSyncStatus | null
@@ -15,6 +16,7 @@ interface DataSyncStatusProps {
   summaryState: PhaseState
   syncProgress: SyncProgress | null
   onTriggerSync: () => void
+  antigravityConnected?: boolean
 }
 
 function formatDateTime(isoString: string | null): string {
@@ -53,7 +55,7 @@ function SourceSyncRow({
 }: {
   icon: React.ReactNode
   label: string
-  state: PhaseState
+  state: SourceState
   colorClass: string
 }) {
   return (
@@ -63,7 +65,12 @@ function SourceSyncRow({
         <span className="text-sm">{label}</span>
       </div>
       <div className="flex items-center gap-1.5">
-        {state === 'syncing' ? (
+        {state === 'disconnected' ? (
+          <>
+            <XCircle className="w-3.5 h-3.5 text-destructive" />
+            <span className="text-sm text-destructive">未連線</span>
+          </>
+        ) : state === 'syncing' ? (
           <>
             <Loader2 className="w-3.5 h-3.5 animate-spin text-foreground" />
             <span className="text-sm font-medium">同步中</span>
@@ -84,8 +91,8 @@ function SourceSyncRow({
 const phaseLabels: Record<SyncProgress['phase'], string> = {
   sources: '同步資料來源',
   snapshots: '捕獲快照',
-  compaction: '處理摘要',
-  summaries: '生成時間軸摘要',
+  compaction: '小時資料彙整',
+  summaries: '時間軸摘要',
   complete: '完成',
 }
 
@@ -96,6 +103,7 @@ export function DataSyncStatus({
   summaryState,
   syncProgress,
   onTriggerSync,
+  antigravityConnected,
 }: DataSyncStatusProps) {
   if (!status) {
     return (
@@ -111,8 +119,11 @@ export function DataSyncStatus({
 
   // Determine per-source states based on overall dataSyncState
   // When syncing, Claude Code syncs first, then Antigravity
-  const claudeState = dataSyncState
-  const antigravityState = dataSyncState === 'syncing' ? 'idle' : dataSyncState
+  const claudeState: SourceState = dataSyncState
+  // If Antigravity API is not connected, show disconnected state
+  const antigravityState: SourceState = antigravityConnected === false
+    ? 'disconnected'
+    : dataSyncState === 'syncing' ? 'idle' : dataSyncState
 
   // Calculate progress percentage
   const progressPercent = syncProgress
@@ -254,6 +265,8 @@ interface CompactionResult {
   daily_compacted: number
   weekly_compacted: number
   monthly_compacted: number
+  /** LLM-related warnings (API errors that were handled with fallback) */
+  llm_warnings?: string[]
   /** Latest date that was compacted (YYYY-MM-DD format) */
   latest_compacted_date: string | null
 }
@@ -281,10 +294,11 @@ export function DataCompactionStatus({
 
   const isCompacting = status.is_compacting || (compactionPhase !== 'idle' && compactionPhase !== 'done')
   const isActive = enabled && autoGenerateSummaries
-  const hasCompletedBefore = !!status.last_compaction_at
+  // Consider completed if backend has record OR we have a manual compaction result
+  const hasCompletedBefore = !!status.last_compaction_at || !!compactionResult
 
   // Determine phase states
-  // Priority: manual phase > backend is_compacting > completed history > idle
+  // Priority: manual phase > backend is_compacting > completed history (including manual result) > idle
   const hourlyState: PhaseState =
     compactionPhase === 'hourly' ? 'syncing' :
     compactionPhase === 'timeline' || compactionPhase === 'done' ? 'done' :
@@ -374,7 +388,7 @@ export function DataCompactionStatus({
       <div className="divide-y divide-border">
         <div className="flex items-center justify-between py-2">
           <div className="flex items-center gap-2 text-foreground">
-            <span className="text-sm">每小時 → 每日摘要</span>
+            <span className="text-sm">每日摘要</span>
           </div>
           <div className="flex items-center gap-1.5">
             {hourlyState === 'syncing' ? (
@@ -394,7 +408,7 @@ export function DataCompactionStatus({
         </div>
         <div className="flex items-center justify-between py-2">
           <div className="flex items-center gap-2 text-foreground">
-            <span className="text-sm">時間軸摘要（週/月/季/年）</span>
+            <span className="text-sm">週/月/季/年摘要</span>
           </div>
           <div className="flex items-center gap-1.5">
             {timelineState === 'syncing' ? (
@@ -428,10 +442,26 @@ export function DataCompactionStatus({
         </div>
       </div>
 
-      {/* Last result - like DataSyncStatus */}
-      {compactionResult && compactionPhase === 'done' && (
+      {/* Last result - show whenever we have a result (persists after phase resets to idle) */}
+      {compactionResult && (
         <div className="mt-2 text-xs text-muted-foreground">
           {getResultMessage()}
+        </div>
+      )}
+
+      {/* LLM warnings from compaction */}
+      {compactionResult?.llm_warnings && compactionResult.llm_warnings.length > 0 && (
+        <div className="mt-2 p-2 bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs border-l-2 border-amber-500">
+          {compactionResult.llm_warnings.map((warning, i) => (
+            <p key={i}>{warning}</p>
+          ))}
+        </div>
+      )}
+
+      {/* Error from background status */}
+      {status.last_error && (
+        <div className="mt-2 p-2 bg-destructive/10 text-destructive text-xs border-l-2 border-destructive">
+          {status.last_error}
         </div>
       )}
     </Card>

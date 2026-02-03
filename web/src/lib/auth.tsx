@@ -1,5 +1,5 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
-import { auth } from '@/services'
+import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
+import { auth, config } from '@/services'
 
 // Types
 export interface User {
@@ -29,10 +29,12 @@ interface AuthContextType {
   token: string | null
   isLoading: boolean
   appStatus: AppStatus | null
+  onboardingCompleted: boolean
   login: (username: string, password: string) => Promise<void>
   register: (username: string, password: string, name: string, email?: string, title?: string) => Promise<void>
   autoLogin: () => Promise<void>
   logout: () => void
+  completeOnboarding: () => Promise<void>
   isAuthenticated: boolean
   needsOnboarding: boolean
 }
@@ -60,6 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(getStoredToken())
   const [isLoading, setIsLoading] = useState(true)
   const [appStatus, setAppStatus] = useState<AppStatus | null>(null)
+  const [onboardingCompleted, setOnboardingCompleted] = useState(false)
 
   // Load app status and user on mount
   useEffect(() => {
@@ -69,12 +72,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const status = await auth.getAppStatus()
         setAppStatus(status)
 
-        // 本地模式：如果沒有用戶，自動建立預設用戶
+        // If no users exist, we need onboarding first
         if (!status.has_users) {
-          await createDefaultLocalUser()
-          // 重新取得狀態
-          const newStatus = await auth.getAppStatus()
-          setAppStatus(newStatus)
+          setOnboardingCompleted(false)
+          setIsLoading(false)
+          return
         }
 
         // Check for existing token
@@ -85,16 +87,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             const userData = await auth.getCurrentUser(storedToken)
             setUser(userData)
             setToken(storedToken)
+            // Check onboarding status from DB
+            await checkOnboardingStatus()
           } catch {
             // Token is invalid, try auto-login for local mode
             removeStoredToken()
             setToken(null)
-            if (status.local_mode) {
+            if (status.local_mode && status.has_users) {
               await performAutoLogin()
             }
           }
-        } else if (status.local_mode) {
-          // No token but local mode - auto login
+        } else if (status.local_mode && status.has_users) {
+          // No token but local mode with existing users - auto login
           await performAutoLogin()
         }
       } catch (error) {
@@ -106,18 +110,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    // 自動建立本地預設用戶
-    async function createDefaultLocalUser() {
+    async function checkOnboardingStatus() {
       try {
-        await auth.register({
-          username: 'local',
-          password: 'local',
-          name: '本地使用者',
-          email: 'local@localhost',
-        })
-        console.log('Created default local user')
+        const status = await config.getOnboardingStatus()
+        setOnboardingCompleted(status.completed)
       } catch (error) {
-        console.error('Failed to create default user:', error)
+        console.error('Failed to check onboarding status:', error)
+        // Default to not completed if check fails
+        setOnboardingCompleted(false)
       }
     }
 
@@ -130,6 +130,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Fetch user info
         const userData = await auth.getCurrentUser(data.access_token)
         setUser(userData)
+
+        // Check onboarding status from DB
+        await checkOnboardingStatus()
       } catch (error) {
         console.error('Auto-login failed:', error)
       }
@@ -181,23 +184,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Fetch user info
       const userData = await auth.getCurrentUser(data.access_token)
       setUser(userData)
+
+      // Check onboarding status
+      try {
+        const status = await config.getOnboardingStatus()
+        setOnboardingCompleted(status.completed)
+      } catch (err) {
+        console.error('Failed to check onboarding status:', err)
+      }
     } catch (error) {
       console.error('Auto-login failed:', error)
       throw error
     }
   }
 
+  const completeOnboarding = useCallback(async () => {
+    try {
+      await config.completeOnboarding()
+      setOnboardingCompleted(true)
+    } catch (error) {
+      console.error('Failed to complete onboarding:', error)
+      throw error
+    }
+  }, [])
+
+  // Needs onboarding if:
+  // 1. No users exist (first time), or
+  // 2. User exists but hasn't completed onboarding
+  const needsOnboarding = appStatus !== null && (
+    !appStatus.has_users || (!!user && !onboardingCompleted)
+  )
+
   const value: AuthContextType = {
     user,
     token,
     isLoading,
     appStatus,
+    onboardingCompleted,
     login,
     register,
     autoLogin,
     logout,
+    completeOnboarding,
     isAuthenticated: !!user && !!token,
-    needsOnboarding: appStatus !== null && !appStatus.has_users,
+    needsOnboarding,
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

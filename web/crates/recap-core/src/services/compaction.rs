@@ -37,6 +37,8 @@ pub struct CompactionResult {
     pub weekly_compacted: usize,
     pub monthly_compacted: usize,
     pub errors: Vec<String>,
+    /// LLM-related warnings (API errors that were handled with fallback)
+    pub llm_warnings: Vec<String>,
     /// Latest date that was compacted (YYYY-MM-DD format)
     pub latest_compacted_date: Option<String>,
 }
@@ -933,8 +935,26 @@ pub async fn run_compaction_cycle(
         weekly_compacted: 0,
         monthly_compacted: 0,
         errors: Vec::new(),
+        llm_warnings: Vec::new(),
         latest_compacted_date: None,
     };
+
+    // Check if LLM is available and working
+    if let Some(llm_service) = llm {
+        // Test LLM connection before starting compaction
+        match llm_service.test_connection().await {
+            Ok(test_result) => {
+                if !test_result.success {
+                    result.llm_warnings.push(format!("LLM 連線失敗: {}，使用規則摘要", test_result.message));
+                }
+            }
+            Err(e) => {
+                result.llm_warnings.push(format!("LLM 連線錯誤: {}，使用規則摘要", e));
+            }
+        }
+    } else {
+        result.llm_warnings.push("LLM 未設定，使用規則摘要".to_string());
+    }
 
     // 1. Find all uncompacted hourly snapshots
     log::debug!("Step 1: Finding uncompacted hourly snapshots...");

@@ -108,15 +108,49 @@ struct BatchRequestLine {
     custom_id: String,
     method: String,
     url: String,
-    body: BatchRequestBody,
+    body: serde_json::Value,
 }
 
+/// Batch request body for models that don't support temperature (gpt-5 series, o1, o3)
 #[derive(Debug, Serialize)]
-struct BatchRequestBody {
+struct BatchRequestBodyNewNoTemp {
+    model: String,
+    messages: Vec<ChatMessage>,
+    max_completion_tokens: u32,
+}
+
+/// Batch request body for newer models (gpt-4.1, gpt-4o) with temperature
+#[derive(Debug, Serialize)]
+struct BatchRequestBodyNew {
+    model: String,
+    messages: Vec<ChatMessage>,
+    max_completion_tokens: u32,
+    temperature: f32,
+}
+
+/// Batch request body for legacy models (gpt-4-turbo, gpt-4, gpt-3.5)
+#[derive(Debug, Serialize)]
+struct BatchRequestBodyLegacy {
     model: String,
     messages: Vec<ChatMessage>,
     max_tokens: u32,
     temperature: f32,
+}
+
+/// Check if a model uses the new max_completion_tokens parameter
+fn uses_max_completion_tokens(model: &str) -> bool {
+    model.starts_with("gpt-5") ||
+    model.starts_with("gpt-4.1") ||
+    model.starts_with("gpt-4o") ||
+    model.starts_with("o1") ||
+    model.starts_with("o3")
+}
+
+/// Check if a model doesn't support custom temperature
+fn no_temperature_support(model: &str) -> bool {
+    model.starts_with("gpt-5") ||  // All GPT-5 models (gpt-5, gpt-5-mini, gpt-5-nano)
+    model.starts_with("o1") ||
+    model.starts_with("o3")
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -308,20 +342,45 @@ impl LlmBatchService {
 
         // Build JSONL content
         let mut jsonl_lines = Vec::new();
+        let no_temp = no_temperature_support(&self.config.model);
+        let use_new_param = uses_max_completion_tokens(&self.config.model);
+
         for req in &requests {
+            let messages = vec![ChatMessage {
+                role: "user".to_string(),
+                content: req.prompt.clone(),
+            }];
+
+            let body = if no_temp {
+                // Models like gpt-5-mini, o1, o3 don't support custom temperature
+                serde_json::to_value(BatchRequestBodyNewNoTemp {
+                    model: self.config.model.clone(),
+                    messages,
+                    max_completion_tokens: 500,
+                }).map_err(|e| e.to_string())?
+            } else if use_new_param {
+                // Models like gpt-4.1, gpt-4o use max_completion_tokens with temperature
+                serde_json::to_value(BatchRequestBodyNew {
+                    model: self.config.model.clone(),
+                    messages,
+                    max_completion_tokens: 500,
+                    temperature: 0.3,
+                }).map_err(|e| e.to_string())?
+            } else {
+                // Legacy models use max_tokens with temperature
+                serde_json::to_value(BatchRequestBodyLegacy {
+                    model: self.config.model.clone(),
+                    messages,
+                    max_tokens: 500,
+                    temperature: 0.3,
+                }).map_err(|e| e.to_string())?
+            };
+
             let line = BatchRequestLine {
                 custom_id: req.custom_id.clone(),
                 method: "POST".to_string(),
                 url: "/v1/chat/completions".to_string(),
-                body: BatchRequestBody {
-                    model: self.config.model.clone(),
-                    messages: vec![ChatMessage {
-                        role: "user".to_string(),
-                        content: req.prompt.clone(),
-                    }],
-                    max_tokens: 500,
-                    temperature: 0.3,
-                },
+                body,
             };
             jsonl_lines.push(serde_json::to_string(&line).map_err(|e| e.to_string())?);
         }

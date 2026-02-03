@@ -26,7 +26,7 @@ pub struct SyncProgress {
 pub struct UpdateBackgroundSyncConfigRequest {
     pub enabled: Option<bool>,
     pub interval_minutes: Option<u32>,
-    pub compaction_interval_hours: Option<u32>,
+    pub compaction_interval_minutes: Option<u32>,
     pub sync_git: Option<bool>,
     pub sync_claude: Option<bool>,
     pub sync_antigravity: Option<bool>,
@@ -39,7 +39,7 @@ pub struct UpdateBackgroundSyncConfigRequest {
 pub struct BackgroundSyncConfigResponse {
     pub enabled: bool,
     pub interval_minutes: u32,
-    pub compaction_interval_hours: u32,
+    pub compaction_interval_minutes: u32,
     pub sync_git: bool,
     pub sync_claude: bool,
     pub sync_antigravity: bool,
@@ -53,7 +53,7 @@ impl From<BackgroundSyncConfig> for BackgroundSyncConfigResponse {
         Self {
             enabled: config.enabled,
             interval_minutes: config.interval_minutes,
-            compaction_interval_hours: config.compaction_interval_hours,
+            compaction_interval_minutes: config.compaction_interval_minutes,
             sync_git: config.sync_git,
             sync_claude: config.sync_claude,
             sync_antigravity: config.sync_antigravity,
@@ -148,7 +148,7 @@ pub async fn update_background_sync_config(
     let new_config = BackgroundSyncConfig {
         enabled: config.enabled.unwrap_or(current.enabled),
         interval_minutes: config.interval_minutes.unwrap_or(current.interval_minutes),
-        compaction_interval_hours: config.compaction_interval_hours.unwrap_or(current.compaction_interval_hours),
+        compaction_interval_minutes: config.compaction_interval_minutes.unwrap_or(current.compaction_interval_minutes),
         sync_git: config.sync_git.unwrap_or(current.sync_git),
         sync_claude: config.sync_claude.unwrap_or(current.sync_claude),
         sync_antigravity: config.sync_antigravity.unwrap_or(current.sync_antigravity),
@@ -162,9 +162,9 @@ pub async fn update_background_sync_config(
         return Err("資料同步間隔必須是 5, 15, 30 或 60 分鐘".to_string());
     }
 
-    // Validate compaction interval
-    if ![1, 3, 6, 12, 24].contains(&new_config.compaction_interval_hours) {
-        return Err("壓縮間隔必須是 1, 3, 6, 12 或 24 小時".to_string());
+    // Validate compaction interval (30min, 1h, 3h, 6h, 12h, 24h)
+    if ![30, 60, 180, 360, 720, 1440].contains(&new_config.compaction_interval_minutes) {
+        return Err("壓縮間隔必須是 30 分鐘、1、3、6、12 或 24 小時".to_string());
     }
 
     state.background_sync.update_config(new_config.clone()).await;
@@ -480,7 +480,7 @@ mod tests {
         let config = BackgroundSyncConfig {
             enabled: true,
             interval_minutes: 15,
-            compaction_interval_hours: 6,
+            compaction_interval_minutes: 30,
             sync_git: true,
             sync_claude: true,
             sync_antigravity: true,
@@ -492,7 +492,7 @@ mod tests {
         let response: BackgroundSyncConfigResponse = config.into();
         assert!(response.enabled);
         assert_eq!(response.interval_minutes, 15);
-        assert_eq!(response.compaction_interval_hours, 6);
+        assert_eq!(response.compaction_interval_minutes, 30);
         assert!(response.sync_git);
         assert!(response.sync_claude);
         assert!(!response.sync_gitlab);

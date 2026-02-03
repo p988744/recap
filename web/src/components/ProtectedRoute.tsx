@@ -1,3 +1,5 @@
+import { useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/lib/auth'
 
 interface ProtectedRouteProps {
@@ -5,7 +7,15 @@ interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
-  const { isLoading } = useAuth()
+  const { isLoading, needsOnboarding } = useAuth()
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    // Redirect to onboarding if needed
+    if (!isLoading && needsOnboarding) {
+      navigate('/onboarding', { replace: true })
+    }
+  }, [isLoading, needsOnboarding, navigate])
 
   if (isLoading) {
     return (
@@ -19,6 +29,11 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
         </div>
       </div>
     )
+  }
+
+  // If onboarding needed, show nothing while redirecting
+  if (needsOnboarding) {
+    return null
   }
 
   // 本地模式：不需要登入即可使用

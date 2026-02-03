@@ -122,6 +122,8 @@ pub struct CompactionResultResponse {
     pub weekly_compacted: usize,
     pub monthly_compacted: usize,
     pub errors: Vec<String>,
+    /// LLM-related warnings (API errors that were handled with fallback)
+    pub llm_warnings: Vec<String>,
     /// Latest date that was compacted (YYYY-MM-DD format)
     pub latest_compacted_date: Option<String>,
 }
@@ -974,6 +976,7 @@ pub async fn trigger_compaction(
         weekly_compacted: result.weekly_compacted,
         monthly_compacted: result.monthly_compacted,
         errors: result.errors,
+        llm_warnings: result.llm_warnings,
         latest_compacted_date: result.latest_compacted_date,
     })
 }
