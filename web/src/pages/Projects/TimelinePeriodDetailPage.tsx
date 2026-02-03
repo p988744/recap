@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Clock, Calendar, GitCommit, FileCode, ChevronDown, ChevronRight, FileText } from 'lucide-react'
+import { ArrowLeft, Clock, Calendar, GitCommit, FileCode, ChevronDown, ChevronRight, FileText, Pencil, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useProjectDetail } from './hooks/useProjectDetail'
 import { worklog, workItems } from '@/services'
@@ -10,6 +10,8 @@ import { MarkdownSummary } from '@/components/MarkdownSummary'
 import { ClaudeIcon } from '@/pages/Settings/components/ProjectsSection/icons/ClaudeIcon'
 import { GeminiIcon } from '@/pages/Settings/components/ProjectsSection/icons/GeminiIcon'
 import { CommitDiffModal } from './components/Modals/CommitDiffModal'
+import { EditModal, DeleteModal } from '@/pages/WorkItems/components/Modals'
+import type { WorkItemFormData } from '@/pages/WorkItems/hooks/useWorkItems'
 
 // Check if a path is a manual project path
 function isManualProjectPath(path: string | null): boolean {
@@ -310,11 +312,13 @@ function DaySection({ date, items, projectPath }: DaySectionProps) {
 // Manual item card
 interface ManualItemCardProps {
   item: WorkItem
+  onEdit?: () => void
+  onDelete?: () => void
 }
 
-function ManualItemCard({ item }: ManualItemCardProps) {
+function ManualItemCard({ item, onEdit, onDelete }: ManualItemCardProps) {
   return (
-    <div className="border border-border rounded-lg bg-white/60 dark:bg-white/5 overflow-hidden">
+    <div className="group/card border border-border rounded-lg bg-white/60 dark:bg-white/5 overflow-hidden cursor-pointer hover:border-amber-300 dark:hover:border-amber-700 transition-colors">
       <div className="px-4 py-3 bg-amber-50/50 dark:bg-amber-900/10 border-b border-border">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -326,15 +330,42 @@ function ManualItemCard({ item }: ManualItemCardProps) {
               手動
             </span>
           </div>
-          <div className="flex items-center gap-3 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1">
+          <div className="flex items-center gap-2">
+            {/* Edit/Delete buttons - show on hover */}
+            {(onEdit || onDelete) && (
+              <div className="flex items-center gap-1 opacity-0 group-hover/card:opacity-100 transition-opacity">
+                {onEdit && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={(e) => { e.stopPropagation(); onEdit(); }}
+                    title="編輯"
+                  >
+                    <Pencil className="w-3 h-3" strokeWidth={1.5} />
+                  </Button>
+                )}
+                {onDelete && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-destructive"
+                    onClick={(e) => { e.stopPropagation(); onDelete(); }}
+                    title="刪除"
+                  >
+                    <Trash2 className="w-3 h-3" strokeWidth={1.5} />
+                  </Button>
+                )}
+              </div>
+            )}
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
               <Clock className="w-3 h-3" strokeWidth={1.5} />
               {item.hours}h
             </span>
           </div>
         </div>
       </div>
-      <div className="px-4 py-3">
+      <div className="px-4 py-3" onClick={onEdit}>
         <h3 className="text-sm font-medium text-foreground mb-1">{item.title}</h3>
         {item.description && (
           <p className="text-sm text-muted-foreground">{item.description}</p>
@@ -365,6 +396,20 @@ export function TimelinePeriodDetailPage() {
   // State for manual work items
   const [manualItems, setManualItems] = useState<WorkItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
+
+  // Edit/Delete state for manual items
+  const [selectedItem, setSelectedItem] = useState<WorkItem | null>(null)
+  const [editOpen, setEditOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [formData, setFormData] = useState<WorkItemFormData>({
+    title: '',
+    description: '',
+    hours: 0,
+    date: '',
+    jira_issue_key: '',
+    category: '',
+    project_name: '',
+  })
 
   // Fetch data based on project type
   useEffect(() => {
@@ -425,6 +470,94 @@ export function TimelinePeriodDetailPage() {
 
     fetchData()
   }, [projectPath, periodStart, periodEnd, isManual, decodedProjectName])
+
+  // Refetch manual items
+  const refetchManualItems = useCallback(async () => {
+    if (!isManual || !periodStart || !periodEnd) return
+    try {
+      const response = await workItems.list({
+        source: 'manual',
+        start_date: periodStart,
+        end_date: periodEnd,
+        per_page: 100,
+        show_all: true,
+      })
+      const filtered = response.items.filter((item: WorkItem) => {
+        if (item.project_path && isManualProjectPath(item.project_path)) {
+          const itemProjectName = item.project_path.split(/[/\\]/).pop() || ''
+          return itemProjectName === decodedProjectName
+        }
+        return false
+      })
+      setManualItems(filtered)
+    } catch (err) {
+      console.error('Failed to refetch manual items:', err)
+    }
+  }, [isManual, periodStart, periodEnd, decodedProjectName])
+
+  // Open edit modal for a manual item
+  const openEditModal = useCallback((item: WorkItem) => {
+    setSelectedItem(item)
+    // Derive project_name from project_path
+    let project_name = ''
+    if (item.project_path) {
+      const segments = item.project_path.split(/[/\\]/)
+      project_name = segments[segments.length - 1] || ''
+    }
+    setFormData({
+      title: item.title,
+      description: item.description || '',
+      hours: item.hours,
+      date: item.date,
+      jira_issue_key: item.jira_issue_key || '',
+      category: item.category || '',
+      project_name,
+    })
+    setEditOpen(true)
+  }, [])
+
+  // Handle update
+  const handleUpdate = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedItem) return
+
+    try {
+      await workItems.update(selectedItem.id, {
+        title: formData.title,
+        description: formData.description || undefined,
+        hours: formData.hours,
+        date: formData.date,
+        jira_issue_key: formData.jira_issue_key || undefined,
+        category: formData.category || undefined,
+        project_name: formData.project_name || undefined,
+      })
+      setEditOpen(false)
+      setSelectedItem(null)
+      refetchManualItems()
+    } catch (err) {
+      console.error('Failed to update work item:', err)
+    }
+  }, [selectedItem, formData, refetchManualItems])
+
+  // Open delete confirmation
+  const openDeleteConfirm = useCallback((item: WorkItem) => {
+    setSelectedItem(item)
+    setDeleteOpen(true)
+  }, [])
+
+  // Handle delete
+  const handleDelete = useCallback(async () => {
+    if (!selectedItem) return
+
+    try {
+      await workItems.remove(selectedItem.id)
+      setDeleteOpen(false)
+      setSelectedItem(null)
+      refetchManualItems()
+    } catch (err) {
+      console.error('Failed to delete work item:', err)
+    }
+  }, [selectedItem, refetchManualItems])
 
   // Calculate stats
   const { totalHours, totalCommits, datesWithData } = useMemo(() => {
@@ -519,7 +652,12 @@ export function TimelinePeriodDetailPage() {
             </h2>
             <div className="space-y-4">
               {manualItems.map((item) => (
-                <ManualItemCard key={item.id} item={item} />
+                <ManualItemCard
+                  key={item.id}
+                  item={item}
+                  onEdit={() => openEditModal(item)}
+                  onDelete={() => openDeleteConfirm(item)}
+                />
               ))}
             </div>
           </div>
@@ -552,6 +690,25 @@ export function TimelinePeriodDetailPage() {
           </div>
         )
       )}
+
+      {/* Edit Modal */}
+      <EditModal
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        formData={formData}
+        setFormData={setFormData}
+        onSubmit={handleUpdate}
+        onCancel={() => { setEditOpen(false); setSelectedItem(null); }}
+      />
+
+      {/* Delete Confirmation Modal */}
+      <DeleteModal
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        itemToDelete={selectedItem}
+        onConfirm={handleDelete}
+        onCancel={() => { setDeleteOpen(false); setSelectedItem(null); }}
+      />
     </div>
   )
 }
