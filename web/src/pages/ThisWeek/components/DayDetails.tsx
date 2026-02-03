@@ -1,9 +1,9 @@
+import { useMemo } from 'react'
 import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import type { WorklogDay, HourlyBreakdownItem } from '@/types/worklog'
+import type { WorklogDay, WorklogDayProject, HourlyBreakdownItem, ManualWorkItem } from '@/types/worklog'
 import type { WorklogSyncRecord, TempoSyncTarget } from '@/types'
 import { ProjectCard } from '@/pages/Worklog/components/ProjectCard'
-import { ManualItemCard } from '@/pages/Worklog/components/ManualItemCard'
 
 interface DayDetailsProps {
   day: WorklogDay
@@ -20,6 +20,13 @@ interface DayDetailsProps {
   onIssueKeyChange?: (path: string, key: string) => void
 }
 
+interface ManualProjectGroup {
+  projectPath: string
+  projectName: string
+  items: ManualWorkItem[]
+  totalHours: number
+}
+
 export function DayDetails({
   day,
   expandedProject,
@@ -34,9 +41,46 @@ export function DayDetails({
   getMappedIssueKey,
   onIssueKeyChange,
 }: DayDetailsProps) {
+  // Group manual items by project
+  const manualProjects = useMemo(() => {
+    const groups = new Map<string, ManualProjectGroup>()
+
+    for (const item of day.manual_items) {
+      // Use project_path as key, fallback to "未分類" if no project
+      const projectPath = item.project_path ?? 'manual:uncategorized'
+      const projectName = item.project_name ?? '未分類'
+
+      if (!groups.has(projectPath)) {
+        groups.set(projectPath, {
+          projectPath,
+          projectName,
+          items: [],
+          totalHours: 0,
+        })
+      }
+
+      const group = groups.get(projectPath)!
+      group.items.push(item)
+      group.totalHours += item.hours
+    }
+
+    return Array.from(groups.values())
+  }, [day.manual_items])
+
+  // Create pseudo WorklogDayProject for manual projects (for ProjectCard compatibility)
+  const createManualProject = (group: ManualProjectGroup): WorklogDayProject => ({
+    project_path: group.projectPath,
+    project_name: group.projectName,
+    daily_summary: undefined,
+    total_commits: 0,
+    total_files: 0,
+    total_hours: group.totalHours,
+    has_hourly_data: true, // Enable expand for manual projects
+  })
+
   return (
     <div className="border-t border-border pt-4 space-y-3">
-      {/* Project cards */}
+      {/* Automatic project cards */}
       {day.projects.map((project) => {
         const isExpanded =
           expandedProject?.date === day.date &&
@@ -70,31 +114,32 @@ export function DayDetails({
         )
       })}
 
-      {/* Manual items */}
-      {day.manual_items.map((item) => (
-        <ManualItemCard
-          key={item.id}
-          item={item}
-          onEdit={() => onEditManualItem(item.id)}
-          onDelete={() => onDeleteManualItem(item.id)}
-          syncRecord={getSyncRecord?.(`manual:${item.id}`, day.date)}
-          onSyncToTempo={
-            onSyncProject
-              ? () =>
-                  onSyncProject({
-                    projectPath: `manual:${item.id}`,
-                    projectName: item.title,
-                    date: day.date,
-                    weekday: day.weekday,
-                    hours: item.hours,
-                    description: item.description ?? item.title,
-                  })
-              : undefined
-          }
-          mappedIssueKey={getMappedIssueKey?.(`manual:${item.id}`)}
-          onIssueKeyChange={onIssueKeyChange ? (key) => onIssueKeyChange(`manual:${item.id}`, key) : undefined}
-        />
-      ))}
+      {/* Manual project cards (grouped by project) */}
+      {manualProjects.map((group) => {
+        const pseudoProject = createManualProject(group)
+        const isExpanded =
+          expandedProject?.date === day.date &&
+          expandedProject?.projectPath === group.projectPath
+        return (
+          <ProjectCard
+            key={group.projectPath}
+            project={pseudoProject}
+            date={day.date}
+            isExpanded={isExpanded}
+            hourlyData={[]}
+            hourlyLoading={false}
+            onToggleHourly={() => onToggleHourly(day.date, group.projectPath)}
+            // Manual project specific props
+            manualItems={group.items}
+            onEditManualItem={onEditManualItem}
+            onDeleteManualItem={onDeleteManualItem}
+            onSyncManualItem={onSyncProject ? (target) => onSyncProject({ ...target, weekday: day.weekday }) : undefined}
+            getManualItemSyncRecord={getSyncRecord}
+            getManualItemIssueKey={getMappedIssueKey}
+            onManualItemIssueKeyChange={onIssueKeyChange}
+          />
+        )
+      })}
 
       {/* Add button */}
       <Button

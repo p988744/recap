@@ -215,6 +215,9 @@ pub struct ManualWorkItem {
     pub description: Option<String>,
     pub hours: f64,
     pub date: String,
+    pub project_path: Option<String>,
+    pub project_name: Option<String>,
+    pub jira_issue_key: Option<String>,
 }
 
 /// A project's daily summary within a worklog day
@@ -518,12 +521,22 @@ pub async fn get_worklog_overview(
         let date = item.date.to_string();
         get_or_create_day(&mut days_map, &date);
         if let Some(day) = days_map.get_mut(&date) {
+            // Extract project name from project_path (e.g., "~/.recap/manual-projects/會議" -> "會議")
+            let project_name = item.project_path.as_ref().and_then(|p| {
+                std::path::Path::new(p)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.to_string())
+            });
             day.manual_items.push(ManualWorkItem {
                 id: item.id.clone(),
                 title: item.title.clone(),
                 description: item.description.clone(),
                 hours: item.hours,
                 date: date.clone(),
+                project_path: item.project_path.clone(),
+                project_name,
+                jira_issue_key: item.jira_issue_key.clone(),
             });
         }
     }

@@ -24,6 +24,9 @@ export interface ManualWorkItem {
   description?: string
   hours: number
   date: string
+  project_path?: string
+  project_name?: string
+  jira_issue_key?: string
 }
 
 export interface WorklogDayProject {
