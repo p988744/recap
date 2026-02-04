@@ -76,3 +76,6 @@ pub use provider::{QuotaProvider, QuotaError};
 
 // Re-export providers
 pub use claude::ClaudeQuotaProvider;
+
+// Re-export store
+pub use store::{QuotaStore, StoredQuotaSnapshot};
