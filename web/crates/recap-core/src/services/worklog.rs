@@ -7,7 +7,7 @@ use chrono::{DateTime, FixedOffset, NaiveDate};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::Command;
+use crate::utils::create_command;
 
 use crate::models::HoursSource;
 
@@ -166,7 +166,7 @@ pub fn get_commits_for_date(repo_path: &str, date: &NaiveDate) -> Vec<CommitReco
     let until = format!("{} 23:59:59", date);
 
     // Get commit list with metadata
-    let output = Command::new("git")
+    let output = create_command("git")
         .arg("log")
         .arg("--since")
         .arg(&since)
@@ -245,7 +245,7 @@ pub fn get_commits_for_date(repo_path: &str, date: &NaiveDate) -> Vec<CommitReco
 
 /// Get file changes for a specific commit
 fn get_commit_file_changes(repo_dir: &PathBuf, hash: &str) -> (Vec<FileChange>, i32, i32) {
-    let output = Command::new("git")
+    let output = create_command("git")
         .arg("show")
         .arg("--numstat")
         .arg("--format=")
@@ -323,7 +323,7 @@ pub fn get_commits_in_time_range(repo_path: &str, start: &str, end: &str) -> Vec
         return Vec::new();
     }
 
-    let output = Command::new("git")
+    let output = create_command("git")
         .arg("log")
         .arg("--since")
         .arg(start)

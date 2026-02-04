@@ -12,6 +12,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
+
+use crate::utils::create_command;
 use uuid::Uuid;
 
 use super::session_parser::{
@@ -273,7 +275,7 @@ fn get_commit_stats(repo_path: &str, hash: &str) -> (i32, i32) {
         return (0, 0);
     }
 
-    let output = std::process::Command::new("git")
+    let output = create_command("git")
         .arg("show")
         .arg("--numstat")
         .arg("--format=")

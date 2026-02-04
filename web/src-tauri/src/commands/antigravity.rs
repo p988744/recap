@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::process::Command;
+use recap_core::utils::create_command;
 use tauri::State;
 
 use recap_core::auth::verify_token;
@@ -100,7 +100,7 @@ struct AntigravityProcess {
 /// Find the running Antigravity language server process and extract connection info
 fn find_antigravity_process() -> Option<AntigravityProcess> {
     // Run ps command to find the process
-    let output = Command::new("ps")
+    let output = create_command("ps")
         .args(["aux"])
         .output()
         .ok()?;

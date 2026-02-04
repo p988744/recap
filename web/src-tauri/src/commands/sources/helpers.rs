@@ -3,7 +3,8 @@
 //! Utilities for Git repository validation and path operations.
 
 use std::path::Path;
-use std::process::Command;
+
+use recap_core::utils::create_command;
 
 /// Check if a path is a valid Git repository
 /// Supports both regular repos (.git is a directory) and worktrees (.git is a file)
@@ -18,7 +19,7 @@ pub fn is_valid_git_repo(path: &str) -> bool {
 /// Get the last commit info from a Git repository
 pub fn get_last_commit_info(path: &str) -> Option<(String, String)> {
     let expanded = shellexpand::tilde(path);
-    let output = Command::new("git")
+    let output = create_command("git")
         .args(["log", "-1", "--format=%H|%ci"])
         .current_dir(expanded.as_ref())
         .output()

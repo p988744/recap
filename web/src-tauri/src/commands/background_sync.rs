@@ -3,6 +3,7 @@
 //! Tauri commands for controlling the background sync service.
 
 use super::AppState;
+use chrono::Utc;
 use recap_core::auth::verify_token;
 use crate::services::background_sync::{BackgroundSyncConfig, SyncOperationResult, SyncServiceStatus};
 use serde::{Deserialize, Serialize};
@@ -141,7 +142,8 @@ pub async fn update_background_sync_config(
     token: String,
     config: UpdateBackgroundSyncConfigRequest,
 ) -> Result<BackgroundSyncConfigResponse, String> {
-    verify_token(&token).map_err(|e| e.to_string())?;
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let user_id = claims.sub;
 
     // Get current config and apply updates
     let current = state.background_sync.get_config().await;
@@ -167,8 +169,40 @@ pub async fn update_background_sync_config(
         return Err("壓縮間隔必須是 30 分鐘、1、3、6、12 或 24 小時".to_string());
     }
 
+    // Update in-memory config
     state.background_sync.update_config(new_config.clone()).await;
-    log::info!("Background sync config updated: {:?}", new_config);
+
+    // Persist to database
+    let pool = {
+        let db = state.db.lock().await;
+        db.pool.clone()
+    };
+
+    sqlx::query(
+        r#"
+        UPDATE users SET
+            sync_enabled = ?,
+            sync_interval_minutes = ?,
+            compaction_interval_minutes = ?,
+            auto_generate_summaries = ?,
+            sync_git = ?,
+            sync_claude = ?,
+            sync_antigravity = ?
+        WHERE id = ?
+        "#
+    )
+    .bind(new_config.enabled)
+    .bind(new_config.interval_minutes)
+    .bind(new_config.compaction_interval_minutes)
+    .bind(new_config.auto_generate_summaries)
+    .bind(new_config.sync_git)
+    .bind(new_config.sync_claude)
+    .bind(new_config.sync_antigravity)
+    .execute(&pool)
+    .await
+    .map_err(|e| format!("Failed to persist sync config: {}", e))?;
+
+    log::info!("Background sync config updated and persisted: {:?}", new_config);
 
     Ok(new_config.into())
 }
@@ -196,6 +230,55 @@ pub async fn start_background_sync(
 
     // Set user ID for sync operations
     state.background_sync.set_user_id(user_id.clone()).await;
+
+    // Load config from database
+    let pool = {
+        let db = state.db.lock().await;
+        db.pool.clone()
+    };
+
+    let config_row: Option<(
+        Option<bool>,
+        Option<i32>,
+        Option<i32>,
+        Option<bool>,
+        Option<bool>,
+        Option<bool>,
+        Option<bool>,
+    )> = sqlx::query_as(
+        r#"
+        SELECT
+            sync_enabled,
+            sync_interval_minutes,
+            compaction_interval_minutes,
+            auto_generate_summaries,
+            sync_git,
+            sync_claude,
+            sync_antigravity
+        FROM users WHERE id = ?
+        "#
+    )
+    .bind(&user_id)
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+
+    if let Some((enabled, interval, compaction, auto_summaries, git, claude, antigravity)) = config_row {
+        let config = BackgroundSyncConfig {
+            enabled: enabled.unwrap_or(true),
+            interval_minutes: interval.unwrap_or(15) as u32,
+            compaction_interval_minutes: compaction.unwrap_or(60) as u32,
+            auto_generate_summaries: auto_summaries.unwrap_or(true),
+            sync_git: git.unwrap_or(true),
+            sync_claude: claude.unwrap_or(true),
+            sync_antigravity: antigravity.unwrap_or(true),
+            sync_gitlab: false,
+            sync_jira: false,
+        };
+        state.background_sync.update_config(config).await;
+        log::info!("Loaded sync config from database");
+    }
 
     // Initialize timestamps from database (restore last known sync/compaction times)
     state.background_sync.initialize_timestamps_from_db(&user_id).await;
@@ -449,6 +532,11 @@ pub async fn trigger_sync_with_progress(
         }
     }
 
+    // Record compaction completion (updates last_compaction_at and next_compaction_at)
+    if config.sync_claude {
+        state.background_sync.record_compaction_completed().await;
+    }
+
     // Complete
     let total_items: i32 = results.iter().map(|r| r.items_synced).sum();
     emit(
@@ -462,6 +550,29 @@ pub async fn trigger_sync_with_progress(
     // Complete sync operation (lifecycle: Syncing -> Idle)
     // This automatically records results and updates last_sync_at
     state.background_sync.complete_sync_operation(&results).await;
+
+    // Persist sync status to database
+    let now = Utc::now();
+    if let Err(e) = sqlx::query(
+        r#"
+        UPDATE sync_status
+        SET status = 'success',
+            last_sync_at = ?,
+            last_item_count = ?,
+            error_message = NULL,
+            updated_at = ?
+        WHERE user_id = ?
+        "#
+    )
+    .bind(&now)
+    .bind(total_items)
+    .bind(&now)
+    .bind(&user_id)
+    .execute(&pool)
+    .await
+    {
+        log::warn!("Failed to persist sync status to database: {}", e);
+    }
 
     log::info!("Manual sync with progress triggered, {} items synced", total_items);
 

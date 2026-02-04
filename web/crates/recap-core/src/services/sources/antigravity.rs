@@ -16,7 +16,7 @@ use chrono::{DateTime, Local, Timelike};
 use serde::Deserialize;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
-use std::process::Command;
+use crate::utils::create_command;
 
 use super::{SyncSource, SourceProject, SourceSyncResult, WorkItemParams, upsert_work_item, UpsertResult};
 use crate::services::snapshot::save_hourly_snapshots;
@@ -295,7 +295,7 @@ enum ProcessResult {
 
 /// Find the running Antigravity language server process
 fn find_antigravity_process() -> Option<AntigravityConnection> {
-    let output = Command::new("ps")
+    let output = create_command("ps")
         .args(["aux"])
         .output()
         .ok()?;
