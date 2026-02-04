@@ -431,6 +431,13 @@ impl Database {
             .await
             .ok();
 
+        // Add claude_oauth_token column for manual OAuth token fallback
+        // Used when automatic credential discovery (Keychain/file) fails
+        sqlx::query("ALTER TABLE users ADD COLUMN claude_oauth_token TEXT")
+            .execute(&self.pool)
+            .await
+            .ok();
+
         // Create snapshot_raw_data table for hourly session snapshots
         sqlx::query(
             r#"

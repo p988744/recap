@@ -6,7 +6,7 @@
  */
 
 import { invokeAuth } from './client'
-import type { CurrentQuotaResponse, QuotaSnapshot } from '@/types/quota'
+import type { CurrentQuotaResponse, QuotaSnapshot, ClaudeAuthStatus } from '@/types/quota'
 
 const LOG_PREFIX = '[quota]'
 
@@ -88,5 +88,59 @@ export async function checkProviderAvailable(
   } catch (error) {
     console.error(`${LOG_PREFIX} Failed to check provider:`, error)
     return false
+  }
+}
+
+// ============================================================================
+// Claude OAuth Token Management (Fallback)
+// ============================================================================
+
+/**
+ * Get the manually configured Claude OAuth token
+ * @returns The token if set, or null if not configured
+ */
+export async function getClaudeOAuthToken(): Promise<string | null> {
+  console.log(`${LOG_PREFIX} Getting Claude OAuth token...`)
+  try {
+    const result = await invokeAuth<string | null>('get_claude_oauth_token', {})
+    console.log(`${LOG_PREFIX} Claude OAuth token ${result ? 'found' : 'not configured'}`)
+    return result
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Failed to get Claude OAuth token:`, error)
+    throw error
+  }
+}
+
+/**
+ * Set the Claude OAuth token manually
+ * This is used as a fallback when automatic credential discovery fails.
+ * @param oauthToken The OAuth token to set, or null/empty to clear
+ */
+export async function setClaudeOAuthToken(oauthToken: string | null): Promise<void> {
+  console.log(`${LOG_PREFIX} Setting Claude OAuth token...`)
+  try {
+    await invokeAuth<void>('set_claude_oauth_token', {
+      oauth_token: oauthToken || null,
+    })
+    console.log(`${LOG_PREFIX} Claude OAuth token ${oauthToken ? 'set' : 'cleared'}`)
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Failed to set Claude OAuth token:`, error)
+    throw error
+  }
+}
+
+/**
+ * Check Claude auth status (automatic vs manual credentials)
+ * @returns Status object indicating which auth source is available/active
+ */
+export async function checkClaudeAuthStatus(): Promise<ClaudeAuthStatus> {
+  console.log(`${LOG_PREFIX} Checking Claude auth status...`)
+  try {
+    const result = await invokeAuth<ClaudeAuthStatus>('check_claude_auth_status', {})
+    console.log(`${LOG_PREFIX} Claude auth status:`, result)
+    return result
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Failed to check Claude auth status:`, error)
+    throw error
   }
 }

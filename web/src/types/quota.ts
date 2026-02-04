@@ -44,6 +44,18 @@ export interface QuotaSettings {
 // Alert level based on usage
 export type AlertLevel = 'normal' | 'warning' | 'critical'
 
+// Claude auth status response
+export interface ClaudeAuthStatus {
+  /** Whether automatic credential discovery works (Keychain/file) */
+  auto_available: boolean
+  /** Whether a manual token is configured */
+  manual_configured: boolean
+  /** Whether the manual token is valid (if configured) */
+  manual_valid: boolean
+  /** Which auth source is active: "auto", "manual", or "none" */
+  active_source: 'auto' | 'manual' | 'none'
+}
+
 /**
  * Get alert level based on usage percentage and settings
  */

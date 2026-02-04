@@ -185,6 +185,10 @@ pub fn run() {
             commands::quota::get_stored_quota,
             commands::quota::get_quota_history,
             commands::quota::check_quota_provider_available,
+            // Quota - Claude OAuth Token Management (Fallback)
+            commands::quota::get_claude_oauth_token,
+            commands::quota::set_claude_oauth_token,
+            commands::quota::check_claude_auth_status,
             // Quota Polling Timer
             commands::quota_timer::start_quota_polling,
             commands::quota_timer::stop_quota_polling,
