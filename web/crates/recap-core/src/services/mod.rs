@@ -6,6 +6,7 @@ pub mod llm;
 pub mod llm_batch;
 pub mod llm_pricing;
 pub mod llm_usage;
+pub mod quota;
 pub mod session_parser;
 pub mod snapshot;
 pub mod sources;
@@ -58,4 +59,8 @@ pub use sources::{
     SyncSource, SourceProject, SourceSyncResult, WorkItemParams,
     ClaudeSource, AntigravitySource, SyncConfig,
     get_enabled_sources, upsert_work_item, UpsertResult,
+};
+pub use quota::{
+    QuotaProvider, QuotaError, QuotaProviderType, QuotaWindowType,
+    QuotaSnapshot, ExtraCredits, AccountInfo, AlertLevel, QuotaSettings,
 };
