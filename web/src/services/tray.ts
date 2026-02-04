@@ -29,3 +29,17 @@ export async function updateSyncStatus(
 export async function setSyncing(syncing: boolean): Promise<void> {
   return invoke<void>('set_tray_syncing', { syncing })
 }
+
+/**
+ * Update tray title with quota percentages
+ */
+export async function updateTrayQuota(
+  claudePercent?: number,
+  antigravityPercent?: number
+): Promise<void> {
+  console.log('[tray] Updating quota:', { claudePercent, antigravityPercent })
+  return invoke<void>('update_tray_quota', {
+    claudePercent,
+    antigravityPercent,
+  })
+}

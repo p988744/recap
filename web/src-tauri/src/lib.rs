@@ -108,6 +108,7 @@ pub fn run() {
             // Tray
             commands::tray::update_tray_sync_status,
             commands::tray::set_tray_syncing,
+            commands::tray::update_tray_quota,
             // Background Sync
             commands::background_sync::get_background_sync_config,
             commands::background_sync::update_background_sync_config,

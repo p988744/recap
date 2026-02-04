@@ -111,6 +111,30 @@ pub async fn set_tray_syncing(app: AppHandle, syncing: bool) -> Result<(), Strin
     rebuild_tray_menu(&app, &status_text, !syncing)
 }
 
+/// Update tray title with quota percentage
+#[tauri::command]
+pub async fn update_tray_quota(
+    app: AppHandle,
+    claude_percent: Option<f64>,
+    antigravity_percent: Option<f64>,
+) -> Result<(), String> {
+    let tray = app
+        .tray_by_id("main-tray")
+        .ok_or_else(|| "Tray icon not found".to_string())?;
+
+    let title = match (claude_percent, antigravity_percent) {
+        (Some(c), Some(a)) => format!("C:{:.0}% A:{:.0}%", c, a),
+        (Some(c), None) => format!("{:.0}%", c),
+        (None, Some(a)) => format!("{:.0}%", a),
+        (None, None) => "—".to_string(),
+    };
+
+    tray.set_title(Some(&title)).map_err(|e| e.to_string())?;
+    log::debug!("[tray] Updated quota title: {}", title);
+
+    Ok(())
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
