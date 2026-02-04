@@ -285,33 +285,19 @@ export function ClaudeAuthConfig({ onAuthStatusChange }: ClaudeAuthConfigProps) 
                 <ol className="list-decimal list-inside space-y-1.5 text-xs text-muted-foreground">
                   <li>用瀏覽器開啟 <a href="https://claude.ai" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">claude.ai</a> 並登入</li>
                   <li>
-                    開啟開發者工具的 Console：
+                    開啟開發者工具 Network 分頁：
                     <ul className="list-disc list-inside ml-4 mt-1">
-                      <li>macOS: <kbd className="bg-muted px-1 rounded">Cmd + Option + J</kbd></li>
-                      <li>Windows/Linux: <kbd className="bg-muted px-1 rounded">Ctrl + Shift + J</kbd></li>
+                      <li>macOS: <kbd className="bg-muted px-1 rounded">Cmd + Option + I</kbd> → Network</li>
+                      <li>Windows/Linux: <kbd className="bg-muted px-1 rounded">F12</kbd> → Network</li>
                     </ul>
                   </li>
-                  <li>貼上以下指令並按 Enter 執行：</li>
+                  <li>在 claude.ai 發送任意訊息</li>
+                  <li>在 Network 分頁篩選 <code className="bg-muted px-1 rounded">api</code></li>
+                  <li>點擊任一請求 → Headers → 找到 <code className="bg-muted px-1 rounded">Authorization</code></li>
+                  <li>複製 <code className="bg-muted px-1 rounded">Bearer</code> 後面的 token 值</li>
                 </ol>
-                <div className="relative">
-                  <pre className="p-2 rounded bg-muted font-mono text-[10px] overflow-x-auto whitespace-pre-wrap break-all">
-{`copy(JSON.parse(localStorage.getItem('claudeAiOauth')||'{}').accessToken||'找不到 Token')`}
-                  </pre>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="absolute top-1 right-1 h-6 text-[10px] gap-1"
-                    onClick={() => {
-                      navigator.clipboard.writeText(
-                        `copy(JSON.parse(localStorage.getItem('claudeAiOauth')||'{}').accessToken||'找不到 Token')`
-                      )
-                    }}
-                  >
-                    複製指令
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  執行後 Token 會自動複製到剪貼簿，直接貼到上方輸入框即可。
+                <p className="text-xs text-muted-foreground mt-2">
+                  Token 格式類似：<code className="bg-muted px-1 rounded text-[10px]">sk-ant-sid01-xxx...</code>
                 </p>
               </div>
 
