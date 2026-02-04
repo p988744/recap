@@ -48,7 +48,7 @@ export async function getStoredQuota(
 /**
  * Get quota history for charting
  * @param provider Provider name (e.g., 'claude', 'antigravity')
- * @param windowType Window type (e.g., 'five_hour', 'seven_day')
+ * @param windowType Window type (e.g., '5_hour', '7_day')
  * @param days Number of days of history (default: 7)
  */
 export async function getQuotaHistory(
