@@ -8,7 +8,8 @@
 
 import { useMemo } from 'react'
 import {
-  LineChart,
+  ComposedChart,
+  Bar,
   Line,
   XAxis,
   YAxis,
@@ -23,6 +24,8 @@ import type { QuotaSnapshot, QuotaSettings } from '@/types/quota'
 interface QuotaChartProps {
   data: QuotaSnapshot[]
   settings: QuotaSettings
+  /** Current quota snapshots to calculate window boundaries */
+  currentQuota?: QuotaSnapshot[]
 }
 
 interface ChartDataPoint {
@@ -33,8 +36,15 @@ interface ChartDataPoint {
   sevenDay?: number
 }
 
-export function QuotaChart({ data, settings }: QuotaChartProps) {
+// Window durations in milliseconds
+const WINDOW_DURATIONS: Record<string, number> = {
+  '5_hour': 5 * 60 * 60 * 1000,
+  '7_day': 7 * 24 * 60 * 60 * 1000,
+}
+
+export function QuotaChart({ data, settings, currentQuota }: QuotaChartProps) {
   // Transform data for chart - group by timestamp and separate by window type
+  // Insert gap markers where time difference is too large
   const chartData = useMemo(() => {
     // Group data by timestamp (rounded to nearest minute)
     const dataMap = new Map<string, ChartDataPoint>()
@@ -50,7 +60,6 @@ export function QuotaChart({ data, settings }: QuotaChartProps) {
             month: 'numeric',
             day: 'numeric',
             hour: '2-digit',
-            minute: '2-digit',
           }),
           fullTime: date.toLocaleString('zh-TW'),
           timestamp,
@@ -65,22 +74,93 @@ export function QuotaChart({ data, settings }: QuotaChartProps) {
       }
     })
 
-    // Sort by timestamp and return as array
-    return Array.from(dataMap.values()).sort((a, b) => a.timestamp - b.timestamp)
+    // Sort by timestamp
+    const sorted = Array.from(dataMap.values()).sort((a, b) => a.timestamp - b.timestamp)
+
+    // Insert null points where gap is larger than 1 hour to break the line
+    const maxGap = 60 * 60 * 1000 // 1 hour
+    const result: ChartDataPoint[] = []
+
+    for (let i = 0; i < sorted.length; i++) {
+      if (i > 0) {
+        const gap = sorted[i].timestamp - sorted[i - 1].timestamp
+        if (gap > maxGap) {
+          // Insert a gap marker with null values
+          result.push({
+            time: '',
+            fullTime: '',
+            timestamp: sorted[i - 1].timestamp + 1,
+            fiveHour: undefined,
+            sevenDay: undefined,
+          })
+        }
+      }
+      result.push(sorted[i])
+    }
+
+    return result
   }, [data])
+
+  // Calculate current window start time for 5-hour quota
+  // Only show the current window boundary to avoid confusion
+  const currentWindowBoundary = useMemo(() => {
+    if (!currentQuota || chartData.length === 0) return null
+
+    const fiveHourQuota = currentQuota.find(
+      (q) => q.provider === 'claude' && q.window_type === '5_hour' && q.resets_at
+    )
+    if (!fiveHourQuota?.resets_at) return null
+
+    const resetsAt = new Date(fiveHourQuota.resets_at).getTime()
+    const windowDuration = WINDOW_DURATIONS['5_hour']
+    const windowStart = resetsAt - windowDuration
+
+    // Find closest data point to current window start
+    const chartStart = chartData[0].timestamp
+    const chartEnd = chartData[chartData.length - 1].timestamp
+
+    // Only show if window start is within chart range
+    if (windowStart < chartStart || windowStart > chartEnd) return null
+
+    let closestPoint = chartData[0]
+    let minDiff = Math.abs(chartData[0].timestamp - windowStart)
+
+    for (const point of chartData) {
+      const diff = Math.abs(point.timestamp - windowStart)
+      if (diff < minDiff) {
+        minDiff = diff
+        closestPoint = point
+      }
+    }
+
+    // Only show if within 1 hour of a data point
+    const oneHour = 60 * 60 * 1000
+    if (minDiff > oneHour) return null
+
+    const date = new Date(windowStart)
+    return {
+      xValue: closestPoint.time,
+      label: date.toLocaleString('zh-TW', {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+    }
+  }, [currentQuota, chartData])
 
   return (
     <ResponsiveContainer width="100%" height={300}>
-      <LineChart
+      <ComposedChart
         data={chartData}
         margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
       >
         <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
         <XAxis
           dataKey="time"
-          fontSize={12}
+          fontSize={11}
           tick={{ fill: 'hsl(var(--muted-foreground))' }}
           tickLine={{ stroke: 'hsl(var(--border))' }}
+          interval="preserveStartEnd"
+          minTickGap={60}
         />
         <YAxis
           domain={[0, 100]}
@@ -135,18 +215,41 @@ export function QuotaChart({ data, settings }: QuotaChartProps) {
             fontSize: 11,
           }}
         />
-        {/* 5-hour usage line */}
-        <Line
-          type="monotone"
+        {/* Current window boundary line (5-hour) */}
+        {currentWindowBoundary && (
+          <ReferenceLine
+            x={currentWindowBoundary.xValue}
+            stroke="#64748b"
+            strokeWidth={1}
+            label={{
+              value: `窗口開始 ${currentWindowBoundary.label}`,
+              position: 'insideTopLeft',
+              fill: '#64748b',
+              fontSize: 10,
+            }}
+          />
+        )}
+        {/* 5-hour usage bar */}
+        <Bar
           dataKey="fiveHour"
           name="fiveHour"
-          stroke="#3b82f6"
-          strokeWidth={2}
-          dot={false}
-          activeDot={{ r: 4, fill: '#3b82f6' }}
-          connectNulls
+          fill="#3b82f6"
+          radius={[2, 2, 0, 0]}
+          barSize={8}
         />
-        {/* 7-day usage line */}
+        {/* 7-day usage line - dashed line to connect gaps */}
+        <Line
+          type="monotone"
+          dataKey="sevenDay"
+          stroke="#22c55e"
+          strokeWidth={1.5}
+          strokeDasharray="4 4"
+          dot={false}
+          activeDot={false}
+          connectNulls
+          legendType="none"
+        />
+        {/* 7-day usage line - solid line for actual data */}
         <Line
           type="monotone"
           dataKey="sevenDay"
@@ -155,9 +258,8 @@ export function QuotaChart({ data, settings }: QuotaChartProps) {
           strokeWidth={2}
           dot={false}
           activeDot={{ r: 4, fill: '#22c55e' }}
-          connectNulls
         />
-      </LineChart>
+      </ComposedChart>
     </ResponsiveContainer>
   )
 }
