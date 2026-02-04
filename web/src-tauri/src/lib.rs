@@ -179,6 +179,11 @@ pub fn run() {
             commands::batch_compaction::submit_batch_compaction,
             commands::batch_compaction::refresh_batch_status,
             commands::batch_compaction::process_completed_batch_job,
+            // Quota Tracking
+            commands::quota::get_current_quota,
+            commands::quota::get_stored_quota,
+            commands::quota::get_quota_history,
+            commands::quota::check_quota_provider_available,
         ])
         .setup(|app| {
             // Setup Tauri logging plugin (for frontend) - must be first
