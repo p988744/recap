@@ -73,3 +73,6 @@ pub use types::{
 
 // Re-export provider trait and error
 pub use provider::{QuotaProvider, QuotaError};
+
+// Re-export providers
+pub use claude::ClaudeQuotaProvider;
