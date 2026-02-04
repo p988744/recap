@@ -59,6 +59,7 @@ pub mod types;
 pub mod provider;
 pub mod claude;
 pub mod store;
+pub mod timer;
 
 // Re-export main types
 pub use types::{
@@ -79,3 +80,15 @@ pub use claude::ClaudeQuotaProvider;
 
 // Re-export store
 pub use store::{QuotaStore, StoredQuotaSnapshot};
+
+// Re-export timer types
+pub use timer::{
+    QuotaPollingConfig,
+    QuotaPollingStatus,
+    QuotaPollingState,
+    SharedPollingState,
+    AlertState,
+    create_shared_state,
+    MIN_INTERVAL_MINUTES,
+    DEFAULT_INTERVAL_MINUTES,
+};
