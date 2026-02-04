@@ -215,8 +215,12 @@ export function QuotaPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             {/* Statistics */}
-            {history.length > 0 && (
-              <QuotaStats data={history} windowType={windowType} />
+            {currentQuota.length > 0 && (
+              <QuotaStats
+                currentQuota={currentQuota}
+                historyData={history}
+                windowType={windowType}
+              />
             )}
 
             {/* Chart */}

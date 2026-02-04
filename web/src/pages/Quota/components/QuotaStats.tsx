@@ -2,118 +2,196 @@
  * QuotaStats component
  *
  * Displays usage statistics for quota data including
- * average and maximum usage per period.
+ * average and maximum usage for both 5-hour and 7-day periods.
  */
 
 import { useMemo } from 'react'
-import { TrendingUp, TrendingDown, BarChart3, Activity } from 'lucide-react'
+import { Clock, Calendar, TrendingUp, BarChart3 } from 'lucide-react'
 import type { QuotaSnapshot } from '@/types/quota'
-import { cn } from '@/lib/utils'
 
 interface QuotaStatsProps {
-  data: QuotaSnapshot[]
+  /** Current snapshots for all window types */
+  currentQuota: QuotaSnapshot[]
+  /** History data for the selected window type */
+  historyData: QuotaSnapshot[]
+  /** Selected window type for history */
   windowType: string
 }
 
-interface StatCardProps {
-  label: string
-  value: string
-  subValue?: string
+function StatRow({
+  icon,
+  label,
+  current,
+  avg,
+  max,
+}: {
   icon: React.ReactNode
-  trend?: 'up' | 'down' | 'neutral'
-}
+  label: string
+  current: number | null
+  avg: number | null
+  max: number | null
+}) {
+  const formatValue = (v: number | null) => (v !== null ? `${v.toFixed(1)}%` : '-')
 
-function StatCard({ label, value, subValue, icon, trend }: StatCardProps) {
   return (
-    <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/30">
-      <div className="p-2 rounded-md bg-background">
-        {icon}
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-xs text-muted-foreground truncate">{label}</p>
+    <tr className="border-b border-border/50 last:border-0">
+      <td className="py-2.5 pr-4">
         <div className="flex items-center gap-2">
-          <p className="text-lg font-semibold tabular-nums">{value}</p>
-          {trend && trend !== 'neutral' && (
-            <span className={cn(
-              'text-xs',
-              trend === 'up' ? 'text-red-500' : 'text-green-500'
-            )}>
-              {trend === 'up' ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-            </span>
-          )}
+          {icon}
+          <span className="text-sm font-medium">{label}</span>
         </div>
-        {subValue && (
-          <p className="text-[10px] text-muted-foreground">{subValue}</p>
-        )}
-      </div>
-    </div>
+      </td>
+      <td className="py-2.5 px-4 text-right">
+        <span className="text-sm tabular-nums font-semibold">{formatValue(current)}</span>
+      </td>
+      <td className="py-2.5 px-4 text-right">
+        <span className="text-sm tabular-nums text-muted-foreground">{formatValue(avg)}</span>
+      </td>
+      <td className="py-2.5 pl-4 text-right">
+        <span className="text-sm tabular-nums text-muted-foreground">{formatValue(max)}</span>
+      </td>
+    </tr>
   )
 }
 
-export function QuotaStats({ data, windowType }: QuotaStatsProps) {
+export function QuotaStats({ currentQuota, historyData, windowType }: QuotaStatsProps) {
   const stats = useMemo(() => {
-    if (data.length === 0) {
-      return null
+    // Get current values from snapshots
+    const getCurrent = (wt: string) => {
+      const snapshot = currentQuota.find(
+        (s) => s.provider === 'claude' && s.window_type === wt
+      )
+      return snapshot?.used_percent ?? null
     }
 
-    const values = data.map((d) => d.used_percent)
-    const avg = values.reduce((a, b) => a + b, 0) / values.length
-    const max = Math.max(...values)
-    const min = Math.min(...values)
-    const latest = values[values.length - 1]
-    const first = values[0]
+    // Calculate history stats for a specific window type
+    const getHistoryStats = (data: QuotaSnapshot[], wt: string) => {
+      const filtered = data.filter((d) => d.window_type === wt)
+      if (filtered.length === 0) {
+        return { avg: null, max: null }
+      }
+      const values = filtered.map((d) => d.used_percent)
+      return {
+        avg: values.reduce((a, b) => a + b, 0) / values.length,
+        max: Math.max(...values),
+      }
+    }
 
-    // Calculate trend (comparing latest to first)
-    const trendPercent = latest - first
-    const trend: 'up' | 'down' | 'neutral' =
-      trendPercent > 5 ? 'up' : trendPercent < -5 ? 'down' : 'neutral'
+    // 5-hour stats
+    const fiveHourCurrent = getCurrent('5_hour')
+    const fiveHourHistory = windowType === '5_hour'
+      ? getHistoryStats(historyData, '5_hour')
+      : { avg: null, max: null }
 
-    // Format window type for display
-    const windowLabel = windowType === '5_hour' ? '5小時' :
-                        windowType === '7_day' ? '7天' :
-                        windowType === '7_day_opus' ? 'Opus' :
-                        windowType === '7_day_sonnet' ? 'Sonnet' : windowType
+    // 7-day stats
+    const sevenDayCurrent = getCurrent('7_day')
+    const sevenDayHistory = windowType === '7_day'
+      ? getHistoryStats(historyData, '7_day')
+      : { avg: null, max: null }
+
+    // 7-day Opus stats
+    const opusCurrent = getCurrent('7_day_opus')
+    const opusHistory = windowType === '7_day_opus'
+      ? getHistoryStats(historyData, '7_day_opus')
+      : { avg: null, max: null }
+
+    // 7-day Sonnet stats
+    const sonnetCurrent = getCurrent('7_day_sonnet')
+    const sonnetHistory = windowType === '7_day_sonnet'
+      ? getHistoryStats(historyData, '7_day_sonnet')
+      : { avg: null, max: null }
 
     return {
-      avg,
-      max,
-      min,
-      latest,
-      trend,
-      trendPercent,
-      windowLabel,
-      dataPoints: data.length,
+      fiveHour: {
+        current: fiveHourCurrent,
+        avg: fiveHourHistory.avg,
+        max: fiveHourHistory.max,
+      },
+      sevenDay: {
+        current: sevenDayCurrent,
+        avg: sevenDayHistory.avg,
+        max: sevenDayHistory.max,
+      },
+      opus: {
+        current: opusCurrent,
+        avg: opusHistory.avg,
+        max: opusHistory.max,
+      },
+      sonnet: {
+        current: sonnetCurrent,
+        avg: sonnetHistory.avg,
+        max: sonnetHistory.max,
+      },
     }
-  }, [data, windowType])
+  }, [currentQuota, historyData, windowType])
 
-  if (!stats) {
-    return null
-  }
+  // Only show rows that have current data
+  const hasOpus = stats.opus.current !== null
+  const hasSonnet = stats.sonnet.current !== null
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-      <StatCard
-        label={`平均用量（${stats.windowLabel}）`}
-        value={`${stats.avg.toFixed(1)}%`}
-        icon={<BarChart3 className="w-4 h-4 text-blue-500" />}
-      />
-      <StatCard
-        label={`最高用量（${stats.windowLabel}）`}
-        value={`${stats.max.toFixed(1)}%`}
-        icon={<TrendingUp className="w-4 h-4 text-orange-500" />}
-      />
-      <StatCard
-        label={`最低用量（${stats.windowLabel}）`}
-        value={`${stats.min.toFixed(1)}%`}
-        icon={<TrendingDown className="w-4 h-4 text-green-500" />}
-      />
-      <StatCard
-        label="目前用量"
-        value={`${stats.latest.toFixed(1)}%`}
-        subValue={`趨勢: ${stats.trendPercent > 0 ? '+' : ''}${stats.trendPercent.toFixed(1)}%`}
-        icon={<Activity className="w-4 h-4 text-purple-500" />}
-        trend={stats.trend}
-      />
+    <div className="overflow-x-auto">
+      <table className="w-full">
+        <thead>
+          <tr className="text-xs text-muted-foreground border-b border-border">
+            <th className="py-2 pr-4 text-left font-medium">週期</th>
+            <th className="py-2 px-4 text-right font-medium">
+              <div className="flex items-center justify-end gap-1">
+                <BarChart3 className="w-3 h-3" />
+                目前
+              </div>
+            </th>
+            <th className="py-2 px-4 text-right font-medium">
+              <div className="flex items-center justify-end gap-1">
+                平均
+              </div>
+            </th>
+            <th className="py-2 pl-4 text-right font-medium">
+              <div className="flex items-center justify-end gap-1">
+                <TrendingUp className="w-3 h-3" />
+                最高
+              </div>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <StatRow
+            icon={<Clock className="w-4 h-4 text-blue-500" />}
+            label="5 小時"
+            current={stats.fiveHour.current}
+            avg={stats.fiveHour.avg}
+            max={stats.fiveHour.max}
+          />
+          <StatRow
+            icon={<Calendar className="w-4 h-4 text-green-500" />}
+            label="7 天"
+            current={stats.sevenDay.current}
+            avg={stats.sevenDay.avg}
+            max={stats.sevenDay.max}
+          />
+          {hasOpus && (
+            <StatRow
+              icon={<span className="w-4 h-4 text-purple-500 text-xs font-bold">O</span>}
+              label="Opus (7天)"
+              current={stats.opus.current}
+              avg={stats.opus.avg}
+              max={stats.opus.max}
+            />
+          )}
+          {hasSonnet && (
+            <StatRow
+              icon={<span className="w-4 h-4 text-orange-500 text-xs font-bold">S</span>}
+              label="Sonnet (7天)"
+              current={stats.sonnet.current}
+              avg={stats.sonnet.avg}
+              max={stats.sonnet.max}
+            />
+          )}
+        </tbody>
+      </table>
+      <p className="text-[10px] text-muted-foreground mt-2">
+        * 平均和最高值基於所選時間範圍內的歷史資料（僅顯示當前選擇的週期類型）
+      </p>
     </div>
   )
 }
