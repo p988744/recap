@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/select'
 import { RefreshCw, Gauge, History } from 'lucide-react'
 import { useQuotaPage, DEFAULT_QUOTA_SETTINGS } from './hooks'
-import { QuotaChart, QuotaSummaryCard, ClaudeAuthConfig } from './components'
+import { QuotaChart, QuotaSummaryCard, ClaudeAuthConfig, QuotaStats } from './components'
 import { cn } from '@/lib/utils'
 
 export function QuotaPage() {
@@ -213,7 +213,13 @@ export function QuotaPage() {
               </div>
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
+            {/* Statistics */}
+            {history.length > 0 && (
+              <QuotaStats data={history} windowType={windowType} />
+            )}
+
+            {/* Chart */}
             {loading && history.length === 0 ? (
               <div className="flex items-center justify-center h-[300px]">
                 <div className="w-5 h-5 border border-border border-t-foreground/60 rounded-full animate-spin" />
