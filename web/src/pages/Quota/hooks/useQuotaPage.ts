@@ -55,7 +55,7 @@ export function useQuotaPage(): QuotaPageState {
 
   // Filter state
   const [provider, setProvider] = useState<string>('claude')
-  const [windowType, setWindowType] = useState<string>('five_hour')
+  const [windowType, setWindowType] = useState<string>('5_hour')
   const [days, setDays] = useState<number>(7)
 
   // Fetch current quota
@@ -69,7 +69,7 @@ export function useQuotaPage(): QuotaPageState {
 
       // Update tray with primary quota
       const fiveHour = result.snapshots.find(
-        (s) => s.provider === 'claude' && s.window_type === 'five_hour'
+        (s) => s.provider === 'claude' && s.window_type === '5_hour'
       )
       if (fiveHour) {
         tray.updateTrayQuota(fiveHour.used_percent).catch((err) => {
