@@ -28,6 +28,7 @@ export * as worklogSync from './worklog-sync'
 export * as tray from './tray'
 export * as notification from './notification'
 export * as llmUsage from './llm-usage'
+export * as quota from './quota'
 export * as dangerZone from './danger-zone'
 export * as batchCompaction from './batch-compaction'
 

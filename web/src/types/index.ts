@@ -198,3 +198,14 @@ export type {
   CommitDiffResponse,
   GetCommitDiffRequest,
 } from './projects'
+
+// Quota types
+export type {
+  QuotaProvider,
+  QuotaWindowType,
+  QuotaSnapshot,
+  CurrentQuotaResponse,
+  QuotaSettings,
+  AlertLevel,
+} from './quota'
+export { getAlertLevel, formatWindowType, formatResetTime } from './quota'
