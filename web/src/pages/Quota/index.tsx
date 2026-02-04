@@ -212,7 +212,11 @@ export function QuotaPage() {
                 <div className="w-5 h-5 border border-border border-t-foreground/60 rounded-full animate-spin" />
               </div>
             ) : history.length > 0 ? (
-              <QuotaChart data={history} settings={DEFAULT_QUOTA_SETTINGS} />
+              <QuotaChart
+                data={history}
+                settings={DEFAULT_QUOTA_SETTINGS}
+                currentQuota={currentQuota}
+              />
             ) : (
               <div className="flex flex-col items-center justify-center h-[300px] text-muted-foreground">
                 <History className="w-8 h-8 mb-2 opacity-50" />
