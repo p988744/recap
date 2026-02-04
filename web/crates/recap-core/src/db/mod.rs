@@ -705,6 +705,40 @@ impl Database {
             .execute(&self.pool)
             .await?;
 
+        // Create quota_snapshots table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS quota_snapshots (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT,
+                window_type TEXT NOT NULL,
+                used_percent REAL NOT NULL,
+                resets_at TEXT,
+                extra_credits_used REAL,
+                extra_credits_limit REAL,
+                raw_response TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Create index for quota queries
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_quota_provider_time
+            ON quota_snapshots(user_id, provider, created_at)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        log::info!("[quota:db] quota_snapshots table created");
+
         log::info!("Database migrations completed");
         Ok(())
     }
