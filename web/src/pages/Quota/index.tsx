@@ -46,19 +46,23 @@ export function QuotaPage() {
           <div className="flex items-center gap-2 mb-2">
             <Gauge className="w-4 h-4 text-muted-foreground" strokeWidth={1.5} />
             <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-              Quota
+              配額
             </p>
           </div>
           <h1 className="font-display text-3xl text-foreground tracking-tight">
-            Quota Usage
+            配額使用量
           </h1>
         </header>
 
         <Card className="border-l-2 border-l-muted">
-          <CardContent className="pt-6">
+          <CardContent className="pt-6 space-y-3">
             <p className="text-muted-foreground">
-              Claude Code not configured. Run <code className="bg-muted px-1 rounded">claude</code> in
-              your terminal to authenticate.
+              尚未設定 Claude Code OAuth 認證。
+            </p>
+            <p className="text-sm text-muted-foreground">
+              此功能需要 Claude Max 訂閱用戶的 OAuth token。請在終端機執行{' '}
+              <code className="bg-muted px-1.5 py-0.5 rounded text-foreground">claude /login</code>{' '}
+              進行認證。
             </p>
           </CardContent>
         </Card>
@@ -75,11 +79,11 @@ export function QuotaPage() {
             <div className="flex items-center gap-2 mb-2">
               <Gauge className="w-4 h-4 text-muted-foreground" strokeWidth={1.5} />
               <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-                Quota
+                配額
               </p>
             </div>
             <h1 className="font-display text-3xl text-foreground tracking-tight">
-              Quota Usage
+              配額使用量
             </h1>
           </div>
           <Button
@@ -90,7 +94,7 @@ export function QuotaPage() {
             className="gap-2"
           >
             <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
-            Refresh
+            重新整理
           </Button>
         </div>
       </header>
@@ -115,7 +119,7 @@ export function QuotaPage() {
           <div className="flex items-center gap-2 mb-4">
             <Gauge className="w-4 h-4 text-muted-foreground" strokeWidth={1.5} />
             <h2 className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-              Current Usage
+              目前用量
             </h2>
           </div>
 
@@ -158,7 +162,7 @@ export function QuotaPage() {
               <div className="flex items-center gap-2">
                 <History className="w-4 h-4 text-muted-foreground" strokeWidth={1.5} />
                 <CardTitle className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground font-normal">
-                  Usage History
+                  使用歷史
                 </CardTitle>
               </div>
               <div className="flex gap-2 flex-wrap">
@@ -179,11 +183,11 @@ export function QuotaPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="five_hour">5 Hour</SelectItem>
-                    <SelectItem value="seven_day">7 Day</SelectItem>
+                    <SelectItem value="five_hour">5 小時</SelectItem>
+                    <SelectItem value="seven_day">7 天</SelectItem>
                     <SelectItem value="seven_day_opus">Opus</SelectItem>
                     <SelectItem value="seven_day_sonnet">Sonnet</SelectItem>
-                    <SelectItem value="monthly">Monthly</SelectItem>
+                    <SelectItem value="monthly">月度</SelectItem>
                   </SelectContent>
                 </Select>
 
@@ -196,11 +200,11 @@ export function QuotaPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="1">1 Day</SelectItem>
-                    <SelectItem value="3">3 Days</SelectItem>
-                    <SelectItem value="7">7 Days</SelectItem>
-                    <SelectItem value="14">14 Days</SelectItem>
-                    <SelectItem value="30">30 Days</SelectItem>
+                    <SelectItem value="1">1 天</SelectItem>
+                    <SelectItem value="3">3 天</SelectItem>
+                    <SelectItem value="7">7 天</SelectItem>
+                    <SelectItem value="14">14 天</SelectItem>
+                    <SelectItem value="30">30 天</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -216,9 +220,9 @@ export function QuotaPage() {
             ) : (
               <div className="flex flex-col items-center justify-center h-[300px] text-muted-foreground">
                 <History className="w-8 h-8 mb-2 opacity-50" />
-                <p>No history data available</p>
+                <p>尚無歷史資料</p>
                 <p className="text-xs mt-1">
-                  Quota data will appear here after tracking starts
+                  開始追蹤後，配額資料將顯示在此
                 </p>
               </div>
             )}

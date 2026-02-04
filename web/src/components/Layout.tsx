@@ -9,6 +9,7 @@ import {
   RefreshCw,
   CheckCircle2,
   Loader2,
+  Gauge,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/lib/auth'
@@ -31,6 +32,7 @@ import {
 const navItems = [
   { to: '/', icon: CalendarDays, label: '本週工作' },
   { to: '/projects', icon: FolderKanban, label: '專案' },
+  { to: '/quota', icon: Gauge, label: '配額' },
 ]
 
 export function Layout() {

@@ -5,8 +5,11 @@
 //!
 //! # Overview
 //!
-//! This provider reads the OAuth access token from `~/.claude/credentials.json`
-//! and uses it to call the Anthropic usage API to get current quota information.
+//! This provider reads the OAuth access token from one of these locations:
+//! - **macOS**: Keychain under service "Claude Code-credentials"
+//! - **Other platforms**: `~/.claude/.credentials.json` file (fallback)
+//!
+//! The token is then used to call the Anthropic usage API.
 //!
 //! # Quota Windows
 //!
@@ -62,21 +65,49 @@ const REQUEST_TIMEOUT_SECS: u64 = 30;
 /// Default user ID when none is provided
 const DEFAULT_USER_ID: &str = "default";
 
+/// macOS Keychain service name for Claude Code credentials
+#[cfg(target_os = "macos")]
+const KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
+
 // ============================================================================
 // Credentials Types
 // ============================================================================
 
-/// Claude credentials file structure (~/.claude/credentials.json)
+/// Claude credentials file structure (~/.claude/.credentials.json)
+///
+/// The file contains a nested structure with `claudeAiOauth` as the key.
 #[derive(Debug, Deserialize)]
-struct ClaudeCredentials {
+struct CredentialsFile {
+    /// Nested OAuth credentials
+    #[serde(rename = "claudeAiOauth")]
+    claude_ai_oauth: Option<ClaudeOAuthCredentials>,
+}
+
+/// OAuth credentials stored within the claudeAiOauth object
+#[derive(Debug, Deserialize)]
+struct ClaudeOAuthCredentials {
     /// OAuth access token
     #[serde(rename = "accessToken")]
     access_token: Option<String>,
 
-    /// Expiration time (if available)
+    /// OAuth refresh token (optional)
+    #[serde(rename = "refreshToken")]
+    #[allow(dead_code)]
+    refresh_token: Option<String>,
+
+    /// Expiration time in milliseconds since epoch
     #[serde(rename = "expiresAt")]
     #[allow(dead_code)]
-    expires_at: Option<String>,
+    expires_at: Option<i64>,
+
+    /// OAuth scopes (optional)
+    #[allow(dead_code)]
+    scopes: Option<Vec<String>>,
+
+    /// Rate limit tier (optional)
+    #[serde(rename = "rateLimitTier")]
+    #[allow(dead_code)]
+    rate_limit_tier: Option<String>,
 }
 
 // ============================================================================
@@ -136,7 +167,7 @@ struct ExtraUsage {
 /// Quota provider for Claude Code
 ///
 /// Fetches quota usage from Anthropic's OAuth API using the access token
-/// stored in `~/.claude/credentials.json`.
+/// stored in `~/.claude/.credentials.json`.
 pub struct ClaudeQuotaProvider {
     /// Path to credentials file
     credentials_path: PathBuf,
@@ -151,7 +182,7 @@ pub struct ClaudeQuotaProvider {
 impl ClaudeQuotaProvider {
     /// Create a new ClaudeQuotaProvider with default settings
     ///
-    /// Uses `~/.claude/credentials.json` for credentials.
+    /// Uses `~/.claude/.credentials.json` for credentials.
     pub fn new() -> Self {
         let credentials_path = Self::default_credentials_path();
         Self::with_credentials_path(credentials_path)
@@ -184,13 +215,64 @@ impl ClaudeQuotaProvider {
         dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".claude")
-            .join("credentials.json")
+            .join(".credentials.json")
     }
 
-    /// Load the OAuth access token from credentials file
+    /// Load the OAuth access token
+    ///
+    /// On macOS, tries to read from the Keychain first, then falls back to file.
+    /// On other platforms, reads from the credentials file directly.
     fn load_oauth_token(&self) -> Result<String, QuotaError> {
+        // On macOS, try Keychain first
+        #[cfg(target_os = "macos")]
+        {
+            match Self::load_from_keychain() {
+                Ok(token) => {
+                    log::debug!("[quota:claude] Successfully loaded OAuth token from Keychain");
+                    return Ok(token);
+                }
+                Err(e) => {
+                    log::debug!("[quota:claude] Keychain lookup failed: {}, trying file fallback", e);
+                }
+            }
+        }
+
+        // Fall back to file-based credentials
+        self.load_from_file()
+    }
+
+    /// Load OAuth token from macOS Keychain
+    #[cfg(target_os = "macos")]
+    fn load_from_keychain() -> Result<String, QuotaError> {
+        use security_framework::passwords::get_generic_password;
+
+        log::debug!("[quota:claude] Attempting to load OAuth token from macOS Keychain");
+
+        // Get current username for the account
+        let username = std::env::var("USER").unwrap_or_else(|_| "default".to_string());
+
+        // Read from Keychain
+        let password_bytes = get_generic_password(KEYCHAIN_SERVICE, &username).map_err(|e| {
+            log::debug!("[quota:claude] Keychain access failed: {}", e);
+            QuotaError::NotInstalled(format!(
+                "Claude Code credentials not found in Keychain. Please run 'claude /login'."
+            ))
+        })?;
+
+        // Convert to string
+        let content = String::from_utf8(password_bytes.to_vec()).map_err(|e| {
+            log::error!("[quota:claude] Keychain data is not valid UTF-8: {}", e);
+            QuotaError::ParseError("Invalid credentials data in Keychain".to_string())
+        })?;
+
+        // Parse the JSON credentials
+        Self::parse_credentials_json(&content)
+    }
+
+    /// Load OAuth token from credentials file
+    fn load_from_file(&self) -> Result<String, QuotaError> {
         log::debug!(
-            "[quota:claude] Loading OAuth token from {:?}",
+            "[quota:claude] Loading OAuth token from file: {:?}",
             self.credentials_path
         );
 
@@ -205,17 +287,34 @@ impl ClaudeQuotaProvider {
             ));
         }
 
-        // Read and parse credentials
+        // Read file content
         let content = std::fs::read_to_string(&self.credentials_path)?;
-        let credentials: ClaudeCredentials = serde_json::from_str(&content).map_err(|e| {
+
+        // Parse the JSON credentials
+        Self::parse_credentials_json(&content)
+    }
+
+    /// Parse credentials JSON and extract the access token
+    fn parse_credentials_json(content: &str) -> Result<String, QuotaError> {
+        let credentials_file: CredentialsFile = serde_json::from_str(content).map_err(|e| {
             log::error!("[quota:claude] Failed to parse credentials: {}", e);
             QuotaError::ParseError(format!("Invalid credentials file format: {}", e))
         })?;
 
+        // Extract the nested OAuth credentials
+        let oauth_credentials = credentials_file.claude_ai_oauth.ok_or_else(|| {
+            log::warn!("[quota:claude] No claudeAiOauth object in credentials");
+            QuotaError::Unauthorized(
+                "No OAuth credentials found. Please log in to Claude Code.".to_string(),
+            )
+        })?;
+
         // Extract access token
-        let token = credentials.access_token.ok_or_else(|| {
-            log::warn!("[quota:claude] No access token in credentials file");
-            QuotaError::Unauthorized("No access token found. Please log in to Claude Code.".to_string())
+        let token = oauth_credentials.access_token.ok_or_else(|| {
+            log::warn!("[quota:claude] No access token in credentials");
+            QuotaError::Unauthorized(
+                "No access token found. Please log in to Claude Code.".to_string(),
+            )
         })?;
 
         if token.is_empty() {
@@ -224,7 +323,7 @@ impl ClaudeQuotaProvider {
             ));
         }
 
-        log::debug!("[quota:claude] Successfully loaded OAuth token");
+        log::debug!("[quota:claude] Successfully parsed OAuth token");
         Ok(token)
     }
 
@@ -421,14 +520,7 @@ impl QuotaProvider for ClaudeQuotaProvider {
     }
 
     async fn is_available(&self) -> bool {
-        // Quick check: does credentials file exist and have a token?
-        if !self.credentials_path.exists() {
-            log::debug!(
-                "[quota:claude] Provider not available: credentials file missing"
-            );
-            return false;
-        }
-
+        // Try to load OAuth token (from Keychain on macOS, or file fallback)
         match self.load_oauth_token() {
             Ok(_) => {
                 log::debug!("[quota:claude] Provider is available");
@@ -614,22 +706,45 @@ mod tests {
     #[test]
     fn test_parse_credentials() {
         let json = r#"{
-            "accessToken": "test_token_123",
-            "expiresAt": "2024-01-15T12:00:00Z"
+            "claudeAiOauth": {
+                "accessToken": "test_token_123",
+                "refreshToken": "refresh_token_456",
+                "expiresAt": 1705320000000,
+                "scopes": ["read", "write"],
+                "rateLimitTier": "max"
+            }
         }"#;
 
-        let creds: ClaudeCredentials = serde_json::from_str(json).unwrap();
-        assert_eq!(creds.access_token, Some("test_token_123".to_string()));
+        let creds: CredentialsFile = serde_json::from_str(json).unwrap();
+        assert!(creds.claude_ai_oauth.is_some());
+        let oauth = creds.claude_ai_oauth.unwrap();
+        assert_eq!(oauth.access_token, Some("test_token_123".to_string()));
+        assert_eq!(oauth.refresh_token, Some("refresh_token_456".to_string()));
+        assert_eq!(oauth.expires_at, Some(1705320000000));
+        assert_eq!(oauth.scopes, Some(vec!["read".to_string(), "write".to_string()]));
+        assert_eq!(oauth.rate_limit_tier, Some("max".to_string()));
     }
 
     #[test]
     fn test_parse_credentials_missing_token() {
         let json = r#"{
-            "expiresAt": "2024-01-15T12:00:00Z"
+            "claudeAiOauth": {
+                "expiresAt": 1705320000000
+            }
         }"#;
 
-        let creds: ClaudeCredentials = serde_json::from_str(json).unwrap();
-        assert!(creds.access_token.is_none());
+        let creds: CredentialsFile = serde_json::from_str(json).unwrap();
+        assert!(creds.claude_ai_oauth.is_some());
+        let oauth = creds.claude_ai_oauth.unwrap();
+        assert!(oauth.access_token.is_none());
+    }
+
+    #[test]
+    fn test_parse_credentials_missing_oauth_object() {
+        let json = r#"{}"#;
+
+        let creds: CredentialsFile = serde_json::from_str(json).unwrap();
+        assert!(creds.claude_ai_oauth.is_none());
     }
 
     #[test]
@@ -642,7 +757,7 @@ mod tests {
     #[test]
     fn test_default_credentials_path() {
         let path = ClaudeQuotaProvider::default_credentials_path();
-        assert!(path.ends_with(".claude/credentials.json"));
+        assert!(path.ends_with(".claude/.credentials.json"));
     }
 
     #[test]
