@@ -60,8 +60,22 @@ pub async fn get_current_quota(
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
     log::info!("[quota:cmd] Fetching current quota for user {}", claims.sub);
 
-    // Create provider
-    let provider = ClaudeQuotaProvider::new().with_user_id(&claims.sub);
+    // Get manual token from database (if configured)
+    let db = state.db.lock().await;
+    let manual_token: Option<String> = sqlx::query_scalar(
+        "SELECT claude_oauth_token FROM users WHERE id = ?"
+    )
+    .bind(&claims.sub)
+    .fetch_optional(&db.pool)
+    .await
+    .map_err(|e| e.to_string())?
+    .flatten();
+    drop(db);
+
+    // Create provider with manual token if available
+    let provider = ClaudeQuotaProvider::new()
+        .with_manual_token(manual_token)
+        .with_user_id(&claims.sub);
 
     // Check availability
     let provider_available = provider.is_available().await;
@@ -250,4 +264,129 @@ pub async fn check_quota_provider_available(
     log::debug!("[quota:cmd] Provider {} available: {}", provider, is_available);
 
     Ok(is_available)
+}
+
+// ============================================================================
+// Claude OAuth Token Management (Fallback)
+// ============================================================================
+
+/// Get the manually configured Claude OAuth token.
+///
+/// Returns the token if set, or None if not configured.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn get_claude_oauth_token(
+    state: State<'_, AppState>,
+    token: String,
+) -> Result<Option<String>, String> {
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    log::debug!("[quota:cmd] Getting Claude OAuth token for user {}", claims.sub);
+
+    let db = state.db.lock().await;
+
+    let result: Option<(Option<String>,)> = sqlx::query_as(
+        "SELECT claude_oauth_token FROM users WHERE id = ?"
+    )
+    .bind(&claims.sub)
+    .fetch_optional(&db.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(result.and_then(|r| r.0))
+}
+
+/// Set the Claude OAuth token manually.
+///
+/// This is used as a fallback when automatic credential discovery fails.
+/// Pass None or empty string to clear the token.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn set_claude_oauth_token(
+    state: State<'_, AppState>,
+    token: String,
+    oauth_token: Option<String>,
+) -> Result<(), String> {
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    log::info!("[quota:cmd] Setting Claude OAuth token for user {}", claims.sub);
+
+    let db = state.db.lock().await;
+
+    // Clean the token (None or empty string means clear)
+    let clean_token = oauth_token.filter(|t| !t.trim().is_empty());
+
+    sqlx::query("UPDATE users SET claude_oauth_token = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(&clean_token)
+        .bind(&claims.sub)
+        .execute(&db.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    log::info!(
+        "[quota:cmd] Claude OAuth token {} for user {}",
+        if clean_token.is_some() { "set" } else { "cleared" },
+        claims.sub
+    );
+
+    Ok(())
+}
+
+/// Check if Claude OAuth is available (either automatic or manual).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn check_claude_auth_status(
+    state: State<'_, AppState>,
+    token: String,
+) -> Result<ClaudeAuthStatus, String> {
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    log::debug!("[quota:cmd] Checking Claude auth status for user {}", claims.sub);
+
+    // Check if manual token is set
+    let db = state.db.lock().await;
+    let result: Option<(Option<String>,)> = sqlx::query_as(
+        "SELECT claude_oauth_token FROM users WHERE id = ?"
+    )
+    .bind(&claims.sub)
+    .fetch_optional(&db.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let manual_token = result.and_then(|r| r.0).filter(|t| !t.is_empty());
+    drop(db);
+
+    // Check automatic credential availability
+    let provider = ClaudeQuotaProvider::new();
+    let auto_available = provider.is_available().await;
+
+    // If manual token is set, check if it works
+    let manual_valid = if manual_token.is_some() {
+        let provider_with_token = ClaudeQuotaProvider::new()
+            .with_manual_token(manual_token.clone())
+            .with_user_id(&claims.sub);
+        provider_with_token.is_available().await
+    } else {
+        false
+    };
+
+    Ok(ClaudeAuthStatus {
+        auto_available,
+        manual_configured: manual_token.is_some(),
+        manual_valid,
+        active_source: if manual_token.is_some() {
+            "manual".to_string()
+        } else if auto_available {
+            "auto".to_string()
+        } else {
+            "none".to_string()
+        },
+    })
+}
+
+/// Response for Claude auth status check
+#[derive(Debug, Serialize)]
+pub struct ClaudeAuthStatus {
+    /// Whether automatic credential discovery works (Keychain/file)
+    pub auto_available: bool,
+    /// Whether a manual token is configured
+    pub manual_configured: bool,
+    /// Whether the manual token is valid (if configured)
+    pub manual_valid: bool,
+    /// Which auth source is active: "auto", "manual", or "none"
+    pub active_source: String,
 }

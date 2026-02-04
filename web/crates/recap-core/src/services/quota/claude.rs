@@ -5,9 +5,13 @@
 //!
 //! # Overview
 //!
-//! This provider reads the OAuth access token from one of these locations:
-//! - **macOS**: Keychain under service "Claude Code-credentials"
-//! - **Other platforms**: `~/.claude/.credentials.json` file (fallback)
+//! This provider reads the OAuth access token with the following priority:
+//!
+//! 1. **Manual token** - Configured via Settings UI (stored in database)
+//! 2. **System credential store**:
+//!    - **macOS**: Keychain under service "Claude Code-credentials"
+//!    - **Windows**: Credential Manager under service "Claude Code-credentials"
+//! 3. **File fallback**: `~/.claude/.credentials.json`
 //!
 //! The token is then used to call the Anthropic usage API.
 //!
@@ -68,6 +72,10 @@ const DEFAULT_USER_ID: &str = "default";
 /// macOS Keychain service name for Claude Code credentials
 #[cfg(target_os = "macos")]
 const KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
+
+/// Windows Credential Manager service name for Claude Code credentials
+#[cfg(target_os = "windows")]
+const CREDENTIAL_SERVICE: &str = "Claude Code-credentials";
 
 // ============================================================================
 // Credentials Types
@@ -166,10 +174,13 @@ struct ExtraUsage {
 
 /// Quota provider for Claude Code
 ///
-/// Fetches quota usage from Anthropic's OAuth API using the access token
-/// stored in `~/.claude/.credentials.json`.
+/// Fetches quota usage from Anthropic's OAuth API using the access token.
+/// Token sources (in order of priority):
+/// 1. Manual token (configured via settings)
+/// 2. macOS Keychain (service: "Claude Code-credentials")
+/// 3. File: `~/.claude/.credentials.json`
 pub struct ClaudeQuotaProvider {
-    /// Path to credentials file
+    /// Path to credentials file (fallback)
     credentials_path: PathBuf,
 
     /// HTTP client for API requests
@@ -177,12 +188,15 @@ pub struct ClaudeQuotaProvider {
 
     /// User ID to associate with snapshots
     user_id: String,
+
+    /// Manual OAuth token (highest priority, configured via settings)
+    manual_token: Option<String>,
 }
 
 impl ClaudeQuotaProvider {
     /// Create a new ClaudeQuotaProvider with default settings
     ///
-    /// Uses `~/.claude/.credentials.json` for credentials.
+    /// Uses automatic credential discovery (Keychain → file).
     pub fn new() -> Self {
         let credentials_path = Self::default_credentials_path();
         Self::with_credentials_path(credentials_path)
@@ -201,12 +215,23 @@ impl ClaudeQuotaProvider {
             credentials_path,
             client,
             user_id: DEFAULT_USER_ID.to_string(),
+            manual_token: None,
         }
     }
 
     /// Set the user ID for snapshots
     pub fn with_user_id(mut self, user_id: impl Into<String>) -> Self {
         self.user_id = user_id.into();
+        self
+    }
+
+    /// Set a manual OAuth token (highest priority)
+    ///
+    /// When set, this token is used instead of Keychain or file-based credentials.
+    /// This allows users to configure their token via the Settings UI if
+    /// automatic credential discovery fails.
+    pub fn with_manual_token(mut self, token: Option<String>) -> Self {
+        self.manual_token = token.filter(|t| !t.is_empty());
         self
     }
 
@@ -220,10 +245,18 @@ impl ClaudeQuotaProvider {
 
     /// Load the OAuth access token
     ///
-    /// On macOS, tries to read from the Keychain first, then falls back to file.
-    /// On other platforms, reads from the credentials file directly.
+    /// Priority order:
+    /// 1. Manual token (configured via settings)
+    /// 2. macOS Keychain (service: "Claude Code-credentials")
+    /// 3. File: `~/.claude/.credentials.json`
     fn load_oauth_token(&self) -> Result<String, QuotaError> {
-        // On macOS, try Keychain first
+        // Priority 1: Manual token (configured via settings)
+        if let Some(ref token) = self.manual_token {
+            log::info!("[quota:claude] Using manually configured OAuth token");
+            return Ok(token.clone());
+        }
+
+        // Priority 2: On macOS, try Keychain
         #[cfg(target_os = "macos")]
         {
             match Self::load_from_keychain() {
@@ -237,7 +270,21 @@ impl ClaudeQuotaProvider {
             }
         }
 
-        // Fall back to file-based credentials
+        // Priority 2: On Windows, try Credential Manager
+        #[cfg(target_os = "windows")]
+        {
+            match Self::load_from_windows_credential_manager() {
+                Ok(token) => {
+                    log::debug!("[quota:claude] Successfully loaded OAuth token from Windows Credential Manager");
+                    return Ok(token);
+                }
+                Err(e) => {
+                    log::debug!("[quota:claude] Windows Credential Manager lookup failed: {}, trying file fallback", e);
+                }
+            }
+        }
+
+        // Priority 3: Fall back to file-based credentials
         self.load_from_file()
     }
 
@@ -263,6 +310,35 @@ impl ClaudeQuotaProvider {
         let content = String::from_utf8(password_bytes.to_vec()).map_err(|e| {
             log::error!("[quota:claude] Keychain data is not valid UTF-8: {}", e);
             QuotaError::ParseError("Invalid credentials data in Keychain".to_string())
+        })?;
+
+        // Parse the JSON credentials
+        Self::parse_credentials_json(&content)
+    }
+
+    /// Load OAuth token from Windows Credential Manager
+    #[cfg(target_os = "windows")]
+    fn load_from_windows_credential_manager() -> Result<String, QuotaError> {
+        use keyring::Entry;
+
+        log::debug!("[quota:claude] Attempting to load OAuth token from Windows Credential Manager");
+
+        // Get current username for the account
+        let username = std::env::var("USERNAME").unwrap_or_else(|_| "default".to_string());
+
+        // Create keyring entry and get password
+        let entry = Entry::new(CREDENTIAL_SERVICE, &username).map_err(|e| {
+            log::debug!("[quota:claude] Failed to create keyring entry: {}", e);
+            QuotaError::NotInstalled(format!(
+                "Claude Code credentials not found in Windows Credential Manager. Please run 'claude /login'."
+            ))
+        })?;
+
+        let content = entry.get_password().map_err(|e| {
+            log::debug!("[quota:claude] Windows Credential Manager access failed: {}", e);
+            QuotaError::NotInstalled(format!(
+                "Claude Code credentials not found in Windows Credential Manager. Please run 'claude /login'."
+            ))
         })?;
 
         // Parse the JSON credentials

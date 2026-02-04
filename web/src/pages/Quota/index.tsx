@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/select'
 import { RefreshCw, Gauge, History } from 'lucide-react'
 import { useQuotaPage, DEFAULT_QUOTA_SETTINGS } from './hooks'
-import { QuotaChart, QuotaSummaryCard } from './components'
+import { QuotaChart, QuotaSummaryCard, ClaudeAuthConfig } from './components'
 import { cn } from '@/lib/utils'
 
 export function QuotaPage() {
@@ -62,10 +62,13 @@ export function QuotaPage() {
             <p className="text-sm text-muted-foreground">
               此功能需要 Claude Max 訂閱用戶的 OAuth token。請在終端機執行{' '}
               <code className="bg-muted px-1.5 py-0.5 rounded text-foreground">claude /login</code>{' '}
-              進行認證。
+              進行認證，或在下方手動輸入 Token。
             </p>
           </CardContent>
         </Card>
+
+        {/* Manual OAuth token configuration */}
+        <ClaudeAuthConfig onAuthStatusChange={refresh} />
       </div>
     )
   }
