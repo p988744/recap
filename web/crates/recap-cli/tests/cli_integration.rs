@@ -1,9 +1,11 @@
 //! Integration tests for recap-cli
 //!
 //! These tests verify the CLI commands work end-to-end.
+//! Tests run serially to avoid database lock conflicts.
 
 use assert_cmd::Command;
 use predicates::prelude::*;
+use serial_test::serial;
 
 /// Get a Command for the recap binary
 fn recap() -> Command {
@@ -15,6 +17,7 @@ fn recap() -> Command {
 // =============================================================================
 
 #[test]
+#[serial]
 fn test_cli_help() {
     recap()
         .arg("--help")
@@ -25,6 +28,7 @@ fn test_cli_help() {
 }
 
 #[test]
+#[serial]
 fn test_cli_version() {
     recap()
         .arg("--version")
@@ -38,6 +42,7 @@ fn test_cli_version() {
 // =============================================================================
 
 #[test]
+#[serial]
 fn test_work_help() {
     recap()
         .args(["work", "--help"])
@@ -47,6 +52,7 @@ fn test_work_help() {
 }
 
 #[test]
+#[serial]
 fn test_work_list_help() {
     recap()
         .args(["work", "list", "--help"])
@@ -56,6 +62,7 @@ fn test_work_list_help() {
 }
 
 #[test]
+#[serial]
 fn test_work_add_help() {
     recap()
         .args(["work", "add", "--help"])
@@ -69,6 +76,7 @@ fn test_work_add_help() {
 // =============================================================================
 
 #[test]
+#[serial]
 fn test_report_help() {
     recap()
         .args(["report", "--help"])
@@ -78,6 +86,7 @@ fn test_report_help() {
 }
 
 #[test]
+#[serial]
 fn test_report_summary_help() {
     recap()
         .args(["report", "summary", "--help"])
@@ -87,6 +96,7 @@ fn test_report_summary_help() {
 }
 
 #[test]
+#[serial]
 fn test_report_export_help() {
     recap()
         .args(["report", "export", "--help"])
@@ -100,6 +110,7 @@ fn test_report_export_help() {
 // =============================================================================
 
 #[test]
+#[serial]
 fn test_sync_help() {
     recap()
         .args(["sync", "--help"])
@@ -109,6 +120,7 @@ fn test_sync_help() {
 }
 
 #[test]
+#[serial]
 fn test_sync_run_help() {
     recap()
         .args(["sync", "run", "--help"])
@@ -118,6 +130,7 @@ fn test_sync_run_help() {
 }
 
 #[test]
+#[serial]
 fn test_sync_status_help() {
     recap()
         .args(["sync", "status", "--help"])
@@ -131,6 +144,7 @@ fn test_sync_status_help() {
 // =============================================================================
 
 #[test]
+#[serial]
 fn test_source_help() {
     recap()
         .args(["source", "--help"])
@@ -140,6 +154,7 @@ fn test_source_help() {
 }
 
 #[test]
+#[serial]
 fn test_source_list_help() {
     recap()
         .args(["source", "list", "--help"])
@@ -149,6 +164,7 @@ fn test_source_list_help() {
 }
 
 #[test]
+#[serial]
 fn test_source_add_help() {
     recap()
         .args(["source", "add", "--help"])
@@ -162,6 +178,7 @@ fn test_source_add_help() {
 // =============================================================================
 
 #[test]
+#[serial]
 fn test_config_help() {
     recap()
         .args(["config", "--help"])
@@ -171,6 +188,7 @@ fn test_config_help() {
 }
 
 #[test]
+#[serial]
 fn test_config_show_help() {
     recap()
         .args(["config", "show", "--help"])
@@ -180,6 +198,7 @@ fn test_config_show_help() {
 }
 
 #[test]
+#[serial]
 fn test_config_get_help() {
     recap()
         .args(["config", "get", "--help"])
@@ -189,6 +208,7 @@ fn test_config_get_help() {
 }
 
 #[test]
+#[serial]
 fn test_config_set_help() {
     recap()
         .args(["config", "set", "--help"])
@@ -202,6 +222,7 @@ fn test_config_set_help() {
 // =============================================================================
 
 #[test]
+#[serial]
 fn test_dashboard_help() {
     recap()
         .args(["dashboard", "--help"])
@@ -211,6 +232,7 @@ fn test_dashboard_help() {
 }
 
 #[test]
+#[serial]
 fn test_dashboard_stats_help() {
     recap()
         .args(["dashboard", "stats", "--help"])
@@ -220,6 +242,7 @@ fn test_dashboard_stats_help() {
 }
 
 #[test]
+#[serial]
 fn test_dashboard_timeline_help() {
     recap()
         .args(["dashboard", "timeline", "--help"])
@@ -229,6 +252,7 @@ fn test_dashboard_timeline_help() {
 }
 
 #[test]
+#[serial]
 fn test_dashboard_heatmap_help() {
     recap()
         .args(["dashboard", "heatmap", "--help"])
@@ -238,6 +262,7 @@ fn test_dashboard_heatmap_help() {
 }
 
 #[test]
+#[serial]
 fn test_dashboard_projects_help() {
     recap()
         .args(["dashboard", "projects", "--help"])
@@ -251,6 +276,7 @@ fn test_dashboard_projects_help() {
 // =============================================================================
 
 #[test]
+#[serial]
 fn test_tempo_help() {
     recap()
         .args(["tempo", "--help"])
@@ -260,6 +286,7 @@ fn test_tempo_help() {
 }
 
 #[test]
+#[serial]
 fn test_tempo_generate_help() {
     recap()
         .args(["tempo", "generate", "--help"])
@@ -273,6 +300,7 @@ fn test_tempo_generate_help() {
 // =============================================================================
 
 #[test]
+#[serial]
 fn test_invalid_command() {
     recap()
         .arg("invalid-command-that-does-not-exist")
@@ -281,6 +309,7 @@ fn test_invalid_command() {
 }
 
 #[test]
+#[serial]
 fn test_work_invalid_subcommand() {
     recap()
         .args(["work", "invalid-subcommand"])
@@ -293,6 +322,7 @@ fn test_work_invalid_subcommand() {
 // =============================================================================
 
 #[test]
+#[serial]
 fn test_work_list_format_json_accepted() {
     // Just verify the format flag is accepted
     recap()
@@ -302,6 +332,7 @@ fn test_work_list_format_json_accepted() {
 }
 
 #[test]
+#[serial]
 fn test_work_list_format_table_accepted() {
     // Just verify the format flag is accepted
     recap()
@@ -315,6 +346,7 @@ fn test_work_list_format_table_accepted() {
 // =============================================================================
 
 #[test]
+#[serial]
 fn test_report_summary_date_args_accepted() {
     recap()
         .args(["report", "summary", "--start", "2025-01-01", "--end", "2025-01-31", "--help"])
@@ -323,6 +355,7 @@ fn test_report_summary_date_args_accepted() {
 }
 
 #[test]
+#[serial]
 fn test_dashboard_stats_date_args_accepted() {
     // dashboard stats uses --start and --end, not --days
     recap()
