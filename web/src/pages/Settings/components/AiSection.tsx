@@ -9,7 +9,9 @@ import {
   EyeOff,
   RefreshCw,
   Zap,
+  Key,
 } from 'lucide-react'
+import type { DetectedLlmApiKey } from '@/services/config'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -41,6 +43,10 @@ interface AiSectionProps {
   ) => Promise<void>
   setMessage: (msg: SettingsMessage | null) => void
   refreshConfig: () => Promise<ConfigResponse>
+  // Detected API keys
+  detectedKeys: DetectedLlmApiKey[]
+  detectingKeys: boolean
+  onUseDetectedKey: (key: DetectedLlmApiKey) => Promise<void>
 }
 
 const LLM_PROVIDERS = [
@@ -66,6 +72,9 @@ export function AiSection({
   onSaveLlm,
   setMessage,
   refreshConfig,
+  detectedKeys,
+  detectingKeys,
+  onUseDetectedKey,
 }: AiSectionProps) {
   const [rangeDays, setRangeDays] = useState(30)
   const [testing, setTesting] = useState(false)
@@ -177,6 +186,45 @@ export function AiSection({
                   {showLlmKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
+
+              {/* Detected API Keys from environment */}
+              {detectingKeys ? (
+                <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  偵測環境變數中...
+                </div>
+              ) : detectedKeys.length > 0 && (
+                <div className="mt-3 p-3 bg-amber-500/5 border border-amber-500/20 rounded-lg">
+                  <div className="flex items-center gap-2 text-xs text-amber-600 mb-2">
+                    <Key className="w-3.5 h-3.5" />
+                    從環境變數偵測到 API Key
+                  </div>
+                  <div className="space-y-1.5">
+                    {detectedKeys.map((key) => (
+                      <button
+                        key={key.env_var}
+                        onClick={() => onUseDetectedKey(key)}
+                        className="w-full flex items-center justify-between p-2 text-xs bg-background border border-border rounded hover:border-foreground/30 transition-colors"
+                      >
+                        <div className="flex items-center gap-2">
+                          <code className="px-1.5 py-0.5 bg-foreground/5 rounded text-[10px]">
+                            {key.env_var}
+                          </code>
+                          <span className="text-muted-foreground">
+                            ({key.provider})
+                          </span>
+                        </div>
+                        <span className="font-mono text-muted-foreground">
+                          {key.masked_key}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-[10px] text-muted-foreground">
+                    點擊使用偵測到的 API Key
+                  </p>
+                </div>
+              )}
             </div>
           )}
 

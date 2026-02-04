@@ -59,6 +59,39 @@ export async function testLlmConnection(): Promise<LlmTestResult> {
 }
 
 /**
+ * Detected LLM API key from environment variable
+ */
+export interface DetectedLlmApiKey {
+  provider: string
+  env_var: string
+  masked_key: string
+}
+
+/**
+ * Response for detected LLM API keys
+ */
+export interface DetectedLlmApiKeysResponse {
+  keys: DetectedLlmApiKey[]
+}
+
+/**
+ * Detect LLM API keys from environment variables
+ * No auth required - just checks local environment
+ */
+export async function detectLlmApiKeys(): Promise<DetectedLlmApiKeysResponse> {
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<DetectedLlmApiKeysResponse>('detect_llm_api_keys')
+}
+
+/**
+ * Get the actual API key from an environment variable
+ */
+export async function getEnvApiKey(envVar: string): Promise<string | null> {
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<string | null>('get_env_api_key', { envVar })
+}
+
+/**
  * Onboarding status response
  */
 export interface OnboardingStatusResponse {

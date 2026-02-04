@@ -184,6 +184,9 @@ export function SettingsPage() {
             onSaveLlm={llmForm.handleSave}
             setMessage={settings.setMessage}
             refreshConfig={settings.refreshConfig}
+            detectedKeys={llmForm.detectedKeys}
+            detectingKeys={llmForm.detectingKeys}
+            onUseDetectedKey={(key) => llmForm.useDetectedKey(key, settings.setMessage)}
           />
         )}
 

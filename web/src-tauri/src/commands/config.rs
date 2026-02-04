@@ -636,6 +636,72 @@ pub async fn test_llm_connection(
     service.test_connection().await
 }
 
+/// Detected LLM API key from environment variable
+#[derive(Debug, Clone, Serialize)]
+pub struct DetectedLlmApiKey {
+    pub provider: String,
+    pub env_var: String,
+    pub masked_key: String,
+}
+
+/// Response for detected LLM API keys
+#[derive(Debug, Clone, Serialize)]
+pub struct DetectedLlmApiKeysResponse {
+    pub keys: Vec<DetectedLlmApiKey>,
+}
+
+/// Detect LLM API keys from environment variables
+/// Checks common environment variables for API keys
+#[tauri::command]
+pub async fn detect_llm_api_keys() -> Result<DetectedLlmApiKeysResponse, String> {
+    let env_vars = vec![
+        ("openai", "OPENAI_API_KEY"),
+        ("anthropic", "ANTHROPIC_API_KEY"),
+        ("anthropic", "CLAUDE_API_KEY"),
+        ("google", "GOOGLE_API_KEY"),
+        ("google", "GEMINI_API_KEY"),
+        ("mistral", "MISTRAL_API_KEY"),
+        ("cohere", "COHERE_API_KEY"),
+        ("openai-compatible", "LLM_API_KEY"),
+    ];
+
+    let mut keys = Vec::new();
+
+    for (provider, env_var) in env_vars {
+        if let Ok(key) = std::env::var(env_var) {
+            if !key.is_empty() {
+                // Mask the key, showing only first 4 and last 4 characters
+                let masked = if key.len() > 12 {
+                    format!(
+                        "{}...{}",
+                        &key[..4],
+                        &key[key.len() - 4..]
+                    )
+                } else {
+                    "*".repeat(key.len())
+                };
+
+                keys.push(DetectedLlmApiKey {
+                    provider: provider.to_string(),
+                    env_var: env_var.to_string(),
+                    masked_key: masked,
+                });
+            }
+        }
+    }
+
+    Ok(DetectedLlmApiKeysResponse { keys })
+}
+
+/// Get the actual API key from an environment variable (for use when saving config)
+#[tauri::command]
+pub async fn get_env_api_key(env_var: String) -> Result<Option<String>, String> {
+    match std::env::var(&env_var) {
+        Ok(key) if !key.is_empty() => Ok(Some(key)),
+        _ => Ok(None),
+    }
+}
+
 /// Response for onboarding status
 #[derive(Debug, Clone, Serialize)]
 pub struct OnboardingStatusResponse {

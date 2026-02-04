@@ -36,6 +36,8 @@ pub fn run() {
             commands::config::update_llm_config,
             commands::config::update_jira_config,
             commands::config::test_llm_connection,
+            commands::config::detect_llm_api_keys,
+            commands::config::get_env_api_key,
             commands::config::get_onboarding_status,
             commands::config::complete_onboarding,
             // Work Items - queries
