@@ -455,8 +455,21 @@ impl ClaudeQuotaProvider {
         // Skip if no utilization data
         let utilization = window.utilization?;
 
-        // Convert from ratio (0.0-1.0) to percent (0.0-100.0)
-        let used_percent = utilization * 100.0;
+        log::info!(
+            "[quota:claude] Window {:?} raw utilization value: {}",
+            window_type,
+            utilization
+        );
+
+        // The API appears to return utilization as a percentage (28.0 for 28%)
+        // NOT as a ratio (0.28 for 28%), so we should NOT multiply by 100
+        let used_percent = utilization;
+
+        log::info!(
+            "[quota:claude] Window {:?} used_percent: {}%",
+            window_type,
+            used_percent
+        );
 
         let mut snapshot =
             QuotaSnapshot::new(&self.user_id, QuotaProviderType::Claude, window_type, used_percent);
@@ -641,13 +654,14 @@ mod tests {
         let provider = ClaudeQuotaProvider::with_credentials_path(PathBuf::from("/tmp/test"))
             .with_user_id("test_user");
 
+        // The API returns utilization as percentage values (25.0, 75.0), not ratios (0.25, 0.75)
         let response = OAuthUsageResponse {
             five_hour: Some(UsageWindow {
-                utilization: Some(0.25),
+                utilization: Some(25.0),
                 resets_at: Some("2024-01-15T12:30:00Z".to_string()),
             }),
             seven_day: Some(UsageWindow {
-                utilization: Some(0.75),
+                utilization: Some(75.0),
                 resets_at: None,
             }),
             seven_day_opus: None,
@@ -680,7 +694,7 @@ mod tests {
         let response = OAuthUsageResponse {
             five_hour: None,
             seven_day: Some(UsageWindow {
-                utilization: Some(0.5),
+                utilization: Some(50.0),  // 50%
                 resets_at: None,
             }),
             seven_day_opus: None,
@@ -696,6 +710,7 @@ mod tests {
         let snapshots = provider.response_to_snapshots(response);
 
         assert_eq!(snapshots.len(), 1);
+        assert!((snapshots[0].used_percent - 50.0).abs() < 0.001);
         assert!(snapshots[0].extra_credits.is_some());
 
         let extra = snapshots[0].extra_credits.as_ref().unwrap();
