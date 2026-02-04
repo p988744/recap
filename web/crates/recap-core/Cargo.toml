@@ -32,9 +32,10 @@ sha2 = "0.10"
 base64 = "0.22"
 rand = "0.8"
 log = "0.4"
+async-trait = "0.1"
 
-# HTTP client (for GitLab/Jira API)
-reqwest = { version = "0.12", features = ["json"] }
+# HTTP client (for GitLab/Jira API + OpenAI Batch file upload)
+reqwest = { version = "0.12", features = ["json", "multipart"] }
 
 # Excel export
 rust_xlsxwriter = "0.79"

@@ -1,6 +1,11 @@
 import { useMemo } from 'react'
-import { Plus, Upload } from 'lucide-react'
+import { Plus, Upload, CalendarDays, Filter, Bot, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Label } from '@/components/ui/label'
+import { WorkGanttChart } from '@/components/WorkGanttChart'
 import { useAuth } from '@/lib/auth'
 import { useWorklog, useTempoSync } from './hooks'
 import { DateRangeBar, DaySection, TempoSyncModal, TempoBatchSyncModal, TempoWeekSyncModal } from './components'
@@ -158,8 +163,93 @@ export function WorklogPage() {
         />
       </header>
 
+      {/* Daily Work Gantt Chart */}
+      <section className="animate-fade-up opacity-0 delay-2">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-2">
+            <CalendarDays className="w-4 h-4 text-muted-foreground" strokeWidth={1.5} />
+            <h2 className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+              每日工作時間軸
+            </h2>
+          </div>
+          {/* Source Filter */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8 gap-2">
+                <Filter className="h-3.5 w-3.5" />
+                <span className="text-xs">
+                  {wl.ganttSources.length === 2
+                    ? '全部來源'
+                    : wl.ganttSources.includes('claude_code')
+                      ? 'Claude Code'
+                      : 'Antigravity'}
+                </span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-48 p-3" align="end">
+              <div className="space-y-3">
+                <p className="text-xs font-medium text-muted-foreground">資料來源</p>
+                <div className="space-y-2">
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="wl-source-claude_code"
+                      checked={wl.ganttSources.includes('claude_code')}
+                      disabled={wl.ganttSources.includes('claude_code') && wl.ganttSources.length === 1}
+                      onCheckedChange={(checked) => {
+                        if (checked) {
+                          wl.setGanttSources([...wl.ganttSources, 'claude_code'])
+                        } else if (wl.ganttSources.length > 1) {
+                          wl.setGanttSources(wl.ganttSources.filter(s => s !== 'claude_code'))
+                        }
+                      }}
+                    />
+                    <Label htmlFor="wl-source-claude_code" className="flex items-center gap-2 text-sm font-normal cursor-pointer">
+                      <Bot className="h-3.5 w-3.5 text-muted-foreground" />
+                      Claude Code
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="wl-source-antigravity"
+                      checked={wl.ganttSources.includes('antigravity')}
+                      disabled={wl.ganttSources.includes('antigravity') && wl.ganttSources.length === 1}
+                      onCheckedChange={(checked) => {
+                        if (checked) {
+                          wl.setGanttSources([...wl.ganttSources, 'antigravity'])
+                        } else if (wl.ganttSources.length > 1) {
+                          wl.setGanttSources(wl.ganttSources.filter(s => s !== 'antigravity'))
+                        }
+                      }}
+                    />
+                    <Label htmlFor="wl-source-antigravity" className="flex items-center gap-2 text-sm font-normal cursor-pointer">
+                      <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
+                      Antigravity
+                    </Label>
+                  </div>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
+        </div>
+        <Card>
+          <CardContent className="p-6">
+            {wl.ganttLoading ? (
+              <div className="flex items-center justify-center h-32">
+                <div className="w-5 h-5 border border-border border-t-foreground/60 rounded-full animate-spin" />
+              </div>
+            ) : (
+              <WorkGanttChart
+                sessions={wl.ganttSessions}
+                date={wl.ganttDate}
+                onDateChange={wl.setGanttDate}
+              />
+            )}
+          </CardContent>
+        </Card>
+      </section>
+
       {/* Day sections */}
-      <section className="space-y-8 animate-fade-up opacity-0 delay-2">
+      <section className="space-y-8 animate-fade-up opacity-0 delay-3">
         {wl.days.length === 0 ? (
           <div className="py-16 text-center">
             <p className="text-sm text-muted-foreground mb-4">本週尚無工作紀錄</p>

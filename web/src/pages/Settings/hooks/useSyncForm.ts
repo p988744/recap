@@ -12,6 +12,14 @@ export interface SyncFormState {
   // Config
   enabled: boolean
   intervalMinutes: number
+  compactionIntervalMinutes: number
+  autoGenerateSummaries: boolean
+  // Source toggles
+  syncGit: boolean
+  syncClaude: boolean
+  syncAntigravity: boolean
+  syncGitlab: boolean
+  syncJira: boolean
   // UI State
   loading: boolean
   saving: boolean
@@ -25,6 +33,13 @@ export function useSyncForm() {
   const [state, setState] = useState<SyncFormState>({
     enabled: true,
     intervalMinutes: 15,
+    compactionIntervalMinutes: 30,
+    autoGenerateSummaries: true,
+    syncGit: true,
+    syncClaude: true,
+    syncAntigravity: true,
+    syncGitlab: false,
+    syncJira: false,
     loading: true,
     saving: false,
   })
@@ -36,6 +51,7 @@ export function useSyncForm() {
     refreshStatus,
     dataSyncState,
     summaryState,
+    syncProgress,
   } = useSyncContext()
 
   // Merge frontend phase states into backend status for UI
@@ -43,7 +59,17 @@ export function useSyncForm() {
   const status = useMemo<BackgroundSyncStatus | null>(() => {
     if (!backendStatus) {
       if (isSyncing) {
-        return { is_running: false, is_syncing: true, last_sync_at: null, next_sync_at: null, last_result: null, last_error: null }
+        return {
+          is_running: false,
+          is_syncing: true,
+          is_compacting: false,
+          last_sync_at: null,
+          last_compaction_at: null,
+          next_sync_at: null,
+          next_compaction_at: null,
+          last_result: null,
+          last_error: null,
+        }
       }
       return null
     }
@@ -62,6 +88,13 @@ export function useSyncForm() {
           ...prev,
           enabled: config.enabled,
           intervalMinutes: config.interval_minutes,
+          compactionIntervalMinutes: config.compaction_interval_minutes,
+          autoGenerateSummaries: config.auto_generate_summaries,
+          syncGit: config.sync_git,
+          syncClaude: config.sync_claude,
+          syncAntigravity: config.sync_antigravity,
+          syncGitlab: config.sync_gitlab,
+          syncJira: config.sync_jira,
           loading: false,
         }))
       } catch (err) {
@@ -81,6 +114,34 @@ export function useSyncForm() {
     setState((prev) => ({ ...prev, intervalMinutes }))
   }, [])
 
+  const setCompactionIntervalHours = useCallback((compactionIntervalMinutes: number) => {
+    setState((prev) => ({ ...prev, compactionIntervalMinutes }))
+  }, [])
+
+  const setAutoGenerateSummaries = useCallback((autoGenerateSummaries: boolean) => {
+    setState((prev) => ({ ...prev, autoGenerateSummaries }))
+  }, [])
+
+  const setSyncGit = useCallback((syncGit: boolean) => {
+    setState((prev) => ({ ...prev, syncGit }))
+  }, [])
+
+  const setSyncClaude = useCallback((syncClaude: boolean) => {
+    setState((prev) => ({ ...prev, syncClaude }))
+  }, [])
+
+  const setSyncAntigravity = useCallback((syncAntigravity: boolean) => {
+    setState((prev) => ({ ...prev, syncAntigravity }))
+  }, [])
+
+  const setSyncGitlab = useCallback((syncGitlab: boolean) => {
+    setState((prev) => ({ ...prev, syncGitlab }))
+  }, [])
+
+  const setSyncJira = useCallback((syncJira: boolean) => {
+    setState((prev) => ({ ...prev, syncJira }))
+  }, [])
+
   // Save config (backend handles restart/stop internally via update_config)
   const handleSave = useCallback(
     async (setMessage: (msg: SettingsMessage | null) => void) => {
@@ -89,10 +150,13 @@ export function useSyncForm() {
         await backgroundSync.updateConfig({
           enabled: state.enabled,
           interval_minutes: state.intervalMinutes,
-          sync_git: true,
-          sync_claude: true,
-          sync_gitlab: false,
-          sync_jira: false,
+          compaction_interval_minutes: state.compactionIntervalMinutes,
+          sync_git: state.syncGit,
+          sync_claude: state.syncClaude,
+          sync_antigravity: state.syncAntigravity,
+          sync_gitlab: state.syncGitlab,
+          sync_jira: state.syncJira,
+          auto_generate_summaries: state.autoGenerateSummaries,
         })
 
         // Refresh shared status so sidebar updates too
@@ -108,7 +172,7 @@ export function useSyncForm() {
         setState((prev) => ({ ...prev, saving: false }))
       }
     },
-    [state.enabled, state.intervalMinutes, refreshStatus]
+    [state, refreshStatus]
   )
 
   // Trigger immediate sync via app-level sync
@@ -134,16 +198,34 @@ export function useSyncForm() {
     setEnabled,
     intervalMinutes: state.intervalMinutes,
     setIntervalMinutes,
+    compactionIntervalMinutes: state.compactionIntervalMinutes,
+    setCompactionIntervalHours,
+    autoGenerateSummaries: state.autoGenerateSummaries,
+    setAutoGenerateSummaries,
+    // Source toggles
+    syncGit: state.syncGit,
+    setSyncGit,
+    syncClaude: state.syncClaude,
+    setSyncClaude,
+    syncAntigravity: state.syncAntigravity,
+    setSyncAntigravity,
+    syncGitlab: state.syncGitlab,
+    setSyncGitlab,
+    syncJira: state.syncJira,
+    setSyncJira,
     // Status (merged: backend + frontend phase states)
     status,
     // Phase states (for split display)
     dataSyncState,
     summaryState,
+    // Detailed progress
+    syncProgress,
     // UI State
     loading: state.loading,
     saving: state.saving,
     // Actions
     handleSave,
     handleTriggerSync,
+    refreshStatus,
   }
 }

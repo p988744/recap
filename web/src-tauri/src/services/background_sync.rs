@@ -2,30 +2,48 @@
 //!
 //! Provides scheduled automatic synchronization of work items from various sources.
 //! Runs in the background while the app is in the system tray.
+//!
+//! This service uses the `SyncSource` trait abstraction from `recap_core::services::sources`
+//! to dynamically discover and sync work items from multiple data sources.
 
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::{interval, Duration};
+
+use recap_core::services::sources::{SyncConfig, SourceSyncResult};
 
 // =============================================================================
 // Configuration
 // =============================================================================
 
 /// Background sync configuration
+///
+/// This struct maintains backward compatibility with the legacy field-based
+/// configuration while internally converting to the new `SyncConfig` system.
+///
+/// Tasks are separated into two categories:
+/// 1. **Data Sync** (frequent): Discovery and extraction from sources
+/// 2. **Data Compaction** (periodic): Hierarchical summary generation
 #[derive(Debug, Clone)]
 pub struct BackgroundSyncConfig {
     /// Whether background sync is enabled
     pub enabled: bool,
-    /// Sync interval in minutes (5, 15, 30, 60)
+    /// Data sync interval in minutes (5, 15, 30, 60)
     pub interval_minutes: u32,
+    /// Data compaction interval in minutes (30, 60, 180, 360, 720, 1440)
+    pub compaction_interval_minutes: u32,
     /// Sync local Git repositories
     pub sync_git: bool,
     /// Sync Claude Code sessions
     pub sync_claude: bool,
+    /// Sync Antigravity (Gemini Code) sessions
+    pub sync_antigravity: bool,
     /// Sync GitLab (requires configuration)
     pub sync_gitlab: bool,
     /// Sync Jira/Tempo (requires configuration)
     pub sync_jira: bool,
+    /// Auto-generate timeline summaries for completed periods
+    pub auto_generate_summaries: bool,
 }
 
 impl Default for BackgroundSyncConfig {
@@ -33,33 +51,231 @@ impl Default for BackgroundSyncConfig {
         Self {
             enabled: true,
             interval_minutes: 15,
+            compaction_interval_minutes: 30,
             sync_git: true,
             sync_claude: true,
+            sync_antigravity: true,
             sync_gitlab: false,
             sync_jira: false,
+            auto_generate_summaries: true,
         }
     }
 }
 
+impl BackgroundSyncConfig {
+    /// Convert to the new SyncConfig format
+    pub fn to_sync_config(&self) -> SyncConfig {
+        SyncConfig::from_legacy(
+            self.enabled,
+            self.interval_minutes,
+            self.sync_claude,
+            self.sync_antigravity,
+            self.sync_git,
+            self.sync_gitlab,
+            self.sync_jira,
+        )
+    }
+}
+
 // =============================================================================
-// Sync Status
+// Service Lifecycle
 // =============================================================================
 
-/// Current status of the background sync service
+/// Service lifecycle states
+///
+/// ```text
+///                    ┌──────────┐
+///                    │  Created │
+///                    └────┬─────┘
+///                         │ start()
+///                         ▼
+///   stop()          ┌──────────┐
+/// ┌─────────────────│   Idle   │◄────────────────┐
+/// │                 └────┬─────┘                 │
+/// │                      │ begin_sync()          │
+/// │                      ▼                       │
+/// │                 ┌──────────┐                 │
+/// │                 │ Syncing  │─────────────────┘
+/// │                 └────┬─────┘  complete_sync()
+/// │                      │
+/// │                      │ (unrecoverable error)
+/// │                      ▼
+/// │                 ┌──────────┐
+/// └────────────────►│ Stopped  │
+///                   └──────────┘
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServiceLifecycle {
+    /// Service created but not started
+    Created,
+    /// Running and waiting for next sync
+    Idle {
+        last_sync_at: Option<String>,
+        next_sync_at: Option<String>,
+    },
+    /// Currently performing sync
+    Syncing {
+        started_at: String,
+    },
+    /// Service stopped
+    Stopped,
+}
+
+impl Default for ServiceLifecycle {
+    fn default() -> Self {
+        Self::Created
+    }
+}
+
+impl ServiceLifecycle {
+    /// Check if service is running (Idle or Syncing)
+    pub fn is_running(&self) -> bool {
+        matches!(self, Self::Idle { .. } | Self::Syncing { .. })
+    }
+
+    /// Check if currently syncing
+    pub fn is_syncing(&self) -> bool {
+        matches!(self, Self::Syncing { .. })
+    }
+
+    /// Get last sync timestamp
+    pub fn last_sync_at(&self) -> Option<&str> {
+        match self {
+            Self::Idle { last_sync_at, .. } => last_sync_at.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Get next sync timestamp
+    pub fn next_sync_at(&self) -> Option<&str> {
+        match self {
+            Self::Idle { next_sync_at, .. } => next_sync_at.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Transition: Created/Stopped -> Idle
+    pub fn start(self, next_sync_at: Option<String>) -> Result<Self, ServiceLifecycleError> {
+        match self {
+            Self::Created | Self::Stopped => Ok(Self::Idle {
+                last_sync_at: None,
+                next_sync_at,
+            }),
+            Self::Idle { .. } => Err(ServiceLifecycleError::AlreadyRunning),
+            Self::Syncing { .. } => Err(ServiceLifecycleError::SyncInProgress),
+        }
+    }
+
+    /// Transition: Idle -> Syncing
+    pub fn begin_sync(self) -> Result<Self, ServiceLifecycleError> {
+        match self {
+            Self::Idle { .. } => Ok(Self::Syncing {
+                started_at: chrono::Utc::now().to_rfc3339(),
+            }),
+            Self::Created => Err(ServiceLifecycleError::NotStarted),
+            Self::Stopped => Err(ServiceLifecycleError::ServiceStopped),
+            Self::Syncing { .. } => Err(ServiceLifecycleError::SyncInProgress),
+        }
+    }
+
+    /// Transition: Syncing -> Idle
+    pub fn complete_sync(self, next_sync_at: Option<String>) -> Result<Self, ServiceLifecycleError> {
+        match self {
+            Self::Syncing { started_at } => {
+                let _ = started_at; // Use started_at for logging if needed
+                Ok(Self::Idle {
+                    last_sync_at: Some(chrono::Utc::now().to_rfc3339()),
+                    next_sync_at,
+                })
+            }
+            _ => Err(ServiceLifecycleError::NotSyncing),
+        }
+    }
+
+    /// Transition: Any -> Stopped
+    pub fn stop(self) -> Self {
+        Self::Stopped
+    }
+}
+
+/// Lifecycle transition errors
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServiceLifecycleError {
+    /// Service is already running
+    AlreadyRunning,
+    /// Service has not been started
+    NotStarted,
+    /// Service is stopped
+    ServiceStopped,
+    /// A sync operation is already in progress
+    SyncInProgress,
+    /// No sync operation is in progress
+    NotSyncing,
+}
+
+impl std::fmt::Display for ServiceLifecycleError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AlreadyRunning => write!(f, "服務已經在運行中"),
+            Self::NotStarted => write!(f, "服務尚未啟動"),
+            Self::ServiceStopped => write!(f, "服務已停止"),
+            Self::SyncInProgress => write!(f, "同步正在進行中"),
+            Self::NotSyncing => write!(f, "目前沒有同步在進行"),
+        }
+    }
+}
+
+impl std::error::Error for ServiceLifecycleError {}
+
+// =============================================================================
+// Sync Status (for API response)
+// =============================================================================
+
+/// Current status of the background sync service (API response)
 #[derive(Debug, Clone, Default)]
 pub struct SyncServiceStatus {
     /// Whether the service is currently running
     pub is_running: bool,
-    /// Whether a sync is in progress
+    /// Whether a data sync is in progress
     pub is_syncing: bool,
-    /// Last sync timestamp (ISO 8601)
+    /// Whether compaction is in progress
+    pub is_compacting: bool,
+    /// Last data sync timestamp (ISO 8601)
     pub last_sync_at: Option<String>,
+    /// Last compaction timestamp (ISO 8601)
+    pub last_compaction_at: Option<String>,
     /// Next scheduled sync timestamp (ISO 8601)
     pub next_sync_at: Option<String>,
+    /// Next scheduled compaction timestamp (ISO 8601)
+    pub next_compaction_at: Option<String>,
     /// Last sync result message
     pub last_result: Option<String>,
     /// Last error message (if any)
     pub last_error: Option<String>,
+}
+
+impl SyncServiceStatus {
+    /// Create from lifecycle state
+    pub fn from_lifecycle(
+        lifecycle: &ServiceLifecycle,
+        is_compacting: bool,
+        last_compaction_at: Option<String>,
+        next_compaction_at: Option<String>,
+        last_result: Option<String>,
+        last_error: Option<String>,
+    ) -> Self {
+        Self {
+            is_running: lifecycle.is_running(),
+            is_syncing: lifecycle.is_syncing(),
+            is_compacting,
+            last_sync_at: lifecycle.last_sync_at().map(|s| s.to_string()),
+            last_compaction_at,
+            next_sync_at: lifecycle.next_sync_at().map(|s| s.to_string()),
+            next_compaction_at,
+            last_result,
+            last_error,
+        }
+    }
 }
 
 // =============================================================================
@@ -77,22 +293,58 @@ pub struct SyncOperationResult {
     pub error: Option<String>,
 }
 
+impl From<SourceSyncResult> for SyncOperationResult {
+    fn from(result: SourceSyncResult) -> Self {
+        let items_synced = (result.work_items_created + result.work_items_updated) as i32;
+        Self {
+            source: result.source,
+            success: result.error.is_none(),
+            items_synced,
+            projects_scanned: result.projects_scanned as i32,
+            items_created: result.work_items_created as i32,
+            error: result.error,
+        }
+    }
+}
+
 // =============================================================================
 // Background Sync Service
 // =============================================================================
 
 /// Background sync service that manages scheduled synchronization
+///
+/// Uses a formal lifecycle state machine to ensure correct state transitions.
+/// All sync operations must go through `execute_sync` to guarantee proper
+/// state management.
+///
+/// Tasks are separated:
+/// - **Data Sync**: Frequent (every N minutes) - discovery and extraction
+/// - **Data Compaction**: Periodic (every N hours) - hierarchical summary generation
 pub struct BackgroundSyncService {
     /// Current configuration
     config: Arc<RwLock<BackgroundSyncConfig>>,
-    /// Current status
-    status: Arc<RwLock<SyncServiceStatus>>,
-    /// Shutdown signal sender
+    /// Service lifecycle state (single source of truth)
+    lifecycle: Arc<RwLock<ServiceLifecycle>>,
+    /// Last data sync timestamp (persisted separately for display during Syncing state)
+    last_sync_at: Arc<RwLock<Option<String>>>,
+    /// Last compaction timestamp
+    last_compaction_at: Arc<RwLock<Option<String>>>,
+    /// Next scheduled compaction timestamp
+    next_compaction_at: Arc<RwLock<Option<String>>>,
+    /// Last sync result message
+    last_result: Arc<RwLock<Option<String>>>,
+    /// Last error message
+    last_error: Arc<RwLock<Option<String>>>,
+    /// Shutdown signal sender for sync task
     shutdown_tx: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+    /// Shutdown signal sender for compaction task
+    compaction_shutdown_tx: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
     /// Database connection for sync operations
     db: Arc<Mutex<recap_core::Database>>,
     /// User ID for sync operations
     user_id: Arc<RwLock<Option<String>>>,
+    /// Whether compaction is currently in progress
+    is_compacting: Arc<RwLock<bool>>,
 }
 
 impl BackgroundSyncService {
@@ -100,10 +352,90 @@ impl BackgroundSyncService {
     pub fn new(db: Arc<Mutex<recap_core::Database>>) -> Self {
         Self {
             config: Arc::new(RwLock::new(BackgroundSyncConfig::default())),
-            status: Arc::new(RwLock::new(SyncServiceStatus::default())),
+            lifecycle: Arc::new(RwLock::new(ServiceLifecycle::Created)),
+            last_sync_at: Arc::new(RwLock::new(None)),
+            last_compaction_at: Arc::new(RwLock::new(None)),
+            next_compaction_at: Arc::new(RwLock::new(None)),
+            last_result: Arc::new(RwLock::new(None)),
+            last_error: Arc::new(RwLock::new(None)),
             shutdown_tx: Arc::new(Mutex::new(None)),
+            compaction_shutdown_tx: Arc::new(Mutex::new(None)),
             db,
             user_id: Arc::new(RwLock::new(None)),
+            is_compacting: Arc::new(RwLock::new(false)),
+        }
+    }
+
+    /// Get last compaction timestamp
+    pub async fn get_last_compaction_at(&self) -> Option<String> {
+        self.last_compaction_at.read().await.clone()
+    }
+
+    /// Initialize timestamps from database on startup
+    ///
+    /// This should be called after the service is created to restore
+    /// the last known sync and compaction timestamps from persistent storage.
+    ///
+    /// - `last_sync_at`: Read from sync_status table (MAX of all sources)
+    /// - `last_compaction_at`: Read from work_summaries table (MAX created_at)
+    /// - `next_compaction_at`: Calculated from last_compaction_at + interval
+    pub async fn initialize_timestamps_from_db(&self, user_id: &str) {
+        let pool = {
+            let db = self.db.lock().await;
+            db.pool.clone()
+        };
+
+        let compaction_interval = self.config.read().await.compaction_interval_minutes;
+
+        // Load last_sync_at from sync_status table
+        let sync_result = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT MAX(last_sync_at) FROM sync_status WHERE user_id = ? AND last_sync_at IS NOT NULL"
+        )
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await;
+
+        if let Ok(Some(last_sync)) = sync_result {
+            log::info!("Restored last_sync_at from database: {}", last_sync);
+            let mut sync_time = self.last_sync_at.write().await;
+            *sync_time = Some(last_sync);
+        }
+
+        // Load last_compaction_at from work_summaries table (MAX created_at)
+        let compaction_result = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT MAX(created_at) FROM work_summaries WHERE user_id = ?"
+        )
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await;
+
+        if let Ok(Some(last_compaction)) = compaction_result {
+            log::info!("Restored last_compaction_at from database: {}", last_compaction);
+            {
+                let mut compaction_time = self.last_compaction_at.write().await;
+                *compaction_time = Some(last_compaction.clone());
+            }
+
+            // Calculate next_compaction_at based on last + interval
+            if let Ok(last_dt) = chrono::DateTime::parse_from_rfc3339(&last_compaction) {
+                let next_dt = last_dt + chrono::Duration::minutes(compaction_interval as i64);
+                let now = chrono::Utc::now();
+                // If next time is in the past, schedule for now + interval
+                let next_compaction = if next_dt < now {
+                    Self::calculate_next_compaction(compaction_interval)
+                } else {
+                    next_dt.to_rfc3339()
+                };
+                log::info!("Calculated next_compaction_at: {}", next_compaction);
+                let mut next_time = self.next_compaction_at.write().await;
+                *next_time = Some(next_compaction);
+            }
+        } else {
+            // No previous compaction, set next compaction to now + interval
+            let next_compaction = Self::calculate_next_compaction(compaction_interval);
+            log::info!("No previous compaction, setting next_compaction_at: {}", next_compaction);
+            let mut next_time = self.next_compaction_at.write().await;
+            *next_time = Some(next_compaction);
         }
     }
 
@@ -134,12 +466,134 @@ impl BackgroundSyncService {
         self.config.read().await.clone()
     }
 
-    /// Get the current status
+    /// Get the current status (API response format)
     pub async fn get_status(&self) -> SyncServiceStatus {
-        self.status.read().await.clone()
+        let lifecycle = self.lifecycle.read().await;
+        let last_sync_at = self.last_sync_at.read().await.clone();
+        let last_compaction_at = self.last_compaction_at.read().await.clone();
+        let next_compaction_at = self.next_compaction_at.read().await.clone();
+        let last_result = self.last_result.read().await.clone();
+        let last_error = self.last_error.read().await.clone();
+        let is_compacting = *self.is_compacting.read().await;
+
+        SyncServiceStatus {
+            is_running: lifecycle.is_running(),
+            is_syncing: lifecycle.is_syncing(),
+            is_compacting,
+            last_sync_at,
+            last_compaction_at,
+            next_sync_at: lifecycle.next_sync_at().map(|s| s.to_string()),
+            next_compaction_at,
+            last_result,
+            last_error,
+        }
+    }
+
+    /// Update the current status (DEPRECATED: use execute_sync instead)
+    /// This method exists for backward compatibility during migration.
+    #[deprecated(note = "Use execute_sync for proper lifecycle management")]
+    pub async fn update_status(&self, new_status: SyncServiceStatus) {
+        // Update last_result and last_error
+        {
+            let mut result = self.last_result.write().await;
+            *result = new_status.last_result;
+        }
+        {
+            let mut error = self.last_error.write().await;
+            *error = new_status.last_error;
+        }
+
+        // Try to reconcile lifecycle state with the status
+        let mut lifecycle = self.lifecycle.write().await;
+        if new_status.is_syncing && !lifecycle.is_syncing() {
+            if let Ok(new_state) = lifecycle.clone().begin_sync() {
+                *lifecycle = new_state;
+            }
+        } else if !new_status.is_syncing && lifecycle.is_syncing() {
+            let interval = self.config.read().await.interval_minutes;
+            if let Ok(new_state) = lifecycle.clone().complete_sync(Some(Self::calculate_next_sync(interval))) {
+                *lifecycle = new_state;
+            }
+        }
+    }
+
+    /// Get the current lifecycle state
+    pub async fn get_lifecycle(&self) -> ServiceLifecycle {
+        self.lifecycle.read().await.clone()
+    }
+
+    /// Begin a sync operation (transition to Syncing state)
+    ///
+    /// Call this at the start of any sync operation. Must be paired with
+    /// `complete_sync_operation` when the sync finishes.
+    ///
+    /// If the service is in Created or Stopped state, it will automatically
+    /// transition to Idle first, then to Syncing.
+    pub async fn begin_sync_operation(&self) -> Result<(), ServiceLifecycleError> {
+        let interval = self.config.read().await.interval_minutes;
+        let mut lifecycle = self.lifecycle.write().await;
+
+        // Auto-start if in Created or Stopped state
+        if matches!(*lifecycle, ServiceLifecycle::Created | ServiceLifecycle::Stopped) {
+            log::info!("Auto-starting service for sync operation");
+            *lifecycle = ServiceLifecycle::Idle {
+                last_sync_at: None,
+                next_sync_at: Some(Self::calculate_next_sync(interval)),
+            };
+        }
+
+        // Now transition to Syncing
+        match lifecycle.clone().begin_sync() {
+            Ok(new_state) => {
+                *lifecycle = new_state;
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Complete a sync operation (transition back to Idle state)
+    ///
+    /// Call this when a sync operation finishes, regardless of success or failure.
+    /// Records the results and errors for status reporting.
+    pub async fn complete_sync_operation(&self, results: &[SyncOperationResult]) {
+        let interval = self.config.read().await.interval_minutes;
+        let now = chrono::Utc::now().to_rfc3339();
+
+        // Update separate last_sync_at field (persists during all states)
+        {
+            let mut last_sync = self.last_sync_at.write().await;
+            *last_sync = Some(now);
+        }
+
+        // Transition lifecycle
+        {
+            let mut lifecycle = self.lifecycle.write().await;
+            if let Ok(new_state) = lifecycle.clone().complete_sync(Some(Self::calculate_next_sync(interval))) {
+                *lifecycle = new_state;
+            }
+        }
+
+        // Record results
+        let total_projects: i32 = results.iter().map(|r| r.projects_scanned).sum();
+        let total_created: i32 = results.iter().map(|r| r.items_created).sum();
+        let errors: Vec<String> = results.iter().filter_map(|r| r.error.clone()).collect();
+
+        {
+            let mut last_result = self.last_result.write().await;
+            *last_result = Some(format!("已掃描 {} 個專案，發現 {} 筆新資料", total_projects, total_created));
+        }
+        {
+            let mut last_error = self.last_error.write().await;
+            *last_error = if errors.is_empty() { None } else { Some(errors.join("; ")) };
+        }
     }
 
     /// Start the background sync service
+    ///
+    /// Spawns two independent tasks:
+    /// 1. **Data Sync Task** - Runs every N minutes for discovery and extraction
+    /// 2. **Compaction Task** - Runs every N hours for hierarchical summary generation
     pub async fn start(&self) {
         let config = self.config.read().await;
         if !config.enabled {
@@ -147,91 +601,166 @@ impl BackgroundSyncService {
             return;
         }
 
-        // Check if already running
+        let interval_minutes = config.interval_minutes;
+        let compaction_interval_minutes = config.compaction_interval_minutes;
+        let auto_generate_summaries = config.auto_generate_summaries;
+        drop(config);
+
+        // Transition lifecycle: Created/Stopped -> Idle
         {
-            let status = self.status.read().await;
-            if status.is_running {
-                log::info!("Background sync service is already running");
-                return;
+            let mut lifecycle = self.lifecycle.write().await;
+            match lifecycle.clone().start(Some(Self::calculate_next_sync(interval_minutes))) {
+                Ok(new_state) => *lifecycle = new_state,
+                Err(ServiceLifecycleError::AlreadyRunning) => {
+                    log::info!("Background sync service is already running");
+                    return;
+                }
+                Err(e) => {
+                    log::warn!("Cannot start service: {}", e);
+                    return;
+                }
             }
         }
 
-        let interval_minutes = config.interval_minutes;
-        drop(config);
-
-        // Create shutdown channel
+        // Create shutdown channels for both tasks
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         {
             let mut tx = self.shutdown_tx.lock().await;
             *tx = Some(shutdown_tx);
         }
 
-        // Update status
+        let (compaction_shutdown_tx, mut compaction_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         {
-            let mut status = self.status.write().await;
-            status.is_running = true;
-            status.next_sync_at = Some(Self::calculate_next_sync(interval_minutes));
+            let mut tx = self.compaction_shutdown_tx.lock().await;
+            *tx = Some(compaction_shutdown_tx);
         }
 
-        log::info!("Starting background sync service with {}min interval", interval_minutes);
+        log::info!(
+            "Starting background sync service: data sync every {}min, compaction every {}min",
+            interval_minutes,
+            compaction_interval_minutes
+        );
 
-        // Clone references for the spawned task
-        let config = Arc::clone(&self.config);
-        let status = Arc::clone(&self.status);
-        let db = Arc::clone(&self.db);
-        let user_id = Arc::clone(&self.user_id);
+        // ===== Task 1: Data Sync (frequent) =====
+        {
+            let config = Arc::clone(&self.config);
+            let lifecycle = Arc::clone(&self.lifecycle);
+            let last_sync_at = Arc::clone(&self.last_sync_at);
+            let last_result = Arc::clone(&self.last_result);
+            let last_error = Arc::clone(&self.last_error);
+            let db = Arc::clone(&self.db);
+            let user_id = Arc::clone(&self.user_id);
 
-        // Spawn the sync loop
-        tokio::spawn(async move {
-            let mut timer = interval(Duration::from_secs(interval_minutes as u64 * 60));
+            tokio::spawn(async move {
+                let mut timer = interval(Duration::from_secs(interval_minutes as u64 * 60));
+                timer.tick().await; // Skip first tick
 
-            // Skip the first tick (immediate)
-            timer.tick().await;
+                loop {
+                    tokio::select! {
+                        _ = timer.tick() => {
+                            let cfg = config.read().await;
+                            if !cfg.enabled {
+                                log::info!("Background sync disabled, stopping data sync loop");
+                                break;
+                            }
+                            let sync_config = cfg.clone();
+                            drop(cfg);
 
-            loop {
-                tokio::select! {
-                    _ = timer.tick() => {
-                        // Check if still enabled
-                        let cfg = config.read().await;
-                        if !cfg.enabled {
-                            log::info!("Background sync disabled, stopping loop");
+                            let uid = user_id.read().await.clone();
+                            if uid.is_none() {
+                                log::warn!("No user ID set, skipping data sync");
+                                continue;
+                            }
+
+                            Self::perform_data_sync(
+                                &db,
+                                &lifecycle,
+                                &last_sync_at,
+                                &last_result,
+                                &last_error,
+                                &sync_config,
+                                &uid.unwrap(),
+                            ).await;
+                        }
+                        _ = &mut shutdown_rx => {
+                            log::info!("Data sync task received shutdown signal");
                             break;
                         }
-                        let sync_config = cfg.clone();
-                        drop(cfg);
-
-                        // Get user ID
-                        let uid = user_id.read().await.clone();
-                        if uid.is_none() {
-                            log::warn!("No user ID set, skipping sync");
-                            continue;
-                        }
-                        let uid = uid.unwrap();
-
-                        // Perform sync
-                        Self::perform_sync(&db, &status, &sync_config, &uid).await;
-
-                        // Update next sync time
-                        let mut st = status.write().await;
-                        st.next_sync_at = Some(Self::calculate_next_sync(sync_config.interval_minutes));
-                    }
-                    _ = &mut shutdown_rx => {
-                        log::info!("Background sync service received shutdown signal");
-                        break;
                     }
                 }
+
+                let mut lc = lifecycle.write().await;
+                *lc = lc.clone().stop();
+                log::info!("Data sync task stopped");
+            });
+        }
+
+        // ===== Task 2: Data Compaction (periodic) =====
+        if auto_generate_summaries {
+            let config = Arc::clone(&self.config);
+            let db = Arc::clone(&self.db);
+            let user_id = Arc::clone(&self.user_id);
+            let last_compaction_at = Arc::clone(&self.last_compaction_at);
+            let next_compaction_at = Arc::clone(&self.next_compaction_at);
+            let is_compacting = Arc::clone(&self.is_compacting);
+
+            // Set initial next_compaction_at
+            {
+                let next = Self::calculate_next_compaction(compaction_interval_minutes);
+                let mut nca = self.next_compaction_at.write().await;
+                *nca = Some(next);
             }
 
-            // Update status on exit
-            let mut st = status.write().await;
-            st.is_running = false;
-            st.next_sync_at = None;
-            log::info!("Background sync service stopped");
-        });
+            tokio::spawn(async move {
+                let mut timer = interval(Duration::from_secs(compaction_interval_minutes as u64 * 60));
+                timer.tick().await; // Skip first tick
+
+                loop {
+                    tokio::select! {
+                        _ = timer.tick() => {
+                            let cfg = config.read().await;
+                            if !cfg.enabled || !cfg.auto_generate_summaries {
+                                log::info!("Compaction disabled, skipping");
+                                // Update next compaction time
+                                let mut nca = next_compaction_at.write().await;
+                                *nca = Some(Self::calculate_next_compaction(cfg.compaction_interval_minutes));
+                                continue;
+                            }
+                            let interval_minutes = cfg.compaction_interval_minutes;
+                            drop(cfg);
+
+                            let uid = user_id.read().await.clone();
+                            if uid.is_none() {
+                                log::warn!("No user ID set, skipping compaction");
+                                continue;
+                            }
+
+                            Self::perform_compaction(
+                                &db,
+                                &last_compaction_at,
+                                &is_compacting,
+                                &uid.unwrap(),
+                            ).await;
+
+                            // Update next compaction time after completion
+                            let mut nca = next_compaction_at.write().await;
+                            *nca = Some(Self::calculate_next_compaction(interval_minutes));
+                        }
+                        _ = &mut compaction_shutdown_rx => {
+                            log::info!("Compaction task received shutdown signal");
+                            break;
+                        }
+                    }
+                }
+
+                log::info!("Compaction task stopped");
+            });
+        }
     }
 
     /// Stop the background sync service
     pub async fn stop(&self) {
+        // Stop sync task
         let tx = {
             let mut guard = self.shutdown_tx.lock().await;
             guard.take()
@@ -239,13 +768,23 @@ impl BackgroundSyncService {
 
         if let Some(tx) = tx {
             let _ = tx.send(());
-            log::info!("Sent shutdown signal to background sync service");
+            log::info!("Sent shutdown signal to data sync task");
         }
 
-        // Update status
-        let mut status = self.status.write().await;
-        status.is_running = false;
-        status.next_sync_at = None;
+        // Stop compaction task
+        let compaction_tx = {
+            let mut guard = self.compaction_shutdown_tx.lock().await;
+            guard.take()
+        };
+
+        if let Some(tx) = compaction_tx {
+            let _ = tx.send(());
+            log::info!("Sent shutdown signal to compaction task");
+        }
+
+        // Transition lifecycle to Stopped
+        let mut lifecycle = self.lifecycle.write().await;
+        *lifecycle = lifecycle.clone().stop();
     }
 
     /// Restart the background sync service
@@ -272,22 +811,349 @@ impl BackgroundSyncService {
             }];
         }
 
-        Self::perform_sync(&self.db, &self.status, &config, &uid.unwrap()).await
+        Self::perform_sync_with_lifecycle(
+            &self.db,
+            &self.lifecycle,
+            &self.last_sync_at,
+            &self.last_result,
+            &self.last_error,
+            &config,
+            &uid.unwrap(),
+        ).await
     }
 
-    /// Perform the actual sync operation
-    async fn perform_sync(
+    /// Execute a sync operation with proper lifecycle management
+    ///
+    /// This is the ONLY way to perform sync operations. It guarantees:
+    /// 1. Lifecycle state transition to Syncing at start
+    /// 2. Lifecycle state transition to Idle at end
+    /// 3. Proper error handling and result recording
+    ///
+    /// # Example
+    /// ```ignore
+    /// let results = service.execute_sync(|pool, user_id| async move {
+    ///     // Your sync logic here
+    ///     Ok(vec![SyncOperationResult::default()])
+    /// }).await;
+    /// ```
+    pub async fn execute_sync<F, Fut>(&self, sync_fn: F) -> Result<Vec<SyncOperationResult>, String>
+    where
+        F: FnOnce(sqlx::SqlitePool, String) -> Fut,
+        Fut: std::future::Future<Output = Result<Vec<SyncOperationResult>, String>>,
+    {
+        let uid = self.user_id.read().await.clone();
+        if uid.is_none() {
+            return Err("No user logged in".to_string());
+        }
+        let user_id = uid.unwrap();
+
+        // Get pool
+        let pool = {
+            let db = self.db.lock().await;
+            db.pool.clone()
+        };
+
+        // Transition to Syncing
+        {
+            let mut lifecycle = self.lifecycle.write().await;
+            match lifecycle.clone().begin_sync() {
+                Ok(new_state) => *lifecycle = new_state,
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+
+        log::info!("Starting sync via execute_sync for user: {}", user_id);
+
+        // Execute the sync function
+        let result = sync_fn(pool, user_id).await;
+
+        // Update last_sync_at (persists during all states)
+        {
+            let mut last_sync = self.last_sync_at.write().await;
+            *last_sync = Some(chrono::Utc::now().to_rfc3339());
+        }
+
+        // Transition back to Idle and record results
+        let interval = self.config.read().await.interval_minutes;
+        {
+            let mut lifecycle = self.lifecycle.write().await;
+            if let Ok(new_state) = lifecycle.clone().complete_sync(Some(Self::calculate_next_sync(interval))) {
+                *lifecycle = new_state;
+            }
+        }
+
+        // Record result/error
+        match &result {
+            Ok(results) => {
+                let total_projects: i32 = results.iter().map(|r| r.projects_scanned).sum();
+                let total_created: i32 = results.iter().map(|r| r.items_created).sum();
+                let errors: Vec<String> = results.iter().filter_map(|r| r.error.clone()).collect();
+
+                {
+                    let mut last_result = self.last_result.write().await;
+                    *last_result = Some(format!("已掃描 {} 個專案，發現 {} 筆新資料", total_projects, total_created));
+                }
+                {
+                    let mut last_error = self.last_error.write().await;
+                    *last_error = if errors.is_empty() { None } else { Some(errors.join("; ")) };
+                }
+            }
+            Err(e) => {
+                let mut last_error = self.last_error.write().await;
+                *last_error = Some(e.clone());
+            }
+        }
+
+        log::info!("Sync completed via execute_sync");
+        result
+    }
+
+    /// Perform data sync only (Phase 1: Sources, Phase 2: Snapshots)
+    ///
+    /// This is the frequent task that runs every N minutes.
+    /// Does NOT include compaction or timeline summary generation.
+    async fn perform_data_sync(
         db: &Arc<Mutex<recap_core::Database>>,
-        status: &Arc<RwLock<SyncServiceStatus>>,
+        lifecycle: &Arc<RwLock<ServiceLifecycle>>,
+        last_sync_at: &Arc<RwLock<Option<String>>>,
+        last_result: &Arc<RwLock<Option<String>>>,
+        last_error: &Arc<RwLock<Option<String>>>,
+        config: &BackgroundSyncConfig,
+        user_id: &str,
+    ) -> Vec<SyncOperationResult> {
+        log::info!("Starting data sync for user: {}", user_id);
+
+        // Transition to Syncing
+        {
+            let mut lc = lifecycle.write().await;
+            match lc.clone().begin_sync() {
+                Ok(new_state) => *lc = new_state,
+                Err(e) => {
+                    log::warn!("Cannot begin sync: {}", e);
+                    return vec![SyncOperationResult {
+                        source: "system".to_string(),
+                        success: false,
+                        error: Some(e.to_string()),
+                        ..Default::default()
+                    }];
+                }
+            }
+        }
+
+        let mut results = Vec::new();
+
+        // Clone pool immediately
+        let pool = {
+            let db_guard = db.lock().await;
+            db_guard.pool.clone()
+        };
+
+        // Phase 1: Sync all enabled sources
+        let sync_config = config.to_sync_config();
+        let sources = recap_core::services::sources::get_enabled_sources(&sync_config).await;
+
+        for source in &sources {
+            log::info!("Syncing {} for user: {}", source.display_name(), user_id);
+
+            match source.sync_sessions(&pool, user_id).await {
+                Ok(source_result) => {
+                    let result = SyncOperationResult::from(source_result);
+                    log::info!(
+                        "{} sync complete: {} items, {} created",
+                        source.display_name(),
+                        result.items_synced,
+                        result.items_created
+                    );
+                    results.push(result);
+                }
+                Err(e) => {
+                    log::error!("{} sync error: {}", source.display_name(), e);
+                    results.push(SyncOperationResult {
+                        source: source.source_name().to_string(),
+                        success: false,
+                        error: Some(e),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+
+        // Phase 2: Capture hourly snapshots
+        if config.sync_claude {
+            let projects = recap_core::services::SyncService::discover_project_paths();
+            let mut snapshot_count = 0;
+            for project in &projects {
+                match recap_core::services::snapshot::capture_snapshots_for_project(
+                    &pool,
+                    user_id,
+                    project,
+                )
+                .await
+                {
+                    Ok(n) => snapshot_count += n,
+                    Err(e) => {
+                        log::warn!("Snapshot capture error for {}: {}", project.name, e);
+                    }
+                }
+            }
+            if snapshot_count > 0 {
+                log::info!("Captured {} hourly snapshots", snapshot_count);
+            }
+        }
+
+        // Update last_sync_at
+        {
+            let mut sync_time = last_sync_at.write().await;
+            *sync_time = Some(chrono::Utc::now().to_rfc3339());
+        }
+
+        // Transition back to Idle
+        {
+            let mut lc = lifecycle.write().await;
+            let next_sync = Some(Self::calculate_next_sync(config.interval_minutes));
+            if let Ok(new_state) = lc.clone().complete_sync(next_sync) {
+                *lc = new_state;
+            }
+        }
+
+        // Record results
+        {
+            let total_projects: i32 = results.iter().map(|r| r.projects_scanned).sum();
+            let total_created: i32 = results.iter().map(|r| r.items_created).sum();
+            let errors: Vec<String> = results.iter().filter_map(|r| r.error.clone()).collect();
+
+            {
+                let mut result = last_result.write().await;
+                *result = Some(format!("已掃描 {} 個專案，發現 {} 筆新資料", total_projects, total_created));
+            }
+            {
+                let mut error = last_error.write().await;
+                *error = if errors.is_empty() { None } else { Some(errors.join("; ")) };
+            }
+        }
+
+        log::info!("Data sync completed: {} sources processed", results.len());
+        results
+    }
+
+    /// Perform data compaction (Phase 3: Hourly/Daily, Phase 4: Timeline Summaries)
+    ///
+    /// This is the periodic task that runs every N hours.
+    /// Performs hierarchical compaction from small to large time units.
+    async fn perform_compaction(
+        db: &Arc<Mutex<recap_core::Database>>,
+        last_compaction_at: &Arc<RwLock<Option<String>>>,
+        is_compacting: &Arc<RwLock<bool>>,
+        user_id: &str,
+    ) {
+        // Set compacting state
+        {
+            let mut compacting = is_compacting.write().await;
+            *compacting = true;
+        }
+
+        log::info!("Starting data compaction for user: {}", user_id);
+
+        let pool = {
+            let db_guard = db.lock().await;
+            db_guard.pool.clone()
+        };
+
+        // Phase 3: Hourly → Daily compaction
+        let llm = recap_core::services::llm::create_llm_service(&pool, user_id)
+            .await
+            .ok();
+
+        match recap_core::services::compaction::run_compaction_cycle(
+            &pool,
+            llm.as_ref(),
+            user_id,
+        )
+        .await
+        {
+            Ok(cr) => {
+                if cr.hourly_compacted > 0 || cr.daily_compacted > 0 {
+                    log::info!(
+                        "Compaction: {} hourly, {} daily summaries created",
+                        cr.hourly_compacted,
+                        cr.daily_compacted
+                    );
+                }
+                // Log LLM warnings
+                if !cr.llm_warnings.is_empty() {
+                    log::warn!("LLM warnings: {}", cr.llm_warnings.join("; "));
+                }
+            }
+            Err(e) => {
+                log::warn!("Compaction cycle error: {}", e);
+            }
+        }
+
+        // Phase 4: Timeline summaries (hierarchical: week → month → quarter → year)
+        // Process in order from small to large time units
+        let time_units = ["week", "month", "quarter", "year"];
+        match crate::commands::projects::summaries::generate_all_completed_summaries(
+            &pool,
+            user_id,
+            &time_units,
+        )
+        .await
+        {
+            Ok(count) => {
+                if count > 0 {
+                    log::info!("Generated {} timeline summaries", count);
+                }
+            }
+            Err(e) => {
+                log::warn!("Timeline summary generation error: {}", e);
+            }
+        }
+
+        // Update last_compaction_at
+        {
+            let mut compaction_time = last_compaction_at.write().await;
+            *compaction_time = Some(chrono::Utc::now().to_rfc3339());
+        }
+
+        // Clear compacting state
+        {
+            let mut compacting = is_compacting.write().await;
+            *compacting = false;
+        }
+
+        log::info!("Data compaction completed");
+    }
+
+    /// Perform the actual sync operation with lifecycle management (FULL SYNC)
+    ///
+    /// This is the internal implementation used by both the timer loop and trigger_sync.
+    /// Uses the lifecycle state machine to ensure correct state transitions.
+    async fn perform_sync_with_lifecycle(
+        db: &Arc<Mutex<recap_core::Database>>,
+        lifecycle: &Arc<RwLock<ServiceLifecycle>>,
+        last_sync_at: &Arc<RwLock<Option<String>>>,
+        last_result: &Arc<RwLock<Option<String>>>,
+        last_error: &Arc<RwLock<Option<String>>>,
         config: &BackgroundSyncConfig,
         user_id: &str,
     ) -> Vec<SyncOperationResult> {
         log::info!("Starting background sync for user: {}", user_id);
 
-        // Mark as syncing
+        // Transition to Syncing
         {
-            let mut st = status.write().await;
-            st.is_syncing = true;
+            let mut lc = lifecycle.write().await;
+            match lc.clone().begin_sync() {
+                Ok(new_state) => *lc = new_state,
+                Err(e) => {
+                    log::warn!("Cannot begin sync: {}", e);
+                    return vec![SyncOperationResult {
+                        source: "system".to_string(),
+                        success: false,
+                        error: Some(e.to_string()),
+                        ..Default::default()
+                    }];
+                }
+            }
         }
 
         let mut results = Vec::new();
@@ -298,15 +1164,40 @@ impl BackgroundSyncService {
             db_guard.pool.clone()
         }; // Mutex released immediately
 
-        // Phase 1: Sync sources (uses pool directly, no Mutex)
-        if config.sync_claude {
-            let db_guard = db.lock().await;
-            let result = Self::sync_claude_sessions(&db_guard, user_id).await;
-            results.push(result);
-            drop(db_guard); // Release Mutex before next phase
+        // Convert to new SyncConfig format and get enabled sources
+        let sync_config = config.to_sync_config();
+        let sources = recap_core::services::sources::get_enabled_sources(&sync_config).await;
+
+        // Phase 1: Sync all enabled sources using the trait abstraction
+        for source in &sources {
+            log::info!("Syncing {} for user: {}", source.display_name(), user_id);
+
+            match source.sync_sessions(&pool, user_id).await {
+                Ok(source_result) => {
+                    let result = SyncOperationResult::from(source_result);
+                    log::info!(
+                        "{} sync complete: {} sessions processed, {} created, {} updated",
+                        source.display_name(),
+                        result.items_synced,
+                        result.items_created,
+                        result.projects_scanned
+                    );
+                    results.push(result);
+                }
+                Err(e) => {
+                    log::error!("{} sync error: {}", source.display_name(), e);
+                    results.push(SyncOperationResult {
+                        source: source.source_name().to_string(),
+                        success: false,
+                        error: Some(e),
+                        ..Default::default()
+                    });
+                }
+            }
         }
 
-        if config.sync_git {
+        // Stub results for not-yet-implemented sources
+        if config.sync_git && !sync_config.is_source_enabled("git") {
             results.push(SyncOperationResult {
                 source: "git".to_string(),
                 success: true,
@@ -314,7 +1205,7 @@ impl BackgroundSyncService {
             });
         }
 
-        if config.sync_gitlab {
+        if config.sync_gitlab && !sync_config.is_source_enabled("gitlab") {
             results.push(SyncOperationResult {
                 source: "gitlab".to_string(),
                 success: true,
@@ -322,7 +1213,7 @@ impl BackgroundSyncService {
             });
         }
 
-        if config.sync_jira {
+        if config.sync_jira && !sync_config.is_source_enabled("jira") {
             results.push(SyncOperationResult {
                 source: "jira".to_string(),
                 success: true,
@@ -373,6 +1264,11 @@ impl BackgroundSyncService {
                             cr.daily_compacted
                         );
                     }
+                    // Surface LLM warnings to last_error so users can see them
+                    if !cr.llm_warnings.is_empty() {
+                        let mut error = last_error.write().await;
+                        *error = Some(cr.llm_warnings.join("; "));
+                    }
                 }
                 Err(e) => {
                     log::warn!("Compaction cycle error: {}", e);
@@ -380,25 +1276,57 @@ impl BackgroundSyncService {
             }
         }
 
-        // Update status
-        {
-            let mut st = status.write().await;
-            st.is_syncing = false;
-            st.last_sync_at = Some(chrono::Utc::now().to_rfc3339());
+        // Phase 4: Generate timeline summaries for completed periods
+        if config.auto_generate_summaries {
+            // Generate summaries for week, month, quarter, year (skip day for efficiency)
+            let time_units = ["week", "month", "quarter", "year"];
+            match crate::commands::projects::summaries::generate_all_completed_summaries(
+                &pool,
+                user_id,
+                &time_units,
+            )
+            .await
+            {
+                Ok(count) => {
+                    if count > 0 {
+                        log::info!("Generated {} timeline summaries", count);
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Timeline summary generation error: {}", e);
+                }
+            }
+        }
 
+        // Update last_sync_at (persists during all states)
+        {
+            let mut sync_time = last_sync_at.write().await;
+            *sync_time = Some(chrono::Utc::now().to_rfc3339());
+        }
+
+        // Transition back to Idle and record results
+        {
+            let mut lc = lifecycle.write().await;
+            // Calculate next sync time
+            let next_sync = Some(Self::calculate_next_sync(config.interval_minutes));
+            if let Ok(new_state) = lc.clone().complete_sync(next_sync) {
+                *lc = new_state;
+            }
+        }
+
+        // Record results
+        {
             let total_projects: i32 = results.iter().map(|r| r.projects_scanned).sum();
             let total_created: i32 = results.iter().map(|r| r.items_created).sum();
-            let errors: Vec<String> = results
-                .iter()
-                .filter_map(|r| r.error.clone())
-                .collect();
+            let errors: Vec<String> = results.iter().filter_map(|r| r.error.clone()).collect();
 
-            if errors.is_empty() {
-                st.last_result = Some(format!("已掃描 {} 個專案，發現 {} 筆新資料", total_projects, total_created));
-                st.last_error = None;
-            } else {
-                st.last_result = Some(format!("同步完成，{} 個錯誤", errors.len()));
-                st.last_error = Some(errors.join("; "));
+            {
+                let mut result = last_result.write().await;
+                *result = Some(format!("已掃描 {} 個專案，發現 {} 筆新資料", total_projects, total_created));
+            }
+            {
+                let mut error = last_error.write().await;
+                *error = if errors.is_empty() { None } else { Some(errors.join("; ")) };
             }
         }
 
@@ -406,57 +1334,14 @@ impl BackgroundSyncService {
         results
     }
 
-    /// Sync Claude Code sessions using project discovery with git root resolution
-    async fn sync_claude_sessions(db: &recap_core::Database, user_id: &str) -> SyncOperationResult {
-        log::info!("Syncing Claude sessions for user: {}", user_id);
-
-        // Discover all projects using multi-strategy discovery + git root grouping
-        let projects = recap_core::services::SyncService::discover_project_paths();
-
-        if projects.is_empty() {
-            return SyncOperationResult {
-                source: "claude".to_string(),
-                success: true,
-                ..Default::default()
-            };
-        }
-
-        log::info!("Discovered {} Claude projects", projects.len());
-        for project in &projects {
-            log::debug!(
-                "  Project: {} ({}) - {} dirs",
-                project.name,
-                project.canonical_path,
-                project.claude_dirs.len()
-            );
-        }
-
-        match recap_core::services::sync_discovered_projects(&db.pool, user_id, &projects).await {
-            Ok(result) => {
-                let items_synced = (result.work_items_created + result.work_items_updated) as i32;
-                SyncOperationResult {
-                    source: "claude".to_string(),
-                    success: true,
-                    items_synced,
-                    projects_scanned: result.projects_scanned as i32,
-                    items_created: result.work_items_created as i32,
-                    error: None,
-                }
-            }
-            Err(e) => {
-                log::error!("Claude sync error: {}", e);
-                SyncOperationResult {
-                    source: "claude".to_string(),
-                    success: false,
-                    error: Some(e),
-                    ..Default::default()
-                }
-            }
-        }
-    }
-
     /// Calculate the next sync timestamp
     fn calculate_next_sync(interval_minutes: u32) -> String {
+        let next = chrono::Utc::now() + chrono::Duration::minutes(interval_minutes as i64);
+        next.to_rfc3339()
+    }
+
+    /// Calculate the next compaction timestamp
+    fn calculate_next_compaction(interval_minutes: u32) -> String {
         let next = chrono::Utc::now() + chrono::Duration::minutes(interval_minutes as i64);
         next.to_rfc3339()
     }
@@ -486,7 +1371,9 @@ mod tests {
         let status = SyncServiceStatus::default();
         assert!(!status.is_running);
         assert!(!status.is_syncing);
+        assert!(!status.is_compacting);
         assert!(status.last_sync_at.is_none());
+        assert!(status.last_compaction_at.is_none());
         assert!(status.next_sync_at.is_none());
     }
 
@@ -513,5 +1400,172 @@ mod tests {
         assert_eq!(result.items_synced, 5);
         assert_eq!(result.projects_scanned, 3);
         assert_eq!(result.items_created, 2);
+    }
+
+    // =========================================================================
+    // Lifecycle State Machine Tests
+    // =========================================================================
+
+    #[test]
+    fn test_lifecycle_default_is_created() {
+        let lifecycle = ServiceLifecycle::default();
+        assert_eq!(lifecycle, ServiceLifecycle::Created);
+        assert!(!lifecycle.is_running());
+        assert!(!lifecycle.is_syncing());
+    }
+
+    #[test]
+    fn test_lifecycle_start_from_created() {
+        let lifecycle = ServiceLifecycle::Created;
+        let result = lifecycle.start(Some("2026-01-30T12:00:00Z".to_string()));
+        assert!(result.is_ok());
+
+        let new_state = result.unwrap();
+        assert!(new_state.is_running());
+        assert!(!new_state.is_syncing());
+        assert_eq!(new_state.next_sync_at(), Some("2026-01-30T12:00:00Z"));
+    }
+
+    #[test]
+    fn test_lifecycle_start_from_stopped() {
+        let lifecycle = ServiceLifecycle::Stopped;
+        let result = lifecycle.start(None);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_running());
+    }
+
+    #[test]
+    fn test_lifecycle_cannot_start_when_already_running() {
+        let lifecycle = ServiceLifecycle::Idle {
+            last_sync_at: None,
+            next_sync_at: None,
+        };
+        let result = lifecycle.start(None);
+        assert_eq!(result.unwrap_err(), ServiceLifecycleError::AlreadyRunning);
+    }
+
+    #[test]
+    fn test_lifecycle_begin_sync_from_idle() {
+        let lifecycle = ServiceLifecycle::Idle {
+            last_sync_at: None,
+            next_sync_at: None,
+        };
+        let result = lifecycle.begin_sync();
+        assert!(result.is_ok());
+
+        let new_state = result.unwrap();
+        assert!(new_state.is_syncing());
+        assert!(new_state.is_running());
+    }
+
+    #[test]
+    fn test_lifecycle_cannot_begin_sync_when_not_started() {
+        let lifecycle = ServiceLifecycle::Created;
+        let result = lifecycle.begin_sync();
+        assert_eq!(result.unwrap_err(), ServiceLifecycleError::NotStarted);
+    }
+
+    #[test]
+    fn test_lifecycle_cannot_begin_sync_when_already_syncing() {
+        let lifecycle = ServiceLifecycle::Syncing {
+            started_at: "2026-01-30T12:00:00Z".to_string(),
+        };
+        let result = lifecycle.begin_sync();
+        assert_eq!(result.unwrap_err(), ServiceLifecycleError::SyncInProgress);
+    }
+
+    #[test]
+    fn test_lifecycle_complete_sync() {
+        let lifecycle = ServiceLifecycle::Syncing {
+            started_at: "2026-01-30T12:00:00Z".to_string(),
+        };
+        let result = lifecycle.complete_sync(Some("2026-01-30T12:15:00Z".to_string()));
+        assert!(result.is_ok());
+
+        let new_state = result.unwrap();
+        assert!(!new_state.is_syncing());
+        assert!(new_state.is_running());
+        assert!(new_state.last_sync_at().is_some());
+        assert_eq!(new_state.next_sync_at(), Some("2026-01-30T12:15:00Z"));
+    }
+
+    #[test]
+    fn test_lifecycle_cannot_complete_sync_when_not_syncing() {
+        let lifecycle = ServiceLifecycle::Idle {
+            last_sync_at: None,
+            next_sync_at: None,
+        };
+        let result = lifecycle.complete_sync(None);
+        assert_eq!(result.unwrap_err(), ServiceLifecycleError::NotSyncing);
+    }
+
+    #[test]
+    fn test_lifecycle_stop_from_any_state() {
+        // From Created
+        let lifecycle = ServiceLifecycle::Created;
+        assert_eq!(lifecycle.stop(), ServiceLifecycle::Stopped);
+
+        // From Idle
+        let lifecycle = ServiceLifecycle::Idle {
+            last_sync_at: None,
+            next_sync_at: None,
+        };
+        assert_eq!(lifecycle.stop(), ServiceLifecycle::Stopped);
+
+        // From Syncing
+        let lifecycle = ServiceLifecycle::Syncing {
+            started_at: "2026-01-30T12:00:00Z".to_string(),
+        };
+        assert_eq!(lifecycle.stop(), ServiceLifecycle::Stopped);
+    }
+
+    #[test]
+    fn test_lifecycle_full_flow() {
+        // Created -> Idle -> Syncing -> Idle -> Stopped
+        let lifecycle = ServiceLifecycle::Created;
+
+        // Start
+        let lifecycle = lifecycle.start(Some("next".to_string())).unwrap();
+        assert!(matches!(lifecycle, ServiceLifecycle::Idle { .. }));
+
+        // Begin sync
+        let lifecycle = lifecycle.begin_sync().unwrap();
+        assert!(matches!(lifecycle, ServiceLifecycle::Syncing { .. }));
+
+        // Complete sync
+        let lifecycle = lifecycle.complete_sync(Some("next2".to_string())).unwrap();
+        assert!(matches!(lifecycle, ServiceLifecycle::Idle { .. }));
+        assert!(lifecycle.last_sync_at().is_some());
+
+        // Stop
+        let lifecycle = lifecycle.stop();
+        assert_eq!(lifecycle, ServiceLifecycle::Stopped);
+    }
+
+    #[test]
+    fn test_status_from_lifecycle() {
+        let lifecycle = ServiceLifecycle::Idle {
+            last_sync_at: Some("2026-01-30T12:00:00Z".to_string()),
+            next_sync_at: Some("2026-01-30T12:15:00Z".to_string()),
+        };
+
+        let status = SyncServiceStatus::from_lifecycle(
+            &lifecycle,
+            false, // is_compacting
+            Some("2026-01-30T11:00:00Z".to_string()), // last_compaction_at
+            Some("2026-01-30T17:00:00Z".to_string()), // next_compaction_at
+            Some("結果".to_string()),
+            None,
+        );
+
+        assert!(status.is_running);
+        assert!(!status.is_syncing);
+        assert!(!status.is_compacting);
+        assert_eq!(status.next_compaction_at, Some("2026-01-30T17:00:00Z".to_string()));
+        assert_eq!(status.last_sync_at, Some("2026-01-30T12:00:00Z".to_string()));
+        assert_eq!(status.last_compaction_at, Some("2026-01-30T11:00:00Z".to_string()));
+        assert_eq!(status.next_sync_at, Some("2026-01-30T12:15:00Z".to_string()));
+        assert_eq!(status.last_result, Some("結果".to_string()));
+        assert!(status.last_error.is_none());
     }
 }

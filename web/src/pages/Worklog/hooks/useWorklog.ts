@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react'
 import { worklog, workItems, config as configService } from '@/services'
 import type { WorklogDay, HourlyBreakdownItem } from '@/types/worklog'
 import type { WorkItem } from '@/types'
+import type { TimelineSession } from '@/components/WorkGanttChart'
 
 // =============================================================================
 // Types
@@ -14,6 +15,7 @@ export interface WorkItemFormData {
   date: string
   jira_issue_key: string
   category: string
+  project_name: string
 }
 
 // =============================================================================
@@ -90,6 +92,12 @@ export function useWorklog(isAuthenticated: boolean) {
   const [hourlyData, setHourlyData] = useState<HourlyBreakdownItem[]>([])
   const [hourlyLoading, setHourlyLoading] = useState(false)
 
+  // Gantt chart state
+  const [ganttDate, setGanttDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [ganttSessions, setGanttSessions] = useState<TimelineSession[]>([])
+  const [ganttLoading, setGanttLoading] = useState(false)
+  const [ganttSources, setGanttSources] = useState<string[]>(['claude_code', 'antigravity'])
+
   // CRUD state
   const [selectedItem, setSelectedItem] = useState<WorkItem | null>(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -104,6 +112,7 @@ export function useWorklog(isAuthenticated: boolean) {
     date: new Date().toISOString().split('T')[0],
     jira_issue_key: '',
     category: '',
+    project_name: '',
   })
 
   // ==========================================================================
@@ -127,6 +136,40 @@ export function useWorklog(isAuthenticated: boolean) {
     if (!isAuthenticated) return
     fetchOverview()
   }, [isAuthenticated, fetchOverview])
+
+  // Gantt timeline fetch effect
+  useEffect(() => {
+    if (!isAuthenticated) return
+
+    async function fetchTimeline() {
+      setGanttLoading(true)
+      try {
+        // Pass sources filter (undefined if all sources selected to use backend defaults)
+        const sourcesToPass = ganttSources.length === 2 ? undefined : ganttSources
+        const result = await workItems.getTimeline(ganttDate, sourcesToPass)
+        const sessions: TimelineSession[] = result.sessions.map(s => ({
+          id: s.id,
+          project: s.project,
+          title: s.title,
+          startTime: s.start_time,
+          endTime: s.end_time,
+          hours: s.hours,
+          commits: s.commits.map(c => ({
+            hash: c.hash,
+            message: c.message,
+            time: c.time,
+            author: c.author,
+          })),
+        }))
+        setGanttSessions(sessions)
+      } catch {
+        setGanttSessions([])
+      } finally {
+        setGanttLoading(false)
+      }
+    }
+    fetchTimeline()
+  }, [ganttDate, ganttSources, isAuthenticated])
 
   // ==========================================================================
   // Date navigation
@@ -192,6 +235,7 @@ export function useWorklog(isAuthenticated: boolean) {
       date: new Date().toISOString().split('T')[0],
       jira_issue_key: '',
       category: '',
+      project_name: '',
     })
   }, [])
 
@@ -219,6 +263,7 @@ export function useWorklog(isAuthenticated: boolean) {
         date: formData.date,
         jira_issue_key: formData.jira_issue_key || undefined,
         category: formData.category || undefined,
+        project_name: formData.project_name || undefined,
       })
       setShowCreateModal(false)
       resetForm()
@@ -230,6 +275,23 @@ export function useWorklog(isAuthenticated: boolean) {
 
   const openEditModal = useCallback((item: WorkItem) => {
     setSelectedItem(item)
+
+    // Derive project_name from project_path for manual items
+    let project_name = ''
+    if (item.project_path?.includes('manual-projects')) {
+      const segments = item.project_path.split(/[/\\]/)
+      project_name = segments[segments.length - 1] || ''
+    } else if (item.project_path) {
+      const segments = item.project_path.split(/[/\\]/)
+      project_name = segments[segments.length - 1] || ''
+    }
+
+    // Legacy: check title prefix for backward compatibility
+    if (!project_name && item.title.startsWith('[') && item.title.includes('] ')) {
+      const endIndex = item.title.indexOf('] ')
+      project_name = item.title.substring(1, endIndex)
+    }
+
     setFormData({
       title: item.title,
       description: item.description || '',
@@ -237,6 +299,7 @@ export function useWorklog(isAuthenticated: boolean) {
       date: item.date,
       jira_issue_key: item.jira_issue_key || '',
       category: item.category || '',
+      project_name,
     })
     setShowEditModal(true)
   }, [])
@@ -258,6 +321,7 @@ export function useWorklog(isAuthenticated: boolean) {
         date: formData.date,
         jira_issue_key: formData.jira_issue_key || undefined,
         category: formData.category || undefined,
+        project_name: formData.project_name || undefined,
       })
       setShowEditModal(false)
       setSelectedItem(null)
@@ -325,6 +389,13 @@ export function useWorklog(isAuthenticated: boolean) {
     hourlyData,
     hourlyLoading,
     toggleHourlyBreakdown,
+    // Gantt chart
+    ganttDate,
+    setGanttDate,
+    ganttSessions,
+    ganttLoading,
+    ganttSources,
+    setGanttSources,
     // CRUD
     showCreateModal,
     showEditModal,

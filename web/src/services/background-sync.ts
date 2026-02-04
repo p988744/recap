@@ -5,6 +5,7 @@
  */
 
 import { invokeAuth } from './client'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 // =============================================================================
 // Types
@@ -13,17 +14,23 @@ import { invokeAuth } from './client'
 export interface BackgroundSyncConfig {
   enabled: boolean
   interval_minutes: number
+  compaction_interval_minutes: number
   sync_git: boolean
   sync_claude: boolean
+  sync_antigravity: boolean
   sync_gitlab: boolean
   sync_jira: boolean
+  auto_generate_summaries: boolean
 }
 
 export interface BackgroundSyncStatus {
   is_running: boolean
   is_syncing: boolean
+  is_compacting: boolean
   last_sync_at: string | null
+  last_compaction_at: string | null
   next_sync_at: string | null
+  next_compaction_at: string | null
   last_result: string | null
   last_error: string | null
 }
@@ -40,6 +47,15 @@ export interface SyncResult {
 export interface TriggerSyncResponse {
   results: SyncResult[]
   total_items: number
+}
+
+/** Progress event for sync operations */
+export interface SyncProgress {
+  phase: 'sources' | 'snapshots' | 'compaction' | 'summaries' | 'complete'
+  current_source: string | null
+  current: number
+  total: number
+  message: string
 }
 
 export type UpdateConfigRequest = Partial<BackgroundSyncConfig>
@@ -88,4 +104,31 @@ export async function stop(): Promise<void> {
  */
 export async function triggerSync(): Promise<TriggerSyncResponse> {
   return invokeAuth<TriggerSyncResponse>('trigger_background_sync')
+}
+
+/**
+ * Trigger an immediate sync with progress reporting.
+ * Emits "sync-progress" events during the sync operation.
+ *
+ * @param onProgress Callback for progress updates
+ */
+export async function triggerSyncWithProgress(
+  onProgress?: (progress: SyncProgress) => void
+): Promise<TriggerSyncResponse> {
+  let unlisten: UnlistenFn | undefined
+
+  try {
+    if (onProgress) {
+      unlisten = await listen<SyncProgress>('sync-progress', (event) => {
+        onProgress(event.payload)
+      })
+    }
+
+    const result = await invokeAuth<TriggerSyncResponse>('trigger_sync_with_progress')
+    return result
+  } finally {
+    if (unlisten) {
+      unlisten()
+    }
+  }
 }

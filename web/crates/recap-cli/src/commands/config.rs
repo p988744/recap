@@ -252,7 +252,7 @@ async fn get_all_config(ctx: &Context) -> Result<Vec<ConfigRow>> {
             });
             rows.push(ConfigRow {
                 key: "llm_model".to_string(),
-                value: settings.llm_model.unwrap_or_else(|| "gpt-4o-mini".to_string()),
+                value: settings.llm_model.unwrap_or_else(|| "gpt-5-nano".to_string()),
                 source: "db".to_string(),
             });
             rows.push(ConfigRow {

@@ -23,7 +23,7 @@ export function RecentActivities({ activities }: RecentActivitiesProps) {
         <h2 className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
           最近活動
         </h2>
-        <Link to="/worklog" className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+        <Link to="/work-items" className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
           查看全部
           <ArrowRight className="w-3 h-3" strokeWidth={1.5} />
         </Link>

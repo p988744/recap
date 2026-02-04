@@ -8,6 +8,10 @@
 //!
 //! Each level uses the previous period's summary as context for LLM generation.
 //! Falls back to rule-based summarization when LLM is unavailable.
+//!
+//! Supports two modes:
+//! - **Immediate mode**: Process each hourly summary synchronously (default)
+//! - **Batch mode**: Collect all hourly prompts, submit to OpenAI Batch API (50% cheaper, 24h delay)
 
 use chrono::{Duration, NaiveDateTime};
 #[cfg(test)]
@@ -19,6 +23,7 @@ use uuid::Uuid;
 use crate::models::{SnapshotRawData, WorkSummary};
 
 use super::llm::{LlmService, parse_error_usage};
+use super::llm_batch::{BatchRequest, HourlyCompactionRequest, LlmBatchService};
 use super::llm_usage::save_usage_log;
 use super::snapshot::{CommitSnapshot, ToolCallRecord};
 
@@ -32,6 +37,10 @@ pub struct CompactionResult {
     pub weekly_compacted: usize,
     pub monthly_compacted: usize,
     pub errors: Vec<String>,
+    /// LLM-related warnings (API errors that were handled with fallback)
+    pub llm_warnings: Vec<String>,
+    /// Latest date that was compacted (YYYY-MM-DD format)
+    pub latest_compacted_date: Option<String>,
 }
 
 // ============ Helpers (time) ============
@@ -70,6 +79,8 @@ pub async fn compact_hourly(
     project_path: &str,
     hour_bucket: &str,
 ) -> Result<(), String> {
+    log::trace!("compact_hourly: {} @ {}", project_path, hour_bucket);
+
     // Fetch all snapshots for this hour
     let snapshots: Vec<SnapshotRawData> = sqlx::query_as(
         "SELECT * FROM snapshot_raw_data WHERE user_id = ? AND project_path = ? AND hour_bucket = ?",
@@ -81,7 +92,10 @@ pub async fn compact_hourly(
     .await
     .map_err(|e| format!("Failed to fetch snapshots: {}", e))?;
 
+    log::trace!("  Found {} snapshots", snapshots.len());
+
     if snapshots.is_empty() {
+        log::trace!("  No snapshots, skipping");
         return Ok(());
     }
 
@@ -97,8 +111,12 @@ pub async fn compact_hourly(
     .map_err(|e| format!("Failed to check existing summary: {}", e))?;
 
     if existing.is_some() && is_hour_completed(hour_bucket) {
+        log::trace!("  Summary exists and hour completed, skipping");
         return Ok(()); // Only skip if hour is finished; in-progress hours get re-compacted
     }
+
+    log::trace!("  Processing {} snapshots (existing: {}, hour_completed: {})",
+        snapshots.len(), existing.is_some(), is_hour_completed(hour_bucket));
 
     // Fetch previous hour's summary for context
     let previous_context = get_previous_summary(pool, user_id, Some(project_path), "hourly", hour_bucket).await;
@@ -120,8 +138,10 @@ pub async fn compact_hourly(
     };
 
     // Generate summary
+    log::trace!("  Generating summary (LLM available: {})", llm.map(|l| l.is_configured()).unwrap_or(false));
     let (summary, llm_model) = match llm {
         Some(llm_svc) if llm_svc.is_configured() => {
+            log::trace!("  Using LLM for summarization");
             let result = llm_svc
                 .summarize_work_period(
                     &previous_context.as_deref().unwrap_or(""),
@@ -131,6 +151,7 @@ pub async fn compact_hourly(
                 .await;
             match result {
                 Ok((s, usage)) => {
+                    log::trace!("  LLM summarization successful");
                     let _ = save_usage_log(pool, user_id, &usage).await;
                     (s, Some("llm".to_string()))
                 }
@@ -143,8 +164,13 @@ pub async fn compact_hourly(
                 }
             }
         }
-        _ => (build_rule_based_summary(&current_data, &key_activities, &git_summary), None),
+        _ => {
+            log::trace!("  Using rule-based summarization");
+            (build_rule_based_summary(&current_data, &key_activities, &git_summary), None)
+        }
     };
+
+    log::trace!("  Saving summary (length: {} chars, model: {:?})", summary.len(), llm_model);
 
     // Save summary
     save_summary(
@@ -174,6 +200,8 @@ pub async fn compact_daily(
     project_path: &str,
     date: &str, // "2026-01-26"
 ) -> Result<(), String> {
+    log::trace!("compact_daily: {} @ {}", project_path, date);
+
     let period_start = format!("{}T00:00:00+00:00", date);
     let period_end = format!("{}T23:59:59+00:00", date);
 
@@ -189,6 +217,7 @@ pub async fn compact_daily(
     .map_err(|e| format!("Failed to check existing daily summary: {}", e))?;
 
     if existing.is_some() && is_day_completed(date) {
+        log::trace!("  Summary exists and day completed, skipping");
         return Ok(()); // Only skip if day is finished; in-progress days get re-compacted
     }
 
@@ -204,9 +233,15 @@ pub async fn compact_daily(
     .await
     .map_err(|e| format!("Failed to fetch hourly summaries: {}", e))?;
 
+    log::trace!("  Found {} hourly summaries", hourlies.len());
+
     if hourlies.is_empty() {
+        log::trace!("  No hourly summaries, skipping");
         return Ok(());
     }
+
+    log::trace!("  Processing {} hourly summaries (existing: {}, day_completed: {})",
+        hourlies.len(), existing.is_some(), is_day_completed(date));
 
     let previous_context =
         get_previous_summary(pool, user_id, Some(project_path), "daily", &period_start).await;
@@ -231,8 +266,10 @@ pub async fn compact_daily(
     );
     let snapshot_ids = hourlies.iter().map(|h| h.id.clone()).collect::<Vec<_>>();
 
+    log::trace!("  Generating daily summary (LLM available: {})", llm.map(|l| l.is_configured()).unwrap_or(false));
     let (summary, llm_model) = match llm {
         Some(llm_svc) if llm_svc.is_configured() => {
+            log::trace!("  Using LLM for daily summarization");
             let result = llm_svc
                 .summarize_work_period(
                     &previous_context.as_deref().unwrap_or(""),
@@ -242,6 +279,7 @@ pub async fn compact_daily(
                 .await;
             match result {
                 Ok((s, usage)) => {
+                    log::trace!("  LLM daily summarization successful");
                     let _ = save_usage_log(pool, user_id, &usage).await;
                     (s, Some("llm".to_string()))
                 }
@@ -254,8 +292,13 @@ pub async fn compact_daily(
                 }
             }
         }
-        _ => (build_rule_based_summary(&current_data, &key_activities, &git_summary), None),
+        _ => {
+            log::trace!("  Using rule-based daily summarization");
+            (build_rule_based_summary(&current_data, &key_activities, &git_summary), None)
+        }
     };
+
+    log::trace!("  Saving daily summary (length: {} chars, model: {:?})", summary.len(), llm_model);
 
     save_summary(
         pool,
@@ -286,11 +329,14 @@ pub async fn compact_period(
     period_start: &str,
     period_end: &str,
 ) -> Result<(), String> {
+    log::trace!("compact_period ({}): {:?} @ {} to {}", scale, project_path, period_start, period_end);
+
     let source_scale = match scale {
         "weekly" => "daily",
         "monthly" => "weekly",
         _ => return Err(format!("Invalid scale for compact_period: {}", scale)),
     };
+    log::trace!("  Source scale: {}", source_scale);
 
     // Check if summary already exists
     let existing: Option<WorkSummary> = sqlx::query_as(
@@ -306,6 +352,7 @@ pub async fn compact_period(
     .map_err(|e| format!("Failed to check existing {} summary: {}", scale, e))?;
 
     if existing.is_some() && is_period_completed(period_end) {
+        log::trace!("  Summary exists and period completed, skipping");
         return Ok(()); // Only skip if period is finished; in-progress periods get re-compacted
     }
 
@@ -323,9 +370,15 @@ pub async fn compact_period(
     .await
     .map_err(|e| format!("Failed to fetch {} summaries: {}", source_scale, e))?;
 
+    log::trace!("  Found {} {} summaries", sources.len(), source_scale);
+
     if sources.is_empty() {
+        log::trace!("  No {} summaries, skipping", source_scale);
         return Ok(());
     }
+
+    log::trace!("  Processing {} {} summaries (existing: {}, period_completed: {})",
+        sources.len(), source_scale, existing.is_some(), is_period_completed(period_end));
 
     let previous_context =
         get_previous_summary(pool, user_id, project_path, scale, period_start).await;
@@ -350,8 +403,10 @@ pub async fn compact_period(
     );
     let source_ids = sources.iter().map(|s| s.id.clone()).collect::<Vec<_>>();
 
+    log::trace!("  Generating {} summary (LLM available: {})", scale, llm.map(|l| l.is_configured()).unwrap_or(false));
     let (summary, llm_model) = match llm {
         Some(llm_svc) if llm_svc.is_configured() => {
+            log::trace!("  Using LLM for {} summarization", scale);
             let result = llm_svc
                 .summarize_work_period(
                     &previous_context.as_deref().unwrap_or(""),
@@ -361,6 +416,7 @@ pub async fn compact_period(
                 .await;
             match result {
                 Ok((s, usage)) => {
+                    log::trace!("  LLM {} summarization successful", scale);
                     let _ = save_usage_log(pool, user_id, &usage).await;
                     (s, Some("llm".to_string()))
                 }
@@ -373,8 +429,13 @@ pub async fn compact_period(
                 }
             }
         }
-        _ => (build_rule_based_summary(&current_data, &key_activities, &git_summary), None),
+        _ => {
+            log::trace!("  Using rule-based {} summarization", scale);
+            (build_rule_based_summary(&current_data, &key_activities, &git_summary), None)
+        }
     };
+
+    log::trace!("  Saving {} summary (length: {} chars, model: {:?})", scale, summary.len(), llm_model);
 
     save_summary(
         pool,
@@ -393,26 +454,134 @@ pub async fn compact_period(
     .await
 }
 
-// ============ Full Compaction Cycle ============
+// ============ Force Recompaction ============
 
-/// Run all pending compactions for a user.
+/// Options for force recompaction
+#[derive(Debug, Clone, Default)]
+pub struct ForceRecompactOptions {
+    /// Only recompact summaries from this date (YYYY-MM-DD). If None, all dates.
+    pub from_date: Option<String>,
+    /// Only recompact summaries up to this date (YYYY-MM-DD). If None, up to now.
+    pub to_date: Option<String>,
+    /// Only recompact these scales. If empty, all scales.
+    pub scales: Vec<String>,
+}
+
+/// Result of a force recompaction operation
+#[derive(Debug, Clone, Serialize)]
+pub struct ForceRecompactResult {
+    pub summaries_deleted: usize,
+    pub compaction_result: CompactionResult,
+}
+
+/// Force recalculate all work_summaries from snapshot_raw_data.
 ///
-/// Discovers uncompacted hourly snapshots, compacts them to hourly summaries,
-/// then rolls up to daily, weekly, and monthly summaries.
-pub async fn run_compaction_cycle(
+/// This operation:
+/// 1. Deletes existing work_summaries entries (preserving original work_items and snapshot_raw_data)
+/// 2. Re-runs the compaction cycle to regenerate all summaries
+///
+/// Use this when you've made changes to the compaction logic and want to
+/// retroactively apply them to historical data.
+pub async fn force_recompact(
     pool: &SqlitePool,
     llm: Option<&LlmService>,
     user_id: &str,
-) -> Result<CompactionResult, String> {
-    let mut result = CompactionResult {
-        hourly_compacted: 0,
-        daily_compacted: 0,
-        weekly_compacted: 0,
-        monthly_compacted: 0,
-        errors: Vec::new(),
-    };
+    options: ForceRecompactOptions,
+) -> Result<ForceRecompactResult, String> {
+    log::info!("Starting force recompaction for user: {}", user_id);
 
-    // 1. Find all uncompacted hourly snapshots
+    // Build delete query based on options
+    let mut delete_conditions = vec!["user_id = ?".to_string()];
+    let mut bind_values: Vec<String> = vec![user_id.to_string()];
+
+    if let Some(ref from_date) = options.from_date {
+        delete_conditions.push("period_start >= ?".to_string());
+        bind_values.push(format!("{}T00:00:00", from_date));
+    }
+
+    if let Some(ref to_date) = options.to_date {
+        delete_conditions.push("period_start <= ?".to_string());
+        bind_values.push(format!("{}T23:59:59", to_date));
+    }
+
+    if !options.scales.is_empty() {
+        let scale_placeholders: Vec<&str> = options.scales.iter().map(|_| "?").collect();
+        delete_conditions.push(format!("scale IN ({})", scale_placeholders.join(", ")));
+        bind_values.extend(options.scales.clone());
+    }
+
+    let delete_query = format!(
+        "DELETE FROM work_summaries WHERE {}",
+        delete_conditions.join(" AND ")
+    );
+
+    // Count rows to be deleted
+    let count_query = format!(
+        "SELECT COUNT(*) as count FROM work_summaries WHERE {}",
+        delete_conditions.join(" AND ")
+    );
+
+    // Execute count query
+    let count_result: (i64,) = {
+        let mut query = sqlx::query_as(&count_query);
+        for val in &bind_values {
+            query = query.bind(val);
+        }
+        query
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("Failed to count summaries: {}", e))?
+    };
+    let summaries_to_delete = count_result.0 as usize;
+
+    log::info!("Deleting {} existing summaries", summaries_to_delete);
+
+    // Execute delete
+    {
+        let mut query = sqlx::query(&delete_query);
+        for val in &bind_values {
+            query = query.bind(val);
+        }
+        query
+            .execute(pool)
+            .await
+            .map_err(|e| format!("Failed to delete summaries: {}", e))?;
+    }
+
+    // Run compaction cycle to regenerate summaries
+    log::info!("Running compaction cycle to regenerate summaries");
+    let compaction_result = run_compaction_cycle(pool, llm, user_id).await?;
+
+    log::info!(
+        "Force recompaction complete: deleted {} summaries, created {} hourly + {} daily + {} monthly",
+        summaries_to_delete,
+        compaction_result.hourly_compacted,
+        compaction_result.daily_compacted,
+        compaction_result.monthly_compacted
+    );
+
+    Ok(ForceRecompactResult {
+        summaries_deleted: summaries_to_delete,
+        compaction_result,
+    })
+}
+
+// ============ Batch Mode for Hourly Compaction ============
+
+/// Pending hourly compaction info
+#[derive(Debug, Clone)]
+pub struct PendingHourlyCompaction {
+    pub project_path: String,
+    pub hour_bucket: String,
+    pub snapshots: Vec<SnapshotRawData>,
+}
+
+/// Collect all pending hourly compactions for batch processing
+pub async fn collect_pending_hourly(
+    pool: &SqlitePool,
+    user_id: &str,
+) -> Result<Vec<PendingHourlyCompaction>, String> {
+    // Find all uncompacted hourly snapshots
     let uncompacted: Vec<(String, String)> = sqlx::query_as(
         r#"
         SELECT DISTINCT s.project_path, s.hour_bucket
@@ -430,38 +599,263 @@ pub async fn run_compaction_cycle(
     .await
     .map_err(|e| format!("Failed to find uncompacted snapshots: {}", e))?;
 
-    // 2. Also find in-progress hours (current hour that already have a summary but need refresh)
-    let current_hour = chrono::Local::now().format("%Y-%m-%dT%H:00:00").to_string();
-    let in_progress: Vec<(String, String)> = sqlx::query_as(
-        r#"
-        SELECT DISTINCT s.project_path, s.hour_bucket
-        FROM snapshot_raw_data s
-        WHERE s.user_id = ? AND s.hour_bucket = ?
-        "#,
+    let mut result = Vec::new();
+    for (project_path, hour_bucket) in uncompacted {
+        // Only include completed hours (not current hour)
+        if !is_hour_completed(&hour_bucket) {
+            continue;
+        }
+
+        // Fetch snapshots for this hour
+        let snapshots: Vec<SnapshotRawData> = sqlx::query_as(
+            "SELECT * FROM snapshot_raw_data WHERE user_id = ? AND project_path = ? AND hour_bucket = ?",
+        )
+        .bind(user_id)
+        .bind(&project_path)
+        .bind(&hour_bucket)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("Failed to fetch snapshots: {}", e))?;
+
+        if !snapshots.is_empty() {
+            result.push(PendingHourlyCompaction {
+                project_path,
+                hour_bucket,
+                snapshots,
+            });
+        }
+    }
+
+    Ok(result)
+}
+
+/// Prepare batch requests from pending hourly compactions
+pub async fn prepare_hourly_batch_requests(
+    pool: &SqlitePool,
+    user_id: &str,
+    pending: &[PendingHourlyCompaction],
+) -> Result<Vec<HourlyCompactionRequest>, String> {
+    let mut requests = Vec::new();
+
+    for item in pending {
+        // Get previous context
+        let previous_context = get_previous_summary(
+            pool,
+            user_id,
+            Some(&item.project_path),
+            "hourly",
+            &item.hour_bucket,
+        )
+        .await;
+
+        // Aggregate snapshot data
+        let (current_data, snapshot_ids, key_activities, git_summary) =
+            aggregate_snapshots(&item.snapshots);
+
+        // Build prompt (same as in compact_hourly)
+        let prompt = build_hourly_prompt(&previous_context, &current_data);
+
+        requests.push(HourlyCompactionRequest {
+            project_path: item.project_path.clone(),
+            hour_bucket: item.hour_bucket.clone(),
+            prompt,
+            snapshot_ids: snapshot_ids.iter().map(|s| s.to_string()).collect(),
+            key_activities,
+            git_summary,
+            previous_context,
+        });
+    }
+
+    Ok(requests)
+}
+
+/// Build prompt for hourly summarization
+fn build_hourly_prompt(context: &Option<String>, current_data: &str) -> String {
+    let context_section = match context {
+        Some(ctx) if !ctx.is_empty() => format!(
+            "\n前一時段摘要（作為前後文參考）：\n{}\n",
+            ctx.chars().take(1000).collect::<String>()
+        ),
+        _ => String::new(),
+    };
+
+    format!(
+        r#"你是工作記錄助手。請根據以下工作資料，產生簡潔的工作摘要（50-100字）。
+{context_section}
+本時段的工作資料：
+{data}
+
+請用繁體中文回答，格式如下：
+1. 第一行是一句話的總結摘要（不要加前綴）
+2. 空一行後，用條列式列出具體細節，每個要點以「- 」開頭
+
+重點描述完成了什麼、使用什麼技術、解決什麼問題。
+若有 git commit，優先以 commit 訊息作為成果總結。
+程式碼中的檔名、函式名、變數名請用 `backtick` 包裹。
+直接輸出內容，不要加標題。"#,
+        context_section = context_section,
+        data = current_data.chars().take(4000).collect::<String>()
     )
-    .bind(user_id)
-    .bind(&current_hour)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| format!("Failed to find in-progress hours: {}", e))?;
+}
 
-    // Merge uncompacted + in-progress, dedup by (project_path, hour_bucket)
-    let mut all_hourly = uncompacted;
-    for entry in in_progress {
-        if !all_hourly.contains(&entry) {
-            all_hourly.push(entry);
+/// Save completed batch results as hourly summaries
+pub async fn save_batch_results_as_summaries(
+    pool: &SqlitePool,
+    user_id: &str,
+    requests: &[HourlyCompactionRequest],
+    batch_requests: &[BatchRequest],
+) -> Result<usize, String> {
+    let mut saved = 0;
+
+    for batch_req in batch_requests {
+        if batch_req.status != "completed" {
+            continue;
         }
+
+        let response = match &batch_req.response {
+            Some(r) => r,
+            None => continue,
+        };
+
+        // Find matching hourly request
+        let hourly_req = requests
+            .iter()
+            .find(|r| r.project_path == batch_req.project_path && r.hour_bucket == batch_req.hour_bucket);
+
+        let hourly_req = match hourly_req {
+            Some(r) => r,
+            None => continue,
+        };
+
+        // Compute period_end
+        let period_end = match NaiveDateTime::parse_from_str(&hourly_req.hour_bucket, "%Y-%m-%dT%H:%M:%S") {
+            Ok(ndt) => (ndt + Duration::hours(1)).format("%Y-%m-%dT%H:%M:%S").to_string(),
+            Err(_) => hourly_req.hour_bucket.clone(),
+        };
+
+        // Save summary
+        save_summary(
+            pool,
+            user_id,
+            Some(&hourly_req.project_path),
+            "hourly",
+            &hourly_req.hour_bucket,
+            &period_end,
+            response,
+            &hourly_req.key_activities,
+            &hourly_req.git_summary,
+            hourly_req.previous_context.as_deref(),
+            &hourly_req.snapshot_ids.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+            Some("batch"),
+        )
+        .await?;
+
+        saved += 1;
     }
 
-    // 3. Compact hourly
-    for (project_path, hour_bucket) in &all_hourly {
-        match compact_hourly(pool, llm, user_id, project_path, hour_bucket).await {
-            Ok(()) => result.hourly_compacted += 1,
-            Err(e) => result.errors.push(format!("hourly {}/{}: {}", project_path, hour_bucket, e)),
-        }
+    Ok(saved)
+}
+
+/// Result of batch compaction submission
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchCompactionSubmitResult {
+    pub job_id: String,
+    pub total_requests: usize,
+    pub message: String,
+}
+
+/// Result of batch compaction processing
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchCompactionProcessResult {
+    pub summaries_saved: usize,
+    pub daily_compacted: usize,
+    pub monthly_compacted: usize,
+    pub errors: Vec<String>,
+}
+
+/// Submit hourly compactions as a batch job (Phase 1)
+///
+/// This collects all pending hourly compactions and submits them to OpenAI Batch API.
+/// Returns a job ID that can be used to check status and process results later.
+pub async fn submit_hourly_batch(
+    pool: &SqlitePool,
+    batch_service: &LlmBatchService,
+    user_id: &str,
+) -> Result<BatchCompactionSubmitResult, String> {
+    // Check for existing pending job
+    if let Some(existing) = LlmBatchService::get_pending_job(pool, user_id).await? {
+        return Err(format!(
+            "Already have a pending batch job: {} (status: {})",
+            existing.id, existing.status
+        ));
     }
 
-    // 4. Find days that have hourly summaries but no daily summary
+    // Collect pending hourly compactions
+    let pending = collect_pending_hourly(pool, user_id).await?;
+    if pending.is_empty() {
+        return Err("No pending hourly compactions to batch".to_string());
+    }
+
+    // Prepare batch requests
+    let requests = prepare_hourly_batch_requests(pool, user_id, &pending).await?;
+    let total = requests.len();
+
+    // Create batch job
+    let job_id = batch_service.create_batch_job(pool, user_id, requests).await?;
+
+    // Submit to OpenAI
+    let submit_result = batch_service.submit_batch_job(pool, &job_id).await?;
+
+    Ok(BatchCompactionSubmitResult {
+        job_id: submit_result.job_id,
+        total_requests: total,
+        message: format!(
+            "Submitted {} hourly compactions to batch. OpenAI batch ID: {}",
+            total, submit_result.openai_batch_id
+        ),
+    })
+}
+
+/// Process completed batch and run remaining compaction (Phase 2)
+///
+/// This should be called after the batch job completes. It:
+/// 1. Downloads and saves hourly summaries from batch results
+/// 2. Runs daily/weekly/monthly compaction (immediate, not batch)
+pub async fn process_completed_batch(
+    pool: &SqlitePool,
+    llm: Option<&LlmService>,
+    batch_service: &LlmBatchService,
+    user_id: &str,
+    job_id: &str,
+) -> Result<BatchCompactionProcessResult, String> {
+    // Process batch results
+    let _batch_result = batch_service.process_batch_results(pool, job_id).await?;
+
+    // Get completed requests
+    let completed_requests = LlmBatchService::get_completed_requests(pool, job_id).await?;
+
+    // Get original requests to match metadata
+    let pending = collect_pending_hourly(pool, user_id).await?;
+    let hourly_requests = prepare_hourly_batch_requests(pool, user_id, &pending).await?;
+
+    // Save as summaries
+    let summaries_saved = save_batch_results_as_summaries(
+        pool,
+        user_id,
+        &hourly_requests,
+        &completed_requests,
+    )
+    .await?;
+
+    // Now run daily/weekly/monthly compaction (immediate mode)
+    let mut result = BatchCompactionProcessResult {
+        summaries_saved,
+        daily_compacted: 0,
+        monthly_compacted: 0,
+        errors: Vec::new(),
+    };
+
+    // Run daily compaction
     let uncompacted_days: Vec<(String, String)> = sqlx::query_as(
         r#"
         SELECT DISTINCT ws.project_path, DATE(ws.period_start) as day
@@ -479,38 +873,14 @@ pub async fn run_compaction_cycle(
     .await
     .map_err(|e| format!("Failed to find uncompacted days: {}", e))?;
 
-    // 5. Also include today for re-compaction (daily summary updates as new hourly data arrives)
-    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let in_progress_days: Vec<(String,)> = sqlx::query_as(
-        r#"
-        SELECT DISTINCT ws.project_path
-        FROM work_summaries ws
-        WHERE ws.user_id = ? AND ws.scale = 'hourly' AND DATE(ws.period_start) = ?
-        "#,
-    )
-    .bind(user_id)
-    .bind(&today)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| format!("Failed to find in-progress days: {}", e))?;
-
-    // Merge uncompacted days + today's in-progress
-    let mut all_days = uncompacted_days;
-    for (project_path,) in in_progress_days {
-        let entry = (project_path, today.clone());
-        if !all_days.contains(&entry) {
-            all_days.push(entry);
-        }
-    }
-
-    for (project_path, day) in &all_days {
+    for (project_path, day) in &uncompacted_days {
         match compact_daily(pool, llm, user_id, project_path, day).await {
             Ok(()) => result.daily_compacted += 1,
             Err(e) => result.errors.push(format!("daily {}/{}: {}", project_path, day, e)),
         }
     }
 
-    // 6. Monthly compaction for the current month (re-compact while month is in progress)
+    // Run monthly compaction
     let now = chrono::Local::now();
     let month_start = now.format("%Y-%m-01T00:00:00+00:00").to_string();
     let month_end = {
@@ -520,7 +890,6 @@ pub async fn run_compaction_cycle(
         format!("{:04}-{:02}-01T00:00:00+00:00", next_year, next_month)
     };
 
-    // Find all projects that have daily summaries this month
     let monthly_projects: Vec<(String,)> = sqlx::query_as(
         r#"
         SELECT DISTINCT ws.project_path
@@ -540,6 +909,320 @@ pub async fn run_compaction_cycle(
         match compact_period(pool, llm, user_id, Some(project_path), "monthly", &month_start, &month_end).await {
             Ok(()) => result.monthly_compacted += 1,
             Err(e) => result.errors.push(format!("monthly {}: {}", project_path, e)),
+        }
+    }
+
+    Ok(result)
+}
+
+// ============ Full Compaction Cycle ============
+
+/// Run all pending compactions for a user.
+///
+/// Discovers uncompacted hourly snapshots, compacts them to hourly summaries,
+/// then rolls up to daily, weekly, and monthly summaries.
+pub async fn run_compaction_cycle(
+    pool: &SqlitePool,
+    llm: Option<&LlmService>,
+    user_id: &str,
+) -> Result<CompactionResult, String> {
+    log::info!("=== Starting compaction cycle for user: {} ===", user_id);
+    log::debug!("LLM service available: {}", llm.is_some());
+
+    let mut result = CompactionResult {
+        hourly_compacted: 0,
+        daily_compacted: 0,
+        weekly_compacted: 0,
+        monthly_compacted: 0,
+        errors: Vec::new(),
+        llm_warnings: Vec::new(),
+        latest_compacted_date: None,
+    };
+
+    // Check if LLM is available and working
+    if let Some(llm_service) = llm {
+        // Test LLM connection before starting compaction
+        match llm_service.test_connection().await {
+            Ok(test_result) => {
+                if !test_result.success {
+                    result.llm_warnings.push(format!("LLM 連線失敗: {}，使用規則摘要", test_result.message));
+                }
+            }
+            Err(e) => {
+                result.llm_warnings.push(format!("LLM 連線錯誤: {}，使用規則摘要", e));
+            }
+        }
+    } else {
+        result.llm_warnings.push("LLM 未設定，使用規則摘要".to_string());
+    }
+
+    // 1. Find all uncompacted hourly snapshots
+    log::debug!("Step 1: Finding uncompacted hourly snapshots...");
+    let uncompacted: Vec<(String, String)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT s.project_path, s.hour_bucket
+        FROM snapshot_raw_data s
+        LEFT JOIN work_summaries ws ON ws.user_id = s.user_id
+            AND ws.project_path = s.project_path
+            AND ws.scale = 'hourly'
+            AND ws.period_start = s.hour_bucket
+        WHERE s.user_id = ? AND ws.id IS NULL
+            AND s.project_path NOT LIKE '%manual-projects%'
+        ORDER BY s.hour_bucket
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to find uncompacted snapshots: {}", e))?;
+
+    log::debug!("Found {} uncompacted hourly snapshots", uncompacted.len());
+    for (path, bucket) in &uncompacted {
+        log::trace!("  Uncompacted: {} @ {}", path, bucket);
+    }
+
+    // 2. Also find in-progress hours (current hour that already have a summary but need refresh)
+    let current_hour = chrono::Local::now().format("%Y-%m-%dT%H:00:00").to_string();
+    log::debug!("Step 2: Finding in-progress hours (current: {})...", current_hour);
+    let in_progress: Vec<(String, String)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT s.project_path, s.hour_bucket
+        FROM snapshot_raw_data s
+        WHERE s.user_id = ? AND s.hour_bucket = ?
+            AND s.project_path NOT LIKE '%manual-projects%'
+        "#,
+    )
+    .bind(user_id)
+    .bind(&current_hour)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to find in-progress hours: {}", e))?;
+
+    log::debug!("Found {} in-progress hours", in_progress.len());
+
+    // Merge uncompacted + in-progress, dedup by (project_path, hour_bucket)
+    let mut all_hourly = uncompacted;
+    for entry in in_progress {
+        if !all_hourly.contains(&entry) {
+            all_hourly.push(entry);
+        }
+    }
+
+    log::info!("Step 3: Compacting {} hourly snapshots...", all_hourly.len());
+
+    // 3. Compact hourly
+    for (project_path, hour_bucket) in &all_hourly {
+        log::debug!("  Compacting hourly: {} @ {}", project_path, hour_bucket);
+        match compact_hourly(pool, llm, user_id, project_path, hour_bucket).await {
+            Ok(()) => {
+                log::debug!("    ✓ Hourly compaction successful");
+                result.hourly_compacted += 1;
+            }
+            Err(e) => {
+                log::warn!("    ✗ Hourly compaction failed: {}", e);
+                result.errors.push(format!("hourly {}/{}: {}", project_path, hour_bucket, e));
+            }
+        }
+    }
+
+    // 4. Find days that have hourly summaries but no daily summary
+    log::debug!("Step 4: Finding uncompacted days...");
+    let uncompacted_days: Vec<(String, String)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT ws.project_path, DATE(ws.period_start) as day
+        FROM work_summaries ws
+        LEFT JOIN work_summaries ds ON ds.user_id = ws.user_id
+            AND ds.project_path = ws.project_path
+            AND ds.scale = 'daily'
+            AND DATE(ds.period_start) = DATE(ws.period_start)
+        WHERE ws.user_id = ? AND ws.scale = 'hourly' AND ds.id IS NULL
+            AND ws.project_path NOT LIKE '%manual-projects%'
+        ORDER BY day
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to find uncompacted days: {}", e))?;
+
+    log::debug!("Found {} uncompacted days", uncompacted_days.len());
+
+    // 5. Also include today for re-compaction (daily summary updates as new hourly data arrives)
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    log::debug!("Step 5: Finding in-progress days (today: {})...", today);
+    let in_progress_days: Vec<(String,)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT ws.project_path
+        FROM work_summaries ws
+        WHERE ws.user_id = ? AND ws.scale = 'hourly' AND DATE(ws.period_start) = ?
+            AND ws.project_path NOT LIKE '%manual-projects%'
+        "#,
+    )
+    .bind(user_id)
+    .bind(&today)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to find in-progress days: {}", e))?;
+
+    log::debug!("Found {} in-progress day projects", in_progress_days.len());
+
+    // Merge uncompacted days + today's in-progress
+    let mut all_days = uncompacted_days;
+    for (project_path,) in in_progress_days {
+        let entry = (project_path, today.clone());
+        if !all_days.contains(&entry) {
+            all_days.push(entry);
+        }
+    }
+
+    log::info!("Step 6: Compacting {} daily summaries...", all_days.len());
+
+    for (project_path, day) in &all_days {
+        log::debug!("  Compacting daily: {} @ {}", project_path, day);
+        match compact_daily(pool, llm, user_id, project_path, day).await {
+            Ok(()) => {
+                log::debug!("    ✓ Daily compaction successful");
+                result.daily_compacted += 1;
+                // Track the latest compacted date
+                if result.latest_compacted_date.as_ref().map_or(true, |d| day > d) {
+                    result.latest_compacted_date = Some(day.clone());
+                }
+            }
+            Err(e) => {
+                log::warn!("    ✗ Daily compaction failed: {}", e);
+                result.errors.push(format!("daily {}/{}: {}", project_path, day, e));
+            }
+        }
+    }
+
+    // 6. Weekly compaction - find weeks with daily summaries but no weekly summary
+    // Use ISO week calculation: weeks start on Monday
+    log::debug!("Step 7: Finding uncompacted weeks...");
+    let now = chrono::Local::now();
+
+    // Find all (project_path, iso_week_start) combinations that have daily summaries but no weekly summary
+    let uncompacted_weeks: Vec<(String, String, String)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT
+            ws.project_path,
+            DATE(ws.period_start, 'weekday 0', '-6 days') as week_start,
+            DATE(ws.period_start, 'weekday 0', '+1 day') as week_end
+        FROM work_summaries ws
+        LEFT JOIN work_summaries ww ON ww.user_id = ws.user_id
+            AND ww.project_path = ws.project_path
+            AND ww.scale = 'weekly'
+            AND DATE(ww.period_start) = DATE(ws.period_start, 'weekday 0', '-6 days')
+        WHERE ws.user_id = ? AND ws.scale = 'daily' AND ww.id IS NULL
+            AND ws.project_path NOT LIKE '%manual-projects%'
+        ORDER BY week_start
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to find uncompacted weeks: {}", e))?;
+
+    log::debug!("Found {} uncompacted weeks", uncompacted_weeks.len());
+
+    // Also include the current week for re-compaction
+    let current_week_start = now.format("%Y-%m-%d").to_string();
+    let in_progress_weeks: Vec<(String,)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT ws.project_path
+        FROM work_summaries ws
+        WHERE ws.user_id = ? AND ws.scale = 'daily'
+            AND DATE(ws.period_start, 'weekday 0', '-6 days') = DATE(?, 'weekday 0', '-6 days')
+            AND ws.project_path NOT LIKE '%manual-projects%'
+        "#,
+    )
+    .bind(user_id)
+    .bind(&current_week_start)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to find in-progress weeks: {}", e))?;
+
+    // Merge uncompacted weeks + current week
+    let mut all_weeks = uncompacted_weeks;
+    for (project_path,) in in_progress_weeks {
+        // Calculate current week bounds
+        let week_start_query: Option<(String, String)> = sqlx::query_as(
+            "SELECT DATE(?, 'weekday 0', '-6 days'), DATE(?, 'weekday 0', '+1 day')"
+        )
+        .bind(&current_week_start)
+        .bind(&current_week_start)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten();
+
+        if let Some((ws, we)) = week_start_query {
+            let entry = (project_path, ws, we);
+            if !all_weeks.iter().any(|(p, s, _)| p == &entry.0 && s == &entry.1) {
+                all_weeks.push(entry);
+            }
+        }
+    }
+
+    log::info!("Step 8: Compacting {} weekly summaries...", all_weeks.len());
+
+    for (project_path, week_start, week_end) in &all_weeks {
+        log::debug!("  Compacting weekly: {} @ {} to {}", project_path, week_start, week_end);
+        let period_start = format!("{}T00:00:00+00:00", week_start);
+        let period_end = format!("{}T00:00:00+00:00", week_end);
+        match compact_period(pool, llm, user_id, Some(project_path), "weekly", &period_start, &period_end).await {
+            Ok(()) => {
+                log::debug!("    ✓ Weekly compaction successful");
+                result.weekly_compacted += 1;
+            }
+            Err(e) => {
+                log::warn!("    ✗ Weekly compaction failed: {}", e);
+                result.errors.push(format!("weekly {}/{}: {}", project_path, week_start, e));
+            }
+        }
+    }
+
+    // 7. Monthly compaction for the current month (re-compact while month is in progress)
+    log::debug!("Step 9: Finding projects for monthly compaction...");
+    let month_start = now.format("%Y-%m-01T00:00:00+00:00").to_string();
+    let month_end = {
+        let year = now.format("%Y").to_string().parse::<i32>().unwrap_or(2026);
+        let month = now.format("%m").to_string().parse::<u32>().unwrap_or(1);
+        let (next_year, next_month) = if month == 12 { (year + 1, 1) } else { (year, month + 1) };
+        format!("{:04}-{:02}-01T00:00:00+00:00", next_year, next_month)
+    };
+    log::debug!("  Month period: {} to {}", month_start, month_end);
+
+    // Find all projects that have weekly summaries this month
+    let monthly_projects: Vec<(String,)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT ws.project_path
+        FROM work_summaries ws
+        WHERE ws.user_id = ? AND ws.scale = 'weekly'
+            AND ws.period_start >= ? AND ws.period_start < ?
+            AND ws.project_path NOT LIKE '%manual-projects%'
+        "#,
+    )
+    .bind(user_id)
+    .bind(&month_start)
+    .bind(&month_end)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to find monthly projects: {}", e))?;
+
+    log::debug!("Found {} projects with weekly summaries for monthly compaction", monthly_projects.len());
+    log::info!("Step 10: Compacting {} monthly summaries...", monthly_projects.len());
+
+    for (project_path,) in &monthly_projects {
+        log::debug!("  Compacting monthly: {}", project_path);
+        match compact_period(pool, llm, user_id, Some(project_path), "monthly", &month_start, &month_end).await {
+            Ok(()) => {
+                log::debug!("    ✓ Monthly compaction successful");
+                result.monthly_compacted += 1;
+            }
+            Err(e) => {
+                log::warn!("    ✗ Monthly compaction failed: {}", e);
+                result.errors.push(format!("monthly {}: {}", project_path, e));
+            }
         }
     }
 
@@ -727,9 +1410,14 @@ async fn save_summary(
     source_snapshot_ids: &[&str],
     llm_model: Option<&str>,
 ) -> Result<(), String> {
+    log::trace!("save_summary: scale={}, project={:?}, period={} to {}",
+        scale, project_path, period_start, period_end);
+
     let id = Uuid::new_v4().to_string();
     let source_ids_json =
         serde_json::to_string(source_snapshot_ids).unwrap_or_else(|_| "[]".to_string());
+
+    log::trace!("  New summary ID: {}, source_ids: {} items", id, source_snapshot_ids.len());
 
     sqlx::query(
         r#"
@@ -762,6 +1450,8 @@ async fn save_summary(
     .execute(pool)
     .await
     .map_err(|e| format!("Failed to save {} summary: {}", scale, e))?;
+
+    log::trace!("  ✓ Summary saved successfully");
 
     Ok(())
 }

@@ -14,7 +14,7 @@ const mockConfigResponse = {
   jira_url: 'https://jira.example.com',
   auth_type: 'pat',
   llm_provider: 'openai',
-  llm_model: 'gpt-4o-mini',
+  llm_model: 'gpt-5-nano',
   llm_base_url: '',
   gitlab_url: 'https://gitlab.example.com',
 }

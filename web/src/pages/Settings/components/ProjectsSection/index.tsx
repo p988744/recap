@@ -1,17 +1,48 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Plus } from 'lucide-react'
-import { projects as projectsService } from '@/services'
-import type { ProjectInfo } from '@/types'
+import { projects as projectsService, worklog } from '@/services'
+import { antigravity } from '@/services/integrations'
+import type { ProjectInfo, AntigravityApiStatus } from '@/types'
+import type { CompactionResult } from '@/services/worklog'
+import type { BackgroundSyncStatus, SyncProgress } from '@/services/background-sync'
 import { ProjectList } from './ProjectList'
 import { ProjectSourcePanel } from './ProjectSourcePanel'
 import { ClaudePathSetting } from './ClaudePathSetting'
+import { AntigravityPathSetting } from './AntigravityPathSetting'
 import { AddProjectDialog } from './AddProjectDialog'
+import { DataSyncStatus, DataCompactionStatus } from './DataSyncStatus'
 
-export function ProjectsSection() {
+type PhaseState = 'idle' | 'syncing' | 'done'
+type CompactionPhase = 'idle' | 'hourly' | 'timeline' | 'done'
+
+interface ProjectsSectionProps {
+  syncStatus?: BackgroundSyncStatus | null
+  syncEnabled?: boolean
+  autoGenerateSummaries?: boolean
+  dataSyncState?: PhaseState
+  summaryState?: PhaseState
+  syncProgress?: SyncProgress | null
+  onTriggerSync?: () => void
+  onRefreshStatus?: () => Promise<void>
+}
+
+export function ProjectsSection({
+  syncStatus = null,
+  syncEnabled = false,
+  autoGenerateSummaries = true,
+  dataSyncState = 'idle',
+  summaryState = 'idle',
+  syncProgress = null,
+  onTriggerSync,
+  onRefreshStatus,
+}: ProjectsSectionProps) {
   const [projectList, setProjectList] = useState<ProjectInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedProject, setSelectedProject] = useState<string | null>(null)
   const [showAddDialog, setShowAddDialog] = useState(false)
+  const [compactionPhase, setCompactionPhase] = useState<CompactionPhase>('idle')
+  const [compactionResult, setCompactionResult] = useState<CompactionResult | null>(null)
+  const [antigravityStatus, setAntigravityStatus] = useState<AntigravityApiStatus | null>(null)
 
   const fetchProjects = useCallback(async () => {
     try {
@@ -27,6 +58,19 @@ export function ProjectsSection() {
   useEffect(() => {
     fetchProjects()
   }, [fetchProjects])
+
+  // Check Antigravity API status
+  useEffect(() => {
+    const checkAntigravity = async () => {
+      try {
+        const status = await antigravity.checkApiStatus()
+        setAntigravityStatus(status)
+      } catch {
+        setAntigravityStatus({ running: false, healthy: false })
+      }
+    }
+    checkAntigravity()
+  }, [])
 
   const handleToggleVisibility = useCallback(async (projectName: string, hidden: boolean) => {
     try {
@@ -55,6 +99,32 @@ export function ProjectsSection() {
     }
   }, [fetchProjects])
 
+  const handleTriggerCompaction = useCallback(async () => {
+    if (compactionPhase !== 'idle') return
+
+    try {
+      setCompactionPhase('hourly')
+      setCompactionResult(null)
+      const result = await worklog.triggerCompaction()
+      setCompactionResult(result)
+      setCompactionPhase('timeline')
+      // Brief delay to show timeline phase
+      await new Promise(resolve => setTimeout(resolve, 500))
+      setCompactionPhase('done')
+      console.log('Compaction complete:', result)
+      // Refresh backend status to update last_compaction_at
+      if (onRefreshStatus) {
+        await onRefreshStatus()
+      }
+      // Reset phase after showing done state, but keep result for display
+      setTimeout(() => setCompactionPhase('idle'), 2000)
+    } catch (err) {
+      console.error('Failed to trigger compaction:', err)
+      setCompactionPhase('idle')
+      setCompactionResult(null)
+    }
+  }, [compactionPhase, onRefreshStatus])
+
   if (loading) {
     return (
       <section className="animate-fade-up opacity-0 delay-1">
@@ -73,8 +143,34 @@ export function ProjectsSection() {
         管理專案設定。隱藏的專案不會出現在儀表板、報告和統計中。
       </p>
 
-      {/* Claude session path setting */}
-      <ClaudePathSetting />
+      {/* Data sync status */}
+      {onTriggerSync && (
+        <div className="space-y-3">
+          <DataSyncStatus
+            status={syncStatus}
+            enabled={syncEnabled}
+            dataSyncState={dataSyncState}
+            summaryState={summaryState}
+            syncProgress={syncProgress}
+            onTriggerSync={onTriggerSync}
+            antigravityConnected={antigravityStatus?.running && antigravityStatus?.healthy}
+          />
+          <DataCompactionStatus
+            status={syncStatus}
+            enabled={syncEnabled}
+            autoGenerateSummaries={autoGenerateSummaries}
+            compactionPhase={compactionPhase}
+            compactionResult={compactionResult}
+            onTriggerCompaction={handleTriggerCompaction}
+          />
+        </div>
+      )}
+
+      {/* Data source path settings */}
+      <div className="mt-4 space-y-3">
+        <ClaudePathSetting />
+        <AntigravityPathSetting />
+      </div>
 
       {/* Project list */}
       <div className="mt-6">

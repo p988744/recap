@@ -3,10 +3,13 @@
 //! This module contains all Tauri commands that replace the HTTP API.
 //! Commands are called directly from the frontend via `invoke()`.
 
+pub mod antigravity;
 pub mod auth;
 pub mod background_sync;
+pub mod batch_compaction;
 pub mod claude;
 pub mod config;
+pub mod danger_zone;
 pub mod gitlab;
 pub mod llm_usage;
 pub mod notification;

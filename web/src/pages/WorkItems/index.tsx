@@ -143,6 +143,8 @@ export function WorkItemsPage() {
               sessions={workItemsState.timelineSessions}
               date={workItemsState.timelineDate}
               onDateChange={workItemsState.setTimelineDate}
+              sources={workItemsState.timelineSources}
+              onSourcesChange={workItemsState.setTimelineSources}
             />
           )}
         </section>

@@ -14,6 +14,8 @@ export interface HourlyBreakdownItem {
   summary: string
   files_modified: string[]
   git_commits: GitCommitRef[]
+  /** Data source: "claude_code" or "antigravity" */
+  source: string
 }
 
 export interface ManualWorkItem {
@@ -22,6 +24,13 @@ export interface ManualWorkItem {
   description?: string
   hours: number
   date: string
+  project_path?: string
+  project_name?: string
+  jira_issue_key?: string
+  /** Start time for Gantt chart display (HH:MM format, e.g. "09:00") */
+  start_time?: string
+  /** End time for Gantt chart display (HH:MM format, e.g. "10:30") */
+  end_time?: string
 }
 
 export interface WorklogDayProject {

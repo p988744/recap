@@ -125,6 +125,12 @@ pub struct StatsQuery {
 
 // ==================== Timeline Types ====================
 
+#[derive(Debug, Deserialize)]
+pub struct TimelineQuery {
+    pub date: String,
+    pub sources: Option<Vec<String>>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct TimelineSession {
     pub id: String,
@@ -312,5 +318,29 @@ mod tests {
         let query: CommitCentricQuery = serde_json::from_str(json).unwrap();
         assert_eq!(query.date, "2024-01-15");
         assert_eq!(query.project_path, Some("/home/user/project".to_string()));
+    }
+
+    #[test]
+    fn test_timeline_query_with_sources() {
+        let json = r#"{"date": "2024-01-15", "sources": ["claude_code", "antigravity"]}"#;
+        let query: TimelineQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(query.date, "2024-01-15");
+        assert_eq!(query.sources, Some(vec!["claude_code".to_string(), "antigravity".to_string()]));
+    }
+
+    #[test]
+    fn test_timeline_query_without_sources() {
+        let json = r#"{"date": "2024-01-15"}"#;
+        let query: TimelineQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(query.date, "2024-01-15");
+        assert!(query.sources.is_none());
+    }
+
+    #[test]
+    fn test_timeline_query_empty_sources() {
+        let json = r#"{"date": "2024-01-15", "sources": []}"#;
+        let query: TimelineQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(query.date, "2024-01-15");
+        assert_eq!(query.sources, Some(vec![]));
     }
 }

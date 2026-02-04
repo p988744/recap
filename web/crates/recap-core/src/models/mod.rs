@@ -177,6 +177,7 @@ pub struct CreateWorkItem {
     pub jira_issue_title: Option<String>,
     pub category: Option<String>,
     pub tags: Option<Vec<String>>,
+    pub project_name: Option<String>,
 }
 
 /// Update work item request
@@ -192,6 +193,7 @@ pub struct UpdateWorkItem {
     pub tags: Option<Vec<String>>,
     pub synced_to_tempo: Option<bool>,
     pub tempo_worklog_id: Option<String>,
+    pub project_name: Option<String>,
 }
 
 /// Work item filters

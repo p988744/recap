@@ -11,13 +11,30 @@ use recap_core::models::WorkItem;
 
 use crate::commands::AppState;
 use super::types::{
-    AddManualProjectRequest, ClaudeCodeDirEntry, ClaudeSessionPathResponse,
-    ProjectDetail, ProjectDirectories, ProjectInfo, ProjectSourceInfo,
-    ProjectStats, SetProjectVisibilityRequest, WorkItemSummary,
+    AddManualProjectRequest, AntigravitySessionPathResponse, ClaudeCodeDirEntry,
+    ClaudeSessionPathResponse, ProjectDetail, ProjectDirectories, ProjectInfo,
+    ProjectSourceInfo, ProjectStats, SetProjectVisibilityRequest, WorkItemSummary,
 };
 
-/// Extract project name from work item title "[ProjectName] ..." pattern
-fn extract_project_name(title: &str) -> Option<String> {
+/// Check if a path is a manual project path (~/.recap/manual-projects/xxx)
+fn is_manual_project_path(path: &str) -> bool {
+    path.contains(".recap") && path.contains("manual-projects")
+}
+
+/// Extract project name from manual project path
+fn extract_project_name_from_manual_path(path: &str) -> Option<String> {
+    if is_manual_project_path(path) {
+        std::path::Path::new(path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_string())
+    } else {
+        None
+    }
+}
+
+/// Extract project name from work item title "[ProjectName] ..." pattern (legacy support)
+fn extract_project_name_from_title(title: &str) -> Option<String> {
     if title.starts_with('[') {
         title.split(']').next().map(|s| s.trim_start_matches('[').to_string())
     } else {
@@ -25,18 +42,29 @@ fn extract_project_name(title: &str) -> Option<String> {
     }
 }
 
-/// Derive project name from either title pattern or project_path
+/// Derive project name from project_path or title pattern
 fn derive_project_name(item: &WorkItem) -> String {
-    if let Some(name) = extract_project_name(&item.title) {
-        if !name.is_empty() {
+    // 1. First try to get from manual project path
+    if let Some(path) = &item.project_path {
+        if let Some(name) = extract_project_name_from_manual_path(path) {
             return name;
         }
     }
+
+    // 2. Then try to get from regular project_path (last segment)
     if let Some(path) = &item.project_path {
         if let Some(last) = std::path::Path::new(path).file_name().and_then(|n| n.to_str()) {
             return last.to_string();
         }
     }
+
+    // 3. Legacy: try to extract from title prefix [ProjectName]
+    if let Some(name) = extract_project_name_from_title(&item.title) {
+        if !name.is_empty() {
+            return name;
+        }
+    }
+
     "unknown".to_string()
 }
 
@@ -126,12 +154,18 @@ pub async fn list_projects(
                 .map(|(src, _)| src.clone())
                 .unwrap_or_else(|| "unknown".to_string());
 
+            // Collect all sources (sorted by count descending)
+            let mut all_sources: Vec<(String, i64)> = agg.sources.into_iter().collect();
+            all_sources.sort_by(|a, b| b.1.cmp(&a.1));
+            let sources: Vec<String> = all_sources.into_iter().map(|(src, _)| src).collect();
+
             let project_path = agg.project_path.or(pref_path);
 
             ProjectInfo {
                 project_name: name,
                 project_path,
                 source: primary_source,
+                sources,
                 work_item_count: agg.total_count,
                 total_hours: agg.total_hours,
                 latest_date: agg.latest_date,
@@ -142,7 +176,7 @@ pub async fn list_projects(
         .collect();
 
     // Add manually-added projects that don't appear in work items
-    let discovered_names: std::collections::HashSet<String> =
+    let mut discovered_names: std::collections::HashSet<String> =
         projects.iter().map(|p| p.project_name.clone()).collect();
 
     for (name, (hidden, display_name, pref_path, manual)) in &pref_map {
@@ -151,12 +185,48 @@ pub async fn list_projects(
                 project_name: name.clone(),
                 project_path: pref_path.clone(),
                 source: "manual".to_string(),
+                sources: vec!["manual".to_string()],
                 work_item_count: 0,
                 total_hours: 0.0,
                 latest_date: None,
                 hidden: *hidden,
                 display_name: display_name.clone(),
             });
+            discovered_names.insert(name.clone());
+        }
+    }
+
+    // Scan manual-projects directory for empty projects not yet discovered
+    if let Some(home) = dirs::home_dir() {
+        let manual_projects_dir = home.join(".recap").join("manual-projects");
+        if manual_projects_dir.exists() {
+            if let Ok(entries) = std::fs::read_dir(&manual_projects_dir) {
+                for entry in entries.flatten() {
+                    if entry.path().is_dir() {
+                        if let Some(name) = entry.file_name().to_str() {
+                            if !discovered_names.contains(name) {
+                                let project_path = entry.path().to_string_lossy().to_string();
+                                let (hidden, display_name) = pref_map
+                                    .get(name)
+                                    .map(|(h, d, _, _)| (*h, d.clone()))
+                                    .unwrap_or((false, None));
+                                projects.push(ProjectInfo {
+                                    project_name: name.to_string(),
+                                    project_path: Some(project_path),
+                                    source: "manual".to_string(),
+                                    sources: vec!["manual".to_string()],
+                                    work_item_count: 0,
+                                    total_hours: 0.0,
+                                    latest_date: None,
+                                    hidden,
+                                    display_name,
+                                });
+                                discovered_names.insert(name.to_string());
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -599,6 +669,64 @@ pub async fn update_claude_session_path(
     Ok("ok".to_string())
 }
 
+/// Get the user's Antigravity (Gemini Code) session path setting
+#[tauri::command]
+pub async fn get_antigravity_session_path(
+    state: State<'_, AppState>,
+    token: String,
+) -> Result<AntigravitySessionPathResponse, String> {
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
+
+    let row: Option<(Option<String>,)> = sqlx::query_as(
+        "SELECT antigravity_session_path FROM users WHERE id = ?",
+    )
+    .bind(&claims.sub)
+    .fetch_optional(&db.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let custom_path = row.and_then(|(p,)| p);
+    let home = dirs::home_dir().ok_or("Cannot find home directory")?;
+    let default_path = home.join(".gemini").join("antigravity").to_string_lossy().to_string();
+
+    let is_default = custom_path.is_none() || custom_path.as_deref() == Some(&default_path);
+    let path = custom_path.unwrap_or_else(|| default_path);
+
+    Ok(AntigravitySessionPathResponse {
+        path,
+        is_default,
+    })
+}
+
+/// Update the user's Antigravity (Gemini Code) session path
+#[tauri::command]
+pub async fn update_antigravity_session_path(
+    state: State<'_, AppState>,
+    token: String,
+    path: Option<String>,
+) -> Result<String, String> {
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
+
+    // Validate path exists and is a directory
+    if let Some(ref p) = path {
+        let path_buf = std::path::PathBuf::from(p);
+        if !path_buf.is_dir() {
+            return Err(format!("Path is not a valid directory: {}", p));
+        }
+    }
+
+    sqlx::query("UPDATE users SET antigravity_session_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(&path)
+        .bind(&claims.sub)
+        .execute(&db.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok("ok".to_string())
+}
+
 /// Add a manual project (non-Claude, requires git repo path)
 #[tauri::command]
 pub async fn add_manual_project(
@@ -681,4 +809,114 @@ pub async fn remove_manual_project(
     }
 
     Ok("ok".to_string())
+}
+
+/// Response for README content
+#[derive(Debug, serde::Serialize)]
+pub struct ProjectReadmeResponse {
+    pub content: Option<String>,
+    pub file_name: Option<String>,
+}
+
+/// Get the README content for a project
+#[tauri::command]
+pub async fn get_project_readme(
+    state: State<'_, AppState>,
+    token: String,
+    project_name: String,
+) -> Result<ProjectReadmeResponse, String> {
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
+
+    // Get git_repo_path from project_preferences first
+    let pref: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT project_path, git_repo_path FROM project_preferences WHERE user_id = ? AND project_name = ?",
+    )
+    .bind(&claims.sub)
+    .bind(&project_name)
+    .fetch_optional(&db.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let mut project_path: Option<String> = None;
+
+    if let Some((pp, grp)) = pref {
+        // Prefer git_repo_path, then project_path
+        project_path = grp.or(pp);
+    }
+
+    // Fall back to work items if no preference
+    if project_path.is_none() {
+        let items: Vec<WorkItem> = sqlx::query_as(
+            "SELECT * FROM work_items WHERE user_id = ? ORDER BY date DESC LIMIT 100",
+        )
+        .bind(&claims.sub)
+        .fetch_all(&db.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        project_path = items
+            .iter()
+            .filter(|item| derive_project_name(item) == project_name)
+            .find_map(|item| item.project_path.clone());
+    }
+
+    let Some(path) = project_path else {
+        return Ok(ProjectReadmeResponse {
+            content: None,
+            file_name: None,
+        });
+    };
+
+    // Find the git root directory
+    let mut dir = std::path::PathBuf::from(&path);
+    loop {
+        let git_dir = dir.join(".git");
+        if git_dir.exists() {
+            break;
+        }
+        if !dir.pop() {
+            // No .git found, use original path
+            dir = std::path::PathBuf::from(&path);
+            break;
+        }
+    }
+
+    // Try to find README file with various naming conventions
+    let readme_names = [
+        "README.md",
+        "readme.md",
+        "README.MD",
+        "Readme.md",
+        "README",
+        "readme",
+        "README.txt",
+        "readme.txt",
+        "README.rst",
+        "readme.rst",
+    ];
+
+    for name in readme_names {
+        let readme_path = dir.join(name);
+        if readme_path.exists() && readme_path.is_file() {
+            match std::fs::read_to_string(&readme_path) {
+                Ok(content) => {
+                    return Ok(ProjectReadmeResponse {
+                        content: Some(content),
+                        file_name: Some(name.to_string()),
+                    });
+                }
+                Err(e) => {
+                    log::warn!("Failed to read README file {:?}: {}", readme_path, e);
+                    continue;
+                }
+            }
+        }
+    }
+
+    // No README found
+    Ok(ProjectReadmeResponse {
+        content: None,
+        file_name: None,
+    })
 }

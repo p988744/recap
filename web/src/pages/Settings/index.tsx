@@ -1,4 +1,4 @@
-import { User, Bot, Settings, Sparkles, FolderGit2, Plug } from 'lucide-react'
+import { User, Bot, Settings, Sparkles, FolderGit2, Plug, AlertTriangle } from 'lucide-react'
 import {
   useSettings,
   useProfileForm,
@@ -13,6 +13,7 @@ import { SyncSection } from './components/SyncSection'
 import { ExportSection } from './components/ExportSection'
 import { AiSection } from './components/AiSection'
 import { AboutSection } from './components/AboutSection'
+import { DangerZoneSection } from './components/DangerZoneSection'
 
 const sections = [
   { id: 'profile' as const, label: '帳號', icon: User },
@@ -21,6 +22,7 @@ const sections = [
   { id: 'export' as const, label: '整合', icon: Plug },
   { id: 'ai' as const, label: 'AI 助手', icon: Sparkles },
   { id: 'about' as const, label: '關於', icon: Bot },
+  { id: 'danger' as const, label: '進階', icon: AlertTriangle },
 ]
 
 export function SettingsPage() {
@@ -93,7 +95,16 @@ export function SettingsPage() {
 
         {/* Projects Section */}
         {settings.activeSection === 'projects' && (
-          <ProjectsSection />
+          <ProjectsSection
+            syncStatus={syncForm.status}
+            syncEnabled={syncForm.enabled}
+            autoGenerateSummaries={syncForm.autoGenerateSummaries}
+            dataSyncState={syncForm.dataSyncState}
+            summaryState={syncForm.summaryState}
+            syncProgress={syncForm.syncProgress}
+            onTriggerSync={() => syncForm.handleTriggerSync(settings.setMessage)}
+            onRefreshStatus={syncForm.refreshStatus}
+          />
         )}
 
         {/* Sync + Preferences Section */}
@@ -103,13 +114,19 @@ export function SettingsPage() {
             setEnabled={syncForm.setEnabled}
             intervalMinutes={syncForm.intervalMinutes}
             setIntervalMinutes={syncForm.setIntervalMinutes}
-            status={syncForm.status}
-            dataSyncState={syncForm.dataSyncState}
-            summaryState={syncForm.summaryState}
+            compactionIntervalMinutes={syncForm.compactionIntervalMinutes}
+            setCompactionIntervalHours={syncForm.setCompactionIntervalHours}
+            autoGenerateSummaries={syncForm.autoGenerateSummaries}
+            setAutoGenerateSummaries={syncForm.setAutoGenerateSummaries}
+            syncGit={syncForm.syncGit}
+            setSyncGit={syncForm.setSyncGit}
+            syncClaude={syncForm.syncClaude}
+            setSyncClaude={syncForm.setSyncClaude}
+            syncAntigravity={syncForm.syncAntigravity}
+            setSyncAntigravity={syncForm.setSyncAntigravity}
             loading={syncForm.loading}
             saving={syncForm.saving}
             onSave={syncForm.handleSave}
-            onTriggerSync={syncForm.handleTriggerSync}
             dailyHours={preferencesForm.dailyHours}
             setDailyHours={preferencesForm.setDailyHours}
             normalizeHours={preferencesForm.normalizeHours}
@@ -172,6 +189,11 @@ export function SettingsPage() {
 
         {/* About Section */}
         {settings.activeSection === 'about' && <AboutSection />}
+
+        {/* Danger Zone Section */}
+        {settings.activeSection === 'danger' && (
+          <DangerZoneSection setMessage={settings.setMessage} />
+        )}
       </main>
     </div>
   )

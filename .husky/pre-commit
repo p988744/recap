@@ -1,0 +1,21 @@
+#!/bin/sh
+
+# 檢查 package.json 是否為有效 JSON
+if ! node -e "require('./web/package.json')" 2>/dev/null; then
+    echo "❌ Error: web/package.json is invalid or empty"
+    exit 1
+fi
+
+# 檢查 Cargo.toml 是否存在且非空
+if [ ! -s "web/src-tauri/Cargo.toml" ]; then
+    echo "❌ Error: web/src-tauri/Cargo.toml is missing or empty"
+    exit 1
+fi
+
+# 檢查 tauri.conf.json 是否為有效 JSON
+if ! node -e "require('./web/src-tauri/tauri.conf.json')" 2>/dev/null; then
+    echo "❌ Error: web/src-tauri/tauri.conf.json is invalid or empty"
+    exit 1
+fi
+
+echo "✓ Pre-commit checks passed"

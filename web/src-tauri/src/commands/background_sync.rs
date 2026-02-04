@@ -6,7 +6,17 @@ use super::AppState;
 use recap_core::auth::verify_token;
 use crate::services::background_sync::{BackgroundSyncConfig, SyncOperationResult, SyncServiceStatus};
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{Emitter, State, Window};
+
+/// Progress event payload for sync operations
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncProgress {
+    pub phase: String,           // "sources", "snapshots", "compaction", "complete"
+    pub current_source: Option<String>,
+    pub current: usize,
+    pub total: usize,
+    pub message: String,
+}
 
 // =============================================================================
 // Request/Response Types
@@ -16,20 +26,26 @@ use tauri::State;
 pub struct UpdateBackgroundSyncConfigRequest {
     pub enabled: Option<bool>,
     pub interval_minutes: Option<u32>,
+    pub compaction_interval_minutes: Option<u32>,
     pub sync_git: Option<bool>,
     pub sync_claude: Option<bool>,
+    pub sync_antigravity: Option<bool>,
     pub sync_gitlab: Option<bool>,
     pub sync_jira: Option<bool>,
+    pub auto_generate_summaries: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct BackgroundSyncConfigResponse {
     pub enabled: bool,
     pub interval_minutes: u32,
+    pub compaction_interval_minutes: u32,
     pub sync_git: bool,
     pub sync_claude: bool,
+    pub sync_antigravity: bool,
     pub sync_gitlab: bool,
     pub sync_jira: bool,
+    pub auto_generate_summaries: bool,
 }
 
 impl From<BackgroundSyncConfig> for BackgroundSyncConfigResponse {
@@ -37,10 +53,13 @@ impl From<BackgroundSyncConfig> for BackgroundSyncConfigResponse {
         Self {
             enabled: config.enabled,
             interval_minutes: config.interval_minutes,
+            compaction_interval_minutes: config.compaction_interval_minutes,
             sync_git: config.sync_git,
             sync_claude: config.sync_claude,
+            sync_antigravity: config.sync_antigravity,
             sync_gitlab: config.sync_gitlab,
             sync_jira: config.sync_jira,
+            auto_generate_summaries: config.auto_generate_summaries,
         }
     }
 }
@@ -49,8 +68,11 @@ impl From<BackgroundSyncConfig> for BackgroundSyncConfigResponse {
 pub struct BackgroundSyncStatusResponse {
     pub is_running: bool,
     pub is_syncing: bool,
+    pub is_compacting: bool,
     pub last_sync_at: Option<String>,
+    pub last_compaction_at: Option<String>,
     pub next_sync_at: Option<String>,
+    pub next_compaction_at: Option<String>,
     pub last_result: Option<String>,
     pub last_error: Option<String>,
 }
@@ -60,8 +82,11 @@ impl From<SyncServiceStatus> for BackgroundSyncStatusResponse {
         Self {
             is_running: status.is_running,
             is_syncing: status.is_syncing,
+            is_compacting: status.is_compacting,
             last_sync_at: status.last_sync_at,
+            last_compaction_at: status.last_compaction_at,
             next_sync_at: status.next_sync_at,
+            next_compaction_at: status.next_compaction_at,
             last_result: status.last_result,
             last_error: status.last_error,
         }
@@ -123,15 +148,23 @@ pub async fn update_background_sync_config(
     let new_config = BackgroundSyncConfig {
         enabled: config.enabled.unwrap_or(current.enabled),
         interval_minutes: config.interval_minutes.unwrap_or(current.interval_minutes),
+        compaction_interval_minutes: config.compaction_interval_minutes.unwrap_or(current.compaction_interval_minutes),
         sync_git: config.sync_git.unwrap_or(current.sync_git),
         sync_claude: config.sync_claude.unwrap_or(current.sync_claude),
+        sync_antigravity: config.sync_antigravity.unwrap_or(current.sync_antigravity),
         sync_gitlab: config.sync_gitlab.unwrap_or(current.sync_gitlab),
         sync_jira: config.sync_jira.unwrap_or(current.sync_jira),
+        auto_generate_summaries: config.auto_generate_summaries.unwrap_or(current.auto_generate_summaries),
     };
 
-    // Validate interval
+    // Validate data sync interval
     if ![5, 15, 30, 60].contains(&new_config.interval_minutes) {
-        return Err("間隔時間必須是 5, 15, 30 或 60 分鐘".to_string());
+        return Err("資料同步間隔必須是 5, 15, 30 或 60 分鐘".to_string());
+    }
+
+    // Validate compaction interval (30min, 1h, 3h, 6h, 12h, 24h)
+    if ![30, 60, 180, 360, 720, 1440].contains(&new_config.compaction_interval_minutes) {
+        return Err("壓縮間隔必須是 30 分鐘、1、3、6、12 或 24 小時".to_string());
     }
 
     state.background_sync.update_config(new_config.clone()).await;
@@ -159,9 +192,13 @@ pub async fn start_background_sync(
     token: String,
 ) -> Result<(), String> {
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let user_id = claims.sub.clone();
 
     // Set user ID for sync operations
-    state.background_sync.set_user_id(claims.sub).await;
+    state.background_sync.set_user_id(user_id.clone()).await;
+
+    // Initialize timestamps from database (restore last known sync/compaction times)
+    state.background_sync.initialize_timestamps_from_db(&user_id).await;
 
     state.background_sync.start().await;
     log::info!("Background sync service started");
@@ -205,6 +242,235 @@ pub async fn trigger_background_sync(
     })
 }
 
+/// Trigger an immediate sync with progress reporting.
+/// Emits "sync-progress" events to the frontend.
+///
+/// Uses the service lifecycle to ensure proper state management:
+/// 1. Calls begin_sync_operation() at start
+/// 2. Calls complete_sync_operation() at end (always, even on error)
+#[tauri::command]
+pub async fn trigger_sync_with_progress(
+    state: State<'_, AppState>,
+    window: Window,
+    token: String,
+) -> Result<TriggerSyncResponse, String> {
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let user_id = claims.sub.clone();
+
+    // Ensure user ID is set
+    state.background_sync.set_user_id(user_id.clone()).await;
+
+    // Begin sync operation (lifecycle: Idle -> Syncing)
+    state.background_sync.begin_sync_operation().await
+        .map_err(|e| e.to_string())?;
+
+    // Helper to emit progress
+    let emit = |phase: &str, source: Option<&str>, current: usize, total: usize, message: &str| {
+        let _ = window.emit("sync-progress", SyncProgress {
+            phase: phase.to_string(),
+            current_source: source.map(|s| s.to_string()),
+            current,
+            total,
+            message: message.to_string(),
+        });
+    };
+
+    // Clone pool immediately
+    let pool = {
+        let db = state.db.lock().await;
+        db.pool.clone()
+    };
+
+    let config = state.background_sync.get_config().await;
+    let sync_config = config.to_sync_config();
+
+    // Phase 1: Sync all enabled sources
+    emit("sources", None, 0, 100, "正在同步資料來源...");
+
+    let sources = recap_core::services::sources::get_enabled_sources(&sync_config).await;
+    let total_sources = sources.len();
+    let mut results = Vec::new();
+
+    for (idx, source) in sources.iter().enumerate() {
+        emit(
+            "sources",
+            Some(source.display_name()),
+            idx + 1,
+            total_sources,
+            &format!("正在同步 {}...", source.display_name()),
+        );
+
+        match source.sync_sessions(&pool, &user_id).await {
+            Ok(source_result) => {
+                let result = SyncOperationResult::from(source_result);
+                log::info!(
+                    "{} sync complete: {} items",
+                    source.display_name(),
+                    result.items_synced
+                );
+                results.push(result);
+            }
+            Err(e) => {
+                log::error!("{} sync error: {}", source.display_name(), e);
+                results.push(SyncOperationResult {
+                    source: source.source_name().to_string(),
+                    success: false,
+                    error: Some(e),
+                    ..Default::default()
+                });
+            }
+        }
+    }
+
+    // Phase 2: Capture hourly snapshots
+    emit("snapshots", None, 0, 100, "正在捕獲快照...");
+
+    if config.sync_claude {
+        let projects = recap_core::services::SyncService::discover_project_paths();
+        let total_projects = projects.len();
+        let mut snapshot_count = 0;
+
+        for (idx, project) in projects.iter().enumerate() {
+            emit(
+                "snapshots",
+                Some(&project.name),
+                idx + 1,
+                total_projects,
+                &format!("捕獲快照: {}", project.name),
+            );
+
+            match recap_core::services::snapshot::capture_snapshots_for_project(
+                &pool,
+                &user_id,
+                project,
+            )
+            .await
+            {
+                Ok(n) => snapshot_count += n,
+                Err(e) => log::warn!("Snapshot capture error for {}: {}", project.name, e),
+            }
+        }
+
+        if snapshot_count > 0 {
+            log::info!("Captured {} hourly snapshots", snapshot_count);
+        }
+    }
+
+    // Phase 3: Run compaction cycle
+    emit("compaction", None, 0, 100, "正在處理摘要...");
+
+    if config.sync_claude {
+        let llm = recap_core::services::llm::create_llm_service(&pool, &user_id)
+            .await
+            .ok();
+
+        // Find uncompacted items count for progress
+        let uncompacted: Vec<(String, String)> = sqlx::query_as(
+            r#"
+            SELECT DISTINCT s.project_path, s.hour_bucket
+            FROM snapshot_raw_data s
+            LEFT JOIN work_summaries ws ON ws.user_id = s.user_id
+                AND ws.project_path = s.project_path
+                AND ws.scale = 'hourly'
+                AND ws.period_start = s.hour_bucket
+            WHERE s.user_id = ? AND ws.id IS NULL
+            ORDER BY s.hour_bucket
+            "#,
+        )
+        .bind(&user_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap_or_default();
+
+        let total_items = uncompacted.len();
+
+        for (idx, (project_path, hour_bucket)) in uncompacted.iter().enumerate() {
+            if idx % 5 == 0 || idx == total_items - 1 {
+                emit(
+                    "compaction",
+                    None,
+                    idx + 1,
+                    total_items,
+                    &format!("處理摘要 ({}/{})", idx + 1, total_items),
+                );
+            }
+
+            let _ = recap_core::services::compaction::compact_hourly(
+                &pool,
+                llm.as_ref(),
+                &user_id,
+                project_path,
+                hour_bucket,
+            )
+            .await;
+        }
+
+        // Daily compaction
+        emit("compaction", None, 100, 100, "處理每日摘要...");
+
+        match recap_core::services::compaction::run_compaction_cycle(&pool, llm.as_ref(), &user_id).await {
+            Ok(cr) => {
+                if cr.hourly_compacted > 0 || cr.daily_compacted > 0 {
+                    log::info!(
+                        "Compaction: {} hourly, {} daily summaries",
+                        cr.hourly_compacted,
+                        cr.daily_compacted
+                    );
+                }
+            }
+            Err(e) => log::warn!("Compaction cycle error: {}", e),
+        }
+    }
+
+    // Phase 4: Generate timeline summaries for completed periods
+    if config.auto_generate_summaries {
+        emit("summaries", None, 0, 100, "生成時間軸摘要...");
+
+        let time_units = ["week", "month", "quarter", "year"];
+        match crate::commands::projects::summaries::generate_all_completed_summaries(
+            &pool,
+            &user_id,
+            &time_units,
+        )
+        .await
+        {
+            Ok(count) => {
+                if count > 0 {
+                    emit("summaries", None, 100, 100, &format!("已生成 {} 個時間軸摘要", count));
+                    log::info!("Generated {} timeline summaries", count);
+                } else {
+                    emit("summaries", None, 100, 100, "時間軸摘要已是最新");
+                }
+            }
+            Err(e) => {
+                emit("summaries", None, 100, 100, &format!("摘要生成錯誤: {}", e));
+                log::warn!("Timeline summary generation error: {}", e);
+            }
+        }
+    }
+
+    // Complete
+    let total_items: i32 = results.iter().map(|r| r.items_synced).sum();
+    emit(
+        "complete",
+        None,
+        100,
+        100,
+        &format!("同步完成，共處理 {} 筆資料", total_items),
+    );
+
+    // Complete sync operation (lifecycle: Syncing -> Idle)
+    // This automatically records results and updates last_sync_at
+    state.background_sync.complete_sync_operation(&results).await;
+
+    log::info!("Manual sync with progress triggered, {} items synced", total_items);
+
+    Ok(TriggerSyncResponse {
+        results: results.into_iter().map(|r| r.into()).collect(),
+        total_items,
+    })
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -218,19 +484,24 @@ mod tests {
         let config = BackgroundSyncConfig {
             enabled: true,
             interval_minutes: 15,
+            compaction_interval_minutes: 30,
             sync_git: true,
             sync_claude: true,
+            sync_antigravity: true,
             sync_gitlab: false,
             sync_jira: false,
+            auto_generate_summaries: true,
         };
 
         let response: BackgroundSyncConfigResponse = config.into();
         assert!(response.enabled);
         assert_eq!(response.interval_minutes, 15);
+        assert_eq!(response.compaction_interval_minutes, 30);
         assert!(response.sync_git);
         assert!(response.sync_claude);
         assert!(!response.sync_gitlab);
         assert!(!response.sync_jira);
+        assert!(response.auto_generate_summaries);
     }
 
     #[test]
@@ -238,8 +509,11 @@ mod tests {
         let status = SyncServiceStatus {
             is_running: true,
             is_syncing: false,
+            is_compacting: false,
             last_sync_at: Some("2026-01-16T12:00:00Z".to_string()),
+            last_compaction_at: Some("2026-01-16T10:00:00Z".to_string()),
             next_sync_at: Some("2026-01-16T12:15:00Z".to_string()),
+            next_compaction_at: Some("2026-01-16T16:00:00Z".to_string()),
             last_result: Some("成功同步 5 筆項目".to_string()),
             last_error: None,
         };
@@ -247,7 +521,10 @@ mod tests {
         let response: BackgroundSyncStatusResponse = status.into();
         assert!(response.is_running);
         assert!(!response.is_syncing);
+        assert!(!response.is_compacting);
         assert_eq!(response.last_sync_at, Some("2026-01-16T12:00:00Z".to_string()));
+        assert_eq!(response.last_compaction_at, Some("2026-01-16T10:00:00Z".to_string()));
+        assert_eq!(response.next_compaction_at, Some("2026-01-16T16:00:00Z".to_string()));
     }
 
     #[test]

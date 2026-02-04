@@ -4,8 +4,8 @@ import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { Layout } from '@/components/Layout'
 import { LoginPage } from '@/pages/Login'
 import { OnboardingPage } from '@/pages/Onboarding'
-import { Dashboard } from '@/pages/Dashboard'
-import { WorklogPage } from '@/pages/Worklog'
+import { ThisWeekPage, DayDetailPage, ProjectDayDetailPage } from '@/pages/ThisWeek'
+import { ProjectsPage, TimelinePeriodDetailPage } from '@/pages/Projects'
 import { SettingsPage } from '@/pages/Settings'
 
 function App() {
@@ -26,8 +26,11 @@ function App() {
               </ProtectedRoute>
             }
           >
-            <Route index element={<Dashboard />} />
-            <Route path="work-items" element={<WorklogPage />} />
+            <Route index element={<ThisWeekPage />} />
+            <Route path="day/:date" element={<DayDetailPage />} />
+            <Route path="day/:date/:projectPath" element={<ProjectDayDetailPage />} />
+            <Route path="projects" element={<ProjectsPage />} />
+            <Route path="projects/:projectName/period" element={<TimelinePeriodDetailPage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>
         </Routes>

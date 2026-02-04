@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import {
   Save,
   Loader2,
@@ -8,6 +8,7 @@ import {
   Eye,
   EyeOff,
   RefreshCw,
+  Zap,
 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -19,6 +20,7 @@ import { useLlmUsage } from '@/pages/LlmUsage/hooks/useLlmUsage'
 import { UsageSummary } from '@/pages/LlmUsage/components/UsageSummary'
 import { DailyChart } from '@/pages/LlmUsage/components/DailyChart'
 import { UsageLogs } from '@/pages/LlmUsage/components/UsageLogs'
+import { config as configService } from '@/services'
 
 interface AiSectionProps {
   config: ConfigResponse | null
@@ -42,7 +44,7 @@ interface AiSectionProps {
 }
 
 const LLM_PROVIDERS = [
-  { id: 'openai', label: 'OpenAI', desc: 'GPT-4o, GPT-4 等' },
+  { id: 'openai', label: 'OpenAI', desc: 'GPT-5 系列' },
   { id: 'anthropic', label: 'Anthropic', desc: 'Claude 系列' },
   { id: 'ollama', label: 'Ollama', desc: '本地部署' },
   { id: 'openai-compatible', label: '相容 API', desc: '自架 OpenAI 相容服務' },
@@ -66,8 +68,30 @@ export function AiSection({
   refreshConfig,
 }: AiSectionProps) {
   const [rangeDays, setRangeDays] = useState(30)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string; latency?: number } | null>(null)
   const usageRange = getUsageDateRange(rangeDays)
   const { stats, daily, logs, loading: usageLoading, refresh } = useLlmUsage(usageRange.start, usageRange.end)
+
+  const handleTestConnection = useCallback(async () => {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const result = await configService.testLlmConnection()
+      setTestResult({
+        success: result.success,
+        message: result.message,
+        latency: result.latency_ms,
+      })
+    } catch (err) {
+      setTestResult({
+        success: false,
+        message: err instanceof Error ? err.message : '連線測試失敗',
+      })
+    } finally {
+      setTesting(false)
+    }
+  }, [])
 
   return (
     <section className="animate-fade-up opacity-0 delay-1 space-y-8">
@@ -125,7 +149,7 @@ export function AiSection({
               value={llmModel}
               onChange={(e) => setLlmModel(e.target.value)}
               placeholder={
-                llmProvider === 'openai' ? 'gpt-4o-mini' :
+                llmProvider === 'openai' ? 'gpt-5-nano' :
                 llmProvider === 'anthropic' ? 'claude-3-5-sonnet-20241022' :
                 llmProvider === 'ollama' ? 'llama3.2' : '輸入模型名稱'
               }
@@ -173,11 +197,41 @@ export function AiSection({
             </div>
           )}
 
-          <div className="pt-4 border-t border-border">
-            <Button onClick={() => onSaveLlm(setMessage, refreshConfig)} disabled={savingLlm}>
-              {savingLlm ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              儲存 LLM 設定
-            </Button>
+          <div className="pt-4 border-t border-border space-y-3">
+            <div className="flex items-center gap-2">
+              <Button onClick={() => onSaveLlm(setMessage, refreshConfig)} disabled={savingLlm}>
+                {savingLlm ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                儲存 LLM 設定
+              </Button>
+              <Button
+                variant="outline"
+                onClick={handleTestConnection}
+                disabled={testing || !config?.llm_configured}
+              >
+                {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                測試連線
+              </Button>
+            </div>
+
+            {testResult && (
+              <div className={`p-3 text-sm rounded-lg flex items-start gap-2 ${
+                testResult.success
+                  ? 'bg-sage/10 text-sage border border-sage/20'
+                  : 'bg-destructive/10 text-destructive border border-destructive/20'
+              }`}>
+                {testResult.success ? (
+                  <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
+                ) : (
+                  <XCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                )}
+                <div>
+                  <p>{testResult.message}</p>
+                  {testResult.success && testResult.latency && (
+                    <p className="text-xs opacity-70 mt-1">延遲: {testResult.latency}ms</p>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </Card>

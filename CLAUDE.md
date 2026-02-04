@@ -193,6 +193,14 @@ cd web && cargo tauri dev
 - **Error Messages**: Return user-friendly error messages from commands
 - **Cross-Platform**: Use `Path` API and `dirs` crate for all path operations — never hardcode `/` as path separator
 
+## Technical Documentation
+
+| 文件 | 說明 |
+|------|------|
+| [`web/docs/DATA_SOURCES.md`](web/docs/DATA_SOURCES.md) | 資料來源架構：Claude Code 和 Antigravity 的資料流程、資料表關係、Session ID 格式歷史、常見問題排查 |
+
+---
+
 ## Team Collaboration & Git Worktree Strategy
 
 ### Team Roles
@@ -875,3 +883,110 @@ Closes #1   # 合併後自動關閉 Issue
 Refs #2     # 僅關聯，不自動關閉
 ```
 > 更新日期：2026-01-16
+
+---
+
+## Development Notes & Troubleshooting
+
+### 重要參考文件
+
+遇到特定模組問題時，請先閱讀相關文件：
+
+| 問題類型 | 參考文件 |
+|----------|----------|
+| Git commit 顯示問題 | `web/docs/DEVELOPMENT_NOTES.md` |
+| 資料同步流程 | `web/docs/DATA_SOURCES.md` |
+
+### Git Commit 資料流程 (快速參考)
+
+```
+Session Files → snapshot.rs (enrich) → snapshot_raw_data (完整 JSON)
+                                              ↓
+Frontend ← snapshots.rs (API) ← work_summaries + snapshot fallback
+```
+
+**關鍵函數：**
+- `enrich_buckets_with_git_commits` - 捕獲時添加 commits
+- `resolve_git_root` - 找到真正的 .git 目錄
+- `get_hourly_breakdown` - API 回傳小時明細
+
+**常見問題：**
+1. **Commits 不顯示** → 檢查 `snapshot_raw_data.git_commits` 是否有資料
+2. **時間格式錯誤** → 同時處理 RFC3339 和 NaiveDateTime
+3. **找不到 git repo** → 使用 `resolve_git_root()` 而非直接用 project_path
+
+### 常用除錯指令
+
+```bash
+# 檢查 snapshot 的 git commits
+sqlite3 ~/Library/Application\ Support/com.recap.Recap/recap.db \
+  "SELECT hour_bucket, git_commits FROM snapshot_raw_data WHERE project_path LIKE '%projectName%'"
+
+# 檢查 work_summaries
+sqlite3 ~/Library/Application\ Support/com.recap.Recap/recap.db \
+  "SELECT period_start, git_commits_summary FROM work_summaries WHERE scale = 'hourly'"
+```
+
+### OpenAI API 整合注意事項
+
+#### GPT-5 系列模型需使用 Responses API
+
+**問題背景：** GPT-5 系列模型（如 gpt-5-mini）使用 Chat Completions API 時會回傳空白或簡短回應（如 "OK"），無法正常生成摘要。
+
+**根本原因：**
+1. GPT-5 系列使用 **Reasoning Tokens** 進行推理，會先消耗 token 額度
+2. 預設 token 限制不足，導致推理完後沒有空間輸出實際內容
+3. 需要使用新的 **Responses API** 而非 Chat Completions API
+
+**API 差異對照：**
+
+| 項目 | Chat Completions API | Responses API |
+|------|---------------------|---------------|
+| Endpoint | `/v1/chat/completions` | `/v1/responses` |
+| 輸入格式 | `messages` 陣列 | `input` 字串 |
+| 輸出格式 | `choices[0].message.content` | `output` 陣列（含 reasoning + message） |
+| Token 參數 | `max_tokens` | `max_output_tokens` |
+
+**實作要點：**
+
+```rust
+// 1. 判斷是否為 GPT-5 系列
+fn uses_responses_api(model: &str) -> bool {
+    model.starts_with("gpt-5")
+}
+
+// 2. Responses API Request 結構
+#[derive(Serialize)]
+struct ResponsesApiRequest {
+    model: String,
+    input: String,
+    max_output_tokens: Option<u32>,  // 建議設 1000+
+    text: Option<ResponsesTextConfig>,
+}
+
+// 3. 解析 Response - 需處理 reasoning 和 message 兩種類型
+for item in result.output {
+    if item.item_type == "message" {
+        // 從 content 中提取 text
+    }
+}
+```
+
+**Fallback 機制：**
+- 偵測 trivial response（< 20 字元如 "OK"、"好的"）
+- 自動 fallback 到規則式摘要生成
+- 避免因 LLM 異常導致功能完全失效
+
+**相關檔案：**
+- `crates/recap-core/src/services/llm.rs` - LLM 服務實作
+- `complete_openai_responses_api()` - Responses API 實作
+- `uses_responses_api()` - 模型判斷函數
+
+**除錯技巧：**
+```bash
+# 檢查 LLM 生成的摘要
+sqlite3 ~/Library/Application\ Support/com.recap.Recap/recap.db \
+  "SELECT project_path, summary_source, LENGTH(summary) FROM work_summaries WHERE scale = 'daily'"
+```
+
+> 更新日期：2026-02-03

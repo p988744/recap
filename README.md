@@ -6,12 +6,14 @@
 
 ## 功能特點
 
-- **多來源自動收集** - 從 Git commits、Claude Code sessions、GitLab 自動追蹤工作
+- **多來源自動收集** - 從 Git commits、Claude Code sessions、GitLab、Antigravity 自動追蹤工作
+- **本週總覽 (This Week)** - Gantt 甘特圖顯示每日工作時段，熱力圖一覽整週工作密度
 - **Worklog 每日/每週總覽** - 按日期分組檢視工作紀錄，支援每小時明細展開
 - **LLM 智能彙整** - 自動將工作描述摘要為簡潔的 Tempo worklog 描述
 - **工時正規化** - 自動將每日工時調整為標準工時
 - **Jira Tempo 整合** - 單筆、單日、整週匯出工時到 Jira Tempo，含預覽與 Issue 驗證
 - **多種檢視模式** - 時間軸、專案分組、列表檢視
+- **來源篩選** - 依資料來源（Git / Claude Code / Antigravity）篩選顯示
 - **Excel 報表匯出** - 匯出工作報表
 - **跨平台支援** - macOS (Apple Silicon / Intel)、Windows、Linux
 
@@ -79,6 +81,7 @@ cargo tauri build
 
 - **Git Repos** - 選擇要追蹤的本地 Git 倉庫
 - **Claude Code** - 選擇要追蹤的 Claude Code 專案
+- **Antigravity** - 設定 Antigravity 連線（自動同步 AI 輔助開發紀錄）
 - **GitLab** - 設定 GitLab URL 和 Access Token
 - **Jira / Tempo** - 設定 Jira URL、PAT 和 Tempo Token
 - **AI (LLM)** - 設定 LLM Provider（用於工作描述摘要）
@@ -87,17 +90,25 @@ cargo tauri build
 
 在 **Dashboard** 頁面：
 - 點擊「Sync All」自動同步所有來源
-- 或個別同步 Claude Code / GitLab
+- 或個別同步 Claude Code / GitLab / Antigravity
 
-### 3. Worklog（每日工時）
+### 3. 本週總覽 (This Week)
+
+在 **This Week** 頁面：
+- **熱力圖** - 一週七天的工作密度總覽，點擊可查看當日詳情
+- **Gantt 甘特圖** - 視覺化每日工作時段分布，含 Git commit 時間標記
+- **可收合日卡片** - 展開查看每日專案明細
+- **來源篩選** - 依 Git / Claude Code / Antigravity 篩選顯示
+
+### 4. Worklog（每日工時）
 
 在 **Worklog** 頁面：
-- 按日期檢視每日工作紀錄（Git commits + Claude Code sessions）
+- 按日期檢視每日工作紀錄（Git commits + Claude Code sessions + Antigravity）
 - 展開查看每小時明細
 - 手動新增工作項目
 - 單筆匯出、單日批次匯出、整週匯出到 Tempo
 
-### 4. 匯出到 Tempo
+### 5. 匯出到 Tempo
 
 在 Worklog 頁面：
 - **單筆匯出** - 點擊專案卡片上的「Export」按鈕
@@ -106,14 +117,14 @@ cargo tauri build
 - 每次匯出前 LLM 會自動摘要工作描述
 - 支援預覽（Preview）確認後再正式匯出
 
-### 5. 管理工作項目
+### 6. 管理工作項目
 
 在 **Work Items** 頁面：
 - **Timeline** - 時間軸檢視，顯示每日工作時段
 - **Grouped** - 按專案和 Jira Issue 分組
 - **List** - 傳統列表檢視
 
-### 6. 匯出報表
+### 7. 匯出報表
 
 在 **Reports** 頁面：
 - 選擇日期範圍
@@ -130,6 +141,7 @@ recap/
 │   │   ├── components/ui/    # shadcn/ui 基礎元件
 │   │   ├── pages/            # 頁面（每頁拆為 components/ + hooks/）
 │   │   │   ├── Dashboard/
+│   │   │   ├── ThisWeek/     # 本週總覽（Gantt + 熱力圖）
 │   │   │   ├── Worklog/      # 工時總覽（含 Tempo 匯出）
 │   │   │   ├── WorkItems/
 │   │   │   ├── Reports/

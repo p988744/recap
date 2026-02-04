@@ -122,6 +122,12 @@ export type {
   SummarizeResult,
   SyncProjectsRequest,
   ClaudeSyncResult,
+  // Antigravity (Gemini Code)
+  AntigravityApiStatus,
+  AntigravitySession,
+  AntigravityProject,
+  AntigravitySyncProjectsRequest,
+  AntigravitySyncResult,
   // Teams (Legacy)
   TeamMember,
   Team,
@@ -172,4 +178,23 @@ export type {
   ProjectDirectories,
   AddManualProjectRequest,
   ClaudeSessionPathResponse,
+  AntigravitySessionPathResponse,
+  // Project descriptions & summaries
+  ProjectDescription,
+  UpdateProjectDescriptionRequest,
+  ProjectSummaryResponse,
+  GenerateSummaryRequest,
+  SummaryFreshness,
+  // Timeline types
+  TimeUnit,
+  TimelineGroup,
+  TimelineSessionDetail,
+  TimelineCommitDetail,
+  ProjectTimelineResponse,
+  ProjectTimelineRequest,
+  // Git diff types
+  CommitFileChange,
+  CommitStats,
+  CommitDiffResponse,
+  GetCommitDiffRequest,
 } from './projects'

@@ -12,6 +12,17 @@ pub struct LlmConfig {
     pub base_url: Option<String>,
 }
 
+/// Result of testing LLM connection
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmTestResult {
+    pub success: bool,
+    pub message: String,
+    pub latency_ms: i64,
+    pub prompt_tokens: Option<i64>,
+    pub completion_tokens: Option<i64>,
+    pub model_response: Option<String>,
+}
+
 /// Token usage record from an LLM API call
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmUsageRecord {
@@ -26,18 +37,132 @@ pub struct LlmUsageRecord {
     pub error_message: Option<String>,
 }
 
+/// OpenAI request for newer models (gpt-5-nano, o1, o3) that don't support temperature
 #[derive(Debug, Serialize)]
-struct OpenAIRequest {
+struct OpenAIRequestNewNoTemp {
     model: String,
-    messages: Vec<OpenAIMessage>,
+    messages: Vec<OpenAIMessageRequest>,
+    max_completion_tokens: u32,
+}
+
+/// OpenAI request for newer models (gpt-4.1, gpt-4o) that use max_completion_tokens with temperature
+#[derive(Debug, Serialize)]
+struct OpenAIRequestNew {
+    model: String,
+    messages: Vec<OpenAIMessageRequest>,
+    max_completion_tokens: u32,
+    temperature: f32,
+}
+
+/// OpenAI request for legacy models (gpt-4-turbo, gpt-4, gpt-3.5) that use max_tokens
+#[derive(Debug, Serialize)]
+struct OpenAIRequestLegacy {
+    model: String,
+    messages: Vec<OpenAIMessageRequest>,
     max_tokens: u32,
     temperature: f32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct OpenAIMessage {
+/// Check if a model should use the Responses API (GPT-5 series)
+fn uses_responses_api(model: &str) -> bool {
+    model.starts_with("gpt-5")
+}
+
+/// Check if a model uses the new max_completion_tokens parameter
+fn uses_max_completion_tokens(model: &str) -> bool {
+    model.starts_with("gpt-5") ||
+    model.starts_with("gpt-4.1") ||
+    model.starts_with("gpt-4o") ||
+    model.starts_with("o1") ||
+    model.starts_with("o3")
+}
+
+/// Check if a model doesn't support custom temperature (only default 1)
+fn no_temperature_support(model: &str) -> bool {
+    model.starts_with("gpt-5") ||  // All GPT-5 models (gpt-5, gpt-5-mini, gpt-5-nano)
+    model.starts_with("o1") ||
+    model.starts_with("o3")
+}
+
+// ============ Responses API types (for GPT-5 series) ============
+
+/// OpenAI Responses API request
+#[derive(Debug, Serialize)]
+struct ResponsesApiRequest {
+    model: String,
+    input: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_output_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<ResponsesTextConfig>,
+}
+
+/// Text output configuration for Responses API
+#[derive(Debug, Serialize)]
+struct ResponsesTextConfig {
+    format: ResponsesTextFormat,
+}
+
+/// Text format specification
+#[derive(Debug, Serialize)]
+struct ResponsesTextFormat {
+    #[serde(rename = "type")]
+    format_type: String,
+}
+
+/// OpenAI Responses API response
+#[derive(Debug, Deserialize)]
+struct ResponsesApiResponse {
+    #[allow(dead_code)]
+    id: String,
+    #[allow(dead_code)]
+    status: String,
+    output: Vec<ResponsesOutputItem>,
+    usage: Option<ResponsesUsage>,
+}
+
+/// Output item in Responses API (can be message or reasoning)
+#[derive(Debug, Deserialize)]
+struct ResponsesOutputItem {
+    #[serde(rename = "type")]
+    item_type: String,
+    #[serde(default)]
+    content: Option<Vec<ResponsesContent>>,
+}
+
+/// Content block in Responses API output
+#[derive(Debug, Deserialize)]
+struct ResponsesContent {
+    #[serde(rename = "type")]
+    content_type: String,
+    #[serde(default)]
+    text: Option<String>,
+}
+
+/// Usage info in Responses API
+#[derive(Debug, Deserialize)]
+struct ResponsesUsage {
+    input_tokens: Option<i64>,
+    output_tokens: Option<i64>,
+}
+
+/// OpenAI message for requests (only role and content)
+#[derive(Debug, Serialize)]
+struct OpenAIMessageRequest {
     role: String,
     content: String,
+}
+
+/// OpenAI message in responses (may include reasoning_content for o-series models)
+#[derive(Debug, Deserialize)]
+struct OpenAIMessage {
+    #[allow(dead_code)]
+    role: String,
+    #[serde(default)]
+    content: String,
+    /// For o-series models that use reasoning
+    #[serde(default)]
+    reasoning_content: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -117,6 +242,53 @@ impl LlmService {
     /// Get the model name
     pub fn model(&self) -> &str {
         &self.config.model
+    }
+
+    /// Test connection to the LLM API
+    /// Sends a minimal request to verify the API key and model are working
+    pub async fn test_connection(&self) -> Result<LlmTestResult, String> {
+        let start = std::time::Instant::now();
+
+        // Send a simple test prompt
+        let test_prompt = "Reply with exactly: OK";
+        let result = self.complete_raw(test_prompt).await;
+        let latency_ms = start.elapsed().as_millis() as i64;
+
+        match result {
+            Ok((response, prompt_tokens, completion_tokens, _)) => {
+                Ok(LlmTestResult {
+                    success: true,
+                    message: format!("連線成功: {}", self.config.model),
+                    latency_ms,
+                    prompt_tokens,
+                    completion_tokens,
+                    model_response: Some(response.chars().take(100).collect()),
+                })
+            }
+            Err(e) => {
+                // Parse error message for better user feedback
+                let user_message = if e.contains("401") || e.contains("Unauthorized") {
+                    "API Key 無效或已過期"
+                } else if e.contains("404") {
+                    "找不到指定的模型"
+                } else if e.contains("429") {
+                    "請求過於頻繁，請稍後再試"
+                } else if e.contains("connection") || e.contains("timeout") {
+                    "無法連線到 API 伺服器"
+                } else {
+                    "連線失敗"
+                };
+
+                Ok(LlmTestResult {
+                    success: false,
+                    message: format!("{}: {}", user_message, e),
+                    latency_ms,
+                    prompt_tokens: None,
+                    completion_tokens: None,
+                    model_response: None,
+                })
+            }
+        }
     }
 
     /// Generate a summary of work session content
@@ -236,7 +408,8 @@ Git Commits:
 重點描述完成了什麼、使用什麼技術、解決什麼問題。
 若有 git commit，優先以 commit 訊息作為成果總結。
 程式碼中的檔名、函式名、變數名請用 `backtick` 包裹。
-直接輸出內容，不要加標題。"#,
+
+重要：請直接輸出完整的工作摘要內容，不要只回覆「OK」或「好的」。"#,
             length_hint = length_hint,
             context_section = context_section,
             data = current_data.chars().take(max_chars).collect::<String>()
@@ -325,18 +498,129 @@ Git Commits:
         let base_url = self.config.base_url.as_deref()
             .unwrap_or("https://api.openai.com/v1");
 
-        let request = OpenAIRequest {
-            model: self.config.model.clone(),
-            messages: vec![OpenAIMessage {
-                role: "user".to_string(),
-                content: prompt.to_string(),
-            }],
-            max_tokens: 500,
-            temperature: 0.3,
+        // Use Responses API for GPT-5 series models
+        if uses_responses_api(&self.config.model) {
+            return self.complete_openai_responses_api(prompt, api_key, base_url).await;
+        }
+
+        let messages = vec![OpenAIMessageRequest {
+            role: "user".to_string(),
+            content: prompt.to_string(),
+        }];
+
+        // Use appropriate request struct based on model capabilities
+        let response = if no_temperature_support(&self.config.model) {
+            // Models like o1, o3 don't support custom temperature
+            let request = OpenAIRequestNewNoTemp {
+                model: self.config.model.clone(),
+                messages,
+                max_completion_tokens: 500,
+            };
+            self.client
+                .post(format!("{}/chat/completions", base_url))
+                .header("Authorization", format!("Bearer {}", api_key))
+                .header("Content-Type", "application/json")
+                .json(&request)
+                .send()
+                .await
+        } else if uses_max_completion_tokens(&self.config.model) {
+            // Models like gpt-4.1, gpt-4o use max_completion_tokens with temperature
+            let request = OpenAIRequestNew {
+                model: self.config.model.clone(),
+                messages,
+                max_completion_tokens: 500,
+                temperature: 0.3,
+            };
+            self.client
+                .post(format!("{}/chat/completions", base_url))
+                .header("Authorization", format!("Bearer {}", api_key))
+                .header("Content-Type", "application/json")
+                .json(&request)
+                .send()
+                .await
+        } else {
+            // Legacy models use max_tokens with temperature
+            let request = OpenAIRequestLegacy {
+                model: self.config.model.clone(),
+                messages,
+                max_tokens: 500,
+                temperature: 0.3,
+            };
+            self.client
+                .post(format!("{}/chat/completions", base_url))
+                .header("Authorization", format!("Bearer {}", api_key))
+                .header("Content-Type", "application/json")
+                .json(&request)
+                .send()
+                .await
+        }.map_err(|e| format!("Request failed: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!("API error {}: {}", status, text));
+        }
+
+        // Get raw response text first for debugging
+        let response_text = response.text().await
+            .map_err(|e| format!("Failed to read response: {}", e))?;
+
+        log::info!("OpenAI raw response (first 2000 chars): {}", &response_text.chars().take(2000).collect::<String>());
+
+        let result: OpenAIResponse = serde_json::from_str(&response_text)
+            .map_err(|e| format!("Failed to parse response: {}. Raw: {}", e, &response_text.chars().take(200).collect::<String>()))?;
+
+        let text = result.choices.first()
+            .map(|c| {
+                // For o-series models, check reasoning_content first, then content
+                if let Some(ref reasoning) = c.message.reasoning_content {
+                    if !reasoning.is_empty() {
+                        return reasoning.clone();
+                    }
+                }
+                c.message.content.clone()
+            })
+            .ok_or_else(|| format!("No response from LLM. Choices: {:?}", result.choices))?;
+
+        log::info!("OpenAI extracted text length: {} chars, content_empty: {}, has_reasoning: {}, text_preview: '{}'",
+            text.len(),
+            result.choices.first().map(|c| c.message.content.is_empty()).unwrap_or(true),
+            result.choices.first().and_then(|c| c.message.reasoning_content.as_ref()).is_some(),
+            &text.chars().take(200).collect::<String>()
+        );
+
+        let (prompt_tokens, completion_tokens, total_tokens) = match result.usage {
+            Some(u) => (u.prompt_tokens, u.completion_tokens, u.total_tokens),
+            None => (None, None, None),
         };
 
+        Ok((text, prompt_tokens, completion_tokens, total_tokens))
+    }
+
+    /// Use OpenAI Responses API for GPT-5 series models
+    async fn complete_openai_responses_api(
+        &self,
+        prompt: &str,
+        api_key: &str,
+        base_url: &str,
+    ) -> Result<(String, Option<i64>, Option<i64>, Option<i64>), String> {
+        // Build request with explicit text format to ensure message output
+        let request = ResponsesApiRequest {
+            model: self.config.model.clone(),
+            input: prompt.to_string(),
+            // Use higher token limit for GPT-5 - reasoning uses tokens first
+            max_output_tokens: Some(1000),
+            text: Some(ResponsesTextConfig {
+                format: ResponsesTextFormat {
+                    format_type: "text".to_string(),
+                },
+            }),
+        };
+
+        log::info!("Using Responses API for model: {}", self.config.model);
+
         let response = self.client
-            .post(format!("{}/chat/completions", base_url))
+            .post(format!("{}/responses", base_url))
             .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
             .json(&request)
@@ -347,22 +631,67 @@ Git Commits:
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(format!("API error {}: {}", status, text));
+            return Err(format!("Responses API error {}: {}", status, text));
         }
 
-        let result: OpenAIResponse = response.json().await
-            .map_err(|e| format!("Failed to parse response: {}", e))?;
+        // Get raw response for debugging
+        let response_text = response.text().await
+            .map_err(|e| format!("Failed to read response: {}", e))?;
 
-        let text = result.choices.first()
-            .map(|c| c.message.content.clone())
-            .ok_or_else(|| "No response from LLM".to_string())?;
+        log::info!("Responses API raw response (first 1000 chars): {}",
+            &response_text.chars().take(1000).collect::<String>());
+
+        let result: ResponsesApiResponse = serde_json::from_str(&response_text)
+            .map_err(|e| format!("Failed to parse Responses API response: {}. Raw: {}",
+                e, &response_text.chars().take(500).collect::<String>()))?;
+
+        // Extract text from output items
+        // Look for message items with text content
+        let mut output_text = String::new();
+        for item in &result.output {
+            if item.item_type == "message" {
+                if let Some(contents) = &item.content {
+                    for content in contents {
+                        if content.content_type == "output_text" || content.content_type == "text" {
+                            if let Some(text) = &content.text {
+                                output_text.push_str(text);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        log::info!("Responses API extracted text length: {} chars, preview: '{}'",
+            output_text.len(),
+            &output_text.chars().take(200).collect::<String>()
+        );
+
+        // Check for empty or trivial responses (like "OK", "好的", etc.)
+        let trimmed = output_text.trim();
+        if trimmed.is_empty() {
+            log::warn!("Responses API returned empty text. Output items: {:?}", result.output);
+            return Err("Responses API returned no text content. The model may need more output tokens.".to_string());
+        }
+
+        // Treat very short responses (< 20 chars) as failures - model likely didn't understand the task
+        if trimmed.len() < 20 {
+            log::warn!("Responses API returned trivial response: '{}'. Treating as failure.", trimmed);
+            return Err(format!("Responses API returned trivial response: '{}'. The model may need clearer instructions.", trimmed));
+        }
 
         let (prompt_tokens, completion_tokens, total_tokens) = match result.usage {
-            Some(u) => (u.prompt_tokens, u.completion_tokens, u.total_tokens),
+            Some(u) => {
+                let total = match (u.input_tokens, u.output_tokens) {
+                    (Some(i), Some(o)) => Some(i + o),
+                    _ => None,
+                };
+                (u.input_tokens, u.output_tokens, total)
+            }
             None => (None, None, None),
         };
 
-        Ok((text, prompt_tokens, completion_tokens, total_tokens))
+        Ok((output_text, prompt_tokens, completion_tokens, total_tokens))
     }
 
     async fn complete_anthropic(&self, prompt: &str) -> Result<(String, Option<i64>, Option<i64>, Option<i64>), String> {
@@ -419,10 +748,10 @@ Git Commits:
         let base_url = self.config.base_url.as_deref()
             .unwrap_or("http://localhost:11434");
 
-        // Ollama uses OpenAI-compatible API
-        let request = OpenAIRequest {
+        // Ollama uses OpenAI-compatible API with legacy max_tokens parameter
+        let request = OpenAIRequestLegacy {
             model: self.config.model.clone(),
-            messages: vec![OpenAIMessage {
+            messages: vec![OpenAIMessageRequest {
                 role: "user".to_string(),
                 content: prompt.to_string(),
             }],
@@ -487,7 +816,7 @@ pub async fn create_llm_service(pool: &sqlx::SqlitePool, user_id: &str) -> Resul
 
     let config = LlmConfig {
         provider: row.0.unwrap_or_else(|| "openai".to_string()),
-        model: row.1.unwrap_or_else(|| "gpt-4o-mini".to_string()),
+        model: row.1.unwrap_or_else(|| "gpt-5-nano".to_string()),
         api_key: row.2,
         base_url: row.3,
     };

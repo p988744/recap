@@ -19,4 +19,6 @@ pub struct Context {
     pub db: Database,
     pub format: OutputFormat,
     pub quiet: bool,
+    /// Enable debug logging
+    pub debug: bool,
 }

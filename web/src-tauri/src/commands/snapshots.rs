@@ -3,9 +3,10 @@
 //! Provides commands for querying work summaries, viewing snapshot details,
 //! and triggering compaction manually.
 
-use chrono::{DateTime, Datelike, Local, NaiveDateTime, Timelike};
+use chrono::{DateTime, Datelike, Local, NaiveDate, NaiveDateTime, Timelike};
 use recap_core::auth::verify_token;
 use recap_core::models::{SnapshotRawData, WorkSummary};
+use recap_core::get_commits_for_date;
 use serde::Serialize;
 use tauri::State;
 
@@ -121,6 +122,23 @@ pub struct CompactionResultResponse {
     pub weekly_compacted: usize,
     pub monthly_compacted: usize,
     pub errors: Vec<String>,
+    /// LLM-related warnings (API errors that were handled with fallback)
+    pub llm_warnings: Vec<String>,
+    /// Latest date that was compacted (YYYY-MM-DD format)
+    pub latest_compacted_date: Option<String>,
+}
+
+/// Response type for force recompact result
+#[derive(Debug, Serialize)]
+pub struct ForceRecompactResponse {
+    pub summaries_deleted: usize,
+    pub hourly_compacted: usize,
+    pub daily_compacted: usize,
+    pub weekly_compacted: usize,
+    pub monthly_compacted: usize,
+    pub errors: Vec<String>,
+    /// Latest date that was compacted (YYYY-MM-DD format)
+    pub latest_compacted_date: Option<String>,
 }
 
 /// Get work summaries at a given scale and date range.
@@ -197,6 +215,13 @@ pub struct ManualWorkItem {
     pub description: Option<String>,
     pub hours: f64,
     pub date: String,
+    pub project_path: Option<String>,
+    pub project_name: Option<String>,
+    pub jira_issue_key: Option<String>,
+    /// Start time for Gantt chart display (HH:MM format, e.g. "09:00")
+    pub start_time: Option<String>,
+    /// End time for Gantt chart display (HH:MM format, e.g. "10:30")
+    pub end_time: Option<String>,
 }
 
 /// A project's daily summary within a worklog day
@@ -332,6 +357,31 @@ pub async fn get_worklog_overview(
     .await
     .map_err(|e| e.to_string())?;
 
+    // 4b. Fetch Antigravity work items (grouped by date and project_path)
+    let antigravity_items: Vec<recap_core::WorkItem> = sqlx::query_as(
+        r#"SELECT * FROM work_items
+           WHERE user_id = ? AND source = 'antigravity' AND date >= ? AND date <= ?
+           ORDER BY date DESC"#,
+    )
+    .bind(&claims.sub)
+    .bind(&start_date)
+    .bind(&end_date)
+    .fetch_all(&db.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // Group Antigravity items by (date, project_path)
+    let mut antigravity_stats: std::collections::HashMap<(String, String), (f64, String)> = std::collections::HashMap::new();
+    for item in &antigravity_items {
+        let date = item.date.to_string();
+        let project_path = item.project_path.clone().unwrap_or_default();
+        let entry = antigravity_stats.entry((date, project_path)).or_insert((0.0, String::new()));
+        entry.0 += item.hours;
+        if entry.1.is_empty() {
+            entry.1 = item.description.clone().unwrap_or_else(|| item.title.clone());
+        }
+    }
+
     // 5. Build the response: group by date
     let mut days_map: std::collections::BTreeMap<String, WorklogDay> = std::collections::BTreeMap::new();
 
@@ -356,6 +406,12 @@ pub async fn get_worklog_overview(
     for summary in &daily_summaries {
         let date = summary.period_start.get(..10).unwrap_or(&summary.period_start).to_string();
         let project_path = summary.project_path.clone().unwrap_or_default();
+
+        // Skip manual projects - they're shown in manual_items, not as projects
+        if project_path.contains("manual-projects") {
+            continue;
+        }
+
         let project_name = std::path::Path::new(&project_path).file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string();
 
         // Parse commit/file counts from summary metadata
@@ -392,6 +448,10 @@ pub async fn get_worklog_overview(
 
     // Add snapshot-only data (projects with snapshots but no daily summary)
     for (project_path, day, commits, files, hours) in &snapshot_stats {
+        // Skip manual projects - they're shown in manual_items, not as projects
+        if project_path.contains("manual-projects") {
+            continue;
+        }
         get_or_create_day(&mut days_map, day);
         if let Some(day_entry) = days_map.get_mut(day.as_str()) {
             // Skip if already have a daily summary for this project
@@ -413,18 +473,89 @@ pub async fn get_worklog_overview(
         }
     }
 
+    // Add Antigravity projects (or merge with existing projects)
+    for ((date, project_path), (hours, summary)) in &antigravity_stats {
+        if project_path.is_empty() {
+            continue;
+        }
+        get_or_create_day(&mut days_map, date);
+        if let Some(day_entry) = days_map.get_mut(date.as_str()) {
+            // Check if project already exists (from Claude Code data)
+            if let Some(existing) = day_entry.projects.iter_mut().find(|p| &p.project_path == project_path) {
+                // Merge: add Antigravity hours to existing project
+                existing.total_hours += hours;
+                // Mark as having hourly data (Antigravity items will show in breakdown)
+                existing.has_hourly_data = true;
+            } else {
+                // New project (only has Antigravity data)
+                // Look up commit/file counts from snapshot_stats if available (from Claude Code data)
+                let (mut commits, files) = snapshot_stats.iter()
+                    .find(|(pp, d, _, _, _)| pp == project_path && d == date)
+                    .map(|(_, _, c, f, _)| (*c, *f))
+                    .unwrap_or((0, 0));
+
+                // If no commits from snapshots, query git directly
+                if commits == 0 {
+                    if let Ok(naive_date) = NaiveDate::parse_from_str(date, "%Y-%m-%d") {
+                        let git_commits = get_commits_for_date(project_path, &naive_date);
+                        commits = git_commits.len() as i32;
+                    }
+                }
+
+                let project_name = std::path::Path::new(&project_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                day_entry.projects.push(WorklogDayProject {
+                    project_path: project_path.clone(),
+                    project_name,
+                    daily_summary: Some(summary.clone()),
+                    total_commits: commits,
+                    total_files: files,
+                    total_hours: *hours,
+                    has_hourly_data: true, // Antigravity items will show in breakdown
+                });
+            }
+        }
+    }
+
     // Add manual items
     for item in &manual_items {
         let date = item.date.to_string();
         get_or_create_day(&mut days_map, &date);
         if let Some(day) = days_map.get_mut(&date) {
+            // Extract project name from project_path (e.g., "~/.recap/manual-projects/會議" -> "會議")
+            let project_name = item.project_path.as_ref().and_then(|p| {
+                std::path::Path::new(p)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.to_string())
+            });
             day.manual_items.push(ManualWorkItem {
                 id: item.id.clone(),
                 title: item.title.clone(),
                 description: item.description.clone(),
                 hours: item.hours,
                 date: date.clone(),
+                project_path: item.project_path.clone(),
+                project_name,
+                jira_issue_key: item.jira_issue_key.clone(),
+                start_time: item.start_time.clone(),
+                end_time: item.end_time.clone(),
             });
+        }
+    }
+
+    // Post-process: for any project with 0 commits, query git directly
+    for (date, day) in days_map.iter_mut() {
+        for project in day.projects.iter_mut() {
+            if project.total_commits == 0 {
+                if let Ok(naive_date) = NaiveDate::parse_from_str(date, "%Y-%m-%d") {
+                    let git_commits = get_commits_for_date(&project.project_path, &naive_date);
+                    project.total_commits = git_commits.len() as i32;
+                }
+            }
         }
     }
 
@@ -476,24 +607,81 @@ pub async fn get_hourly_breakdown(
         .filter(|s| extract_local_date(&s.period_start) == date)
         .collect();
 
-    if !summaries.is_empty() {
-        return Ok(summaries.into_iter().map(|s| {
+    // Build maps from snapshot_raw_data:
+    // 1. hour_bucket -> full commits (for when summaries lack commit data)
+    // 2. hash -> timestamp (for enriching summary commits)
+    let (commits_by_hour, commit_timestamps): (
+        std::collections::HashMap<String, Vec<GitCommitRef>>,
+        std::collections::HashMap<String, String>,
+    ) = {
+        let all_snapshots: Vec<SnapshotRawData> = sqlx::query_as(
+            r#"SELECT * FROM snapshot_raw_data
+               WHERE user_id = ? AND project_path = ?
+                 AND hour_bucket >= ? AND hour_bucket <= ?
+               ORDER BY hour_bucket"#,
+        )
+        .bind(&claims.sub)
+        .bind(&project_path)
+        .bind(&wide_start_summary)
+        .bind(&wide_end_summary)
+        .fetch_all(&db.pool)
+        .await
+        .unwrap_or_default();
+
+        let mut by_hour: std::collections::HashMap<String, Vec<GitCommitRef>> = std::collections::HashMap::new();
+        let mut timestamps: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+
+        for snapshot in all_snapshots {
+            let hour_key = extract_local_hour(&snapshot.hour_bucket);
+            if let Some(git_commits_json) = &snapshot.git_commits {
+                if let Ok(commits) = serde_json::from_str::<Vec<serde_json::Value>>(git_commits_json) {
+                    for commit in &commits {
+                        if let (Some(hash), Some(timestamp)) = (
+                            commit.get("hash").and_then(|h| h.as_str()),
+                            commit.get("timestamp").and_then(|t| t.as_str()),
+                        ) {
+                            timestamps.insert(hash.to_string(), timestamp.to_string());
+                        }
+                    }
+                    // Also store full commits by hour
+                    let hour_commits: Vec<GitCommitRef> = commits.iter().filter_map(|c| {
+                        Some(GitCommitRef {
+                            hash: c.get("hash")?.as_str()?.to_string(),
+                            message: c.get("message")?.as_str()?.to_string(),
+                            timestamp: c.get("timestamp").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+                        })
+                    }).collect();
+                    by_hour.entry(hour_key).or_default().extend(hour_commits);
+                }
+            }
+        }
+        (by_hour, timestamps)
+    };
+
+    // Build Claude Code items from hourly summaries if available
+    let mut items: Vec<HourlyBreakdownItem> = if !summaries.is_empty() {
+        summaries.into_iter().map(|s| {
             let hour_start = extract_local_hour(&s.period_start);
             let hour_end = extract_local_hour(&s.period_end);
             let files: Vec<String> = s.key_activities.as_ref()
                 .and_then(|a| serde_json::from_str(a).ok())
                 .unwrap_or_default();
-            let commits: Vec<GitCommitRef> = s.git_commits_summary.as_ref()
+
+            // Try to get commits from summary first
+            let mut commits: Vec<GitCommitRef> = s.git_commits_summary.as_ref()
                 .and_then(|g| {
                     serde_json::from_str::<Vec<String>>(g).ok().map(|strings| {
                         strings.iter().filter_map(|s| {
                             let parts: Vec<&str> = s.splitn(2, ": ").collect();
                             if parts.len() == 2 {
                                 let hash_part: Vec<&str> = parts[0].splitn(2, ' ').collect();
+                                let hash = hash_part[0].to_string();
+                                // Look up timestamp from snapshot_raw_data
+                                let timestamp = commit_timestamps.get(&hash).cloned().unwrap_or_default();
                                 Some(GitCommitRef {
-                                    hash: hash_part[0].to_string(),
+                                    hash,
                                     message: parts[1].to_string(),
-                                    timestamp: String::new(),
+                                    timestamp,
                                 })
                             } else {
                                 None
@@ -503,82 +691,272 @@ pub async fn get_hourly_breakdown(
                 })
                 .unwrap_or_default();
 
+            // If summary has no commits, fall back to snapshot_raw_data commits for this hour
+            if commits.is_empty() {
+                if let Some(snapshot_commits) = commits_by_hour.get(&hour_start) {
+                    commits = snapshot_commits.clone();
+                }
+            }
+
             HourlyBreakdownItem {
                 hour_start,
                 hour_end,
                 summary: s.summary.clone(),
                 files_modified: files,
                 git_commits: commits,
+                source: "claude_code".to_string(),
             }
-        }).collect());
+        }).collect()
+    } else {
+        // No hourly summaries - will build from snapshots below
+        Vec::new()
+    };
+
+    // If no items from summaries, fall back to raw snapshots
+    if items.is_empty() {
+        // Fallback: build from raw snapshots
+        // Query broadly to handle both UTC-offset and naive-local hour_bucket formats.
+        // We widen the range by 1 day on each side, then filter by local date in Rust.
+        let prev_date = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+            .map(|d| d.pred_opt().unwrap_or(d).format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|_| date.clone());
+        let next_date = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+            .map(|d| d.succ_opt().unwrap_or(d).format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|_| date.clone());
+        let wide_start = format!("{}T00:00:00", &prev_date);
+        let wide_end = format!("{}T23:59:59", &next_date);
+
+        let all_snapshots: Vec<SnapshotRawData> = sqlx::query_as(
+            r#"SELECT * FROM snapshot_raw_data
+               WHERE user_id = ? AND project_path = ?
+                 AND hour_bucket >= ? AND hour_bucket <= ?
+               ORDER BY hour_bucket"#,
+        )
+        .bind(&claims.sub)
+        .bind(&project_path)
+        .bind(&wide_start)
+        .bind(&wide_end)
+        .fetch_all(&db.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        // Filter to only snapshots whose local date matches the requested date
+        let snapshots: Vec<&SnapshotRawData> = all_snapshots.iter()
+            .filter(|s| extract_local_date(&s.hour_bucket) == date)
+            .collect();
+
+        items = snapshots.into_iter().map(|s| {
+            let hour_start = extract_local_hour(&s.hour_bucket);
+            let hour_end = next_hour(&hour_start);
+
+            let files: Vec<String> = s.files_modified.as_ref()
+                .and_then(|f| serde_json::from_str(f).ok())
+                .unwrap_or_default();
+
+            let commits: Vec<GitCommitRef> = s.git_commits.as_ref()
+                .and_then(|g| {
+                    serde_json::from_str::<Vec<serde_json::Value>>(g).ok().map(|arr| {
+                        arr.iter().filter_map(|v| {
+                            Some(GitCommitRef {
+                                hash: v.get("hash")?.as_str()?.to_string(),
+                                message: v.get("message")?.as_str()?.to_string(),
+                                timestamp: v.get("timestamp").and_then(|t| t.as_str()).unwrap_or("").to_string(),
+                            })
+                        }).collect()
+                    })
+                })
+                .unwrap_or_default();
+
+            let summary = s.user_messages.as_ref()
+                .and_then(|m| serde_json::from_str::<Vec<String>>(m).ok())
+                .map(|msgs| msgs.join("; "))
+                .unwrap_or_else(|| "工作進行中".to_string());
+
+            HourlyBreakdownItem {
+                hour_start,
+                hour_end,
+                summary,
+                files_modified: files,
+                git_commits: commits,
+                source: "claude_code".to_string(),
+            }
+        }).collect();
     }
 
-    // Fallback: build from raw snapshots
-    // Query broadly to handle both UTC-offset and naive-local hour_bucket formats.
-    // We widen the range by 1 day on each side, then filter by local date in Rust.
-    let prev_date = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
-        .map(|d| d.pred_opt().unwrap_or(d).format("%Y-%m-%d").to_string())
-        .unwrap_or_else(|_| date.clone());
-    let next_date = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
-        .map(|d| d.succ_opt().unwrap_or(d).format("%Y-%m-%d").to_string())
-        .unwrap_or_else(|_| date.clone());
-    let wide_start = format!("{}T00:00:00", &prev_date);
-    let wide_end = format!("{}T23:59:59", &next_date);
+    // Build set of hours that already have items (from work_summaries or snapshots)
+    let existing_hours: std::collections::HashSet<String> = items.iter()
+        .map(|i| i.hour_start.clone())
+        .collect();
 
-    let all_snapshots: Vec<SnapshotRawData> = sqlx::query_as(
-        r#"SELECT * FROM snapshot_raw_data
-           WHERE user_id = ? AND project_path = ?
-             AND hour_bucket >= ? AND hour_bucket <= ?
-           ORDER BY hour_bucket"#,
+    // Query Antigravity work items for the same date and project
+    // First try exact path match, then fall back to matching by project name
+    let mut antigravity_items: Vec<recap_core::WorkItem> = sqlx::query_as(
+        r#"SELECT * FROM work_items
+           WHERE user_id = ? AND source = 'antigravity' AND date = ? AND project_path = ?
+           ORDER BY created_at DESC"#,
     )
     .bind(&claims.sub)
+    .bind(&date)
     .bind(&project_path)
-    .bind(&wide_start)
-    .bind(&wide_end)
     .fetch_all(&db.pool)
     .await
     .map_err(|e| e.to_string())?;
 
-    // Filter to only snapshots whose local date matches the requested date
-    let snapshots: Vec<&SnapshotRawData> = all_snapshots.iter()
-        .filter(|s| extract_local_date(&s.hour_bucket) == date)
-        .collect();
+    // If no exact match, try matching by project name (last path component)
+    if antigravity_items.is_empty() {
+        let project_name = std::path::Path::new(&project_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        if !project_name.is_empty() {
+            // Use LIKE to match paths ending with the project name
+            let pattern = format!("%/{}", project_name);
+            antigravity_items = sqlx::query_as(
+                r#"SELECT * FROM work_items
+                   WHERE user_id = ? AND source = 'antigravity' AND date = ? AND project_path LIKE ?
+                   ORDER BY created_at DESC"#,
+            )
+            .bind(&claims.sub)
+            .bind(&date)
+            .bind(&pattern)
+            .fetch_all(&db.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+    }
 
-    Ok(snapshots.into_iter().map(|s| {
-        let hour_start = extract_local_hour(&s.hour_bucket);
+    // Build a map of Antigravity session_ids to their hours for source attribution
+    let mut antigravity_session_hours: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for item in &antigravity_items {
+        let hour_start = item
+            .start_time
+            .as_ref()
+            .and_then(|ts| {
+                chrono::DateTime::parse_from_rfc3339(ts)
+                    .ok()
+                    .map(|dt| dt.with_timezone(&chrono::Local).format("%H:00").to_string())
+            })
+            .unwrap_or_else(|| item.created_at.format("%H:00").to_string());
+
+        if let Some(session_id) = &item.session_id {
+            antigravity_session_hours.insert(session_id.clone(), hour_start);
+        }
+    }
+
+    // Update source for existing items that came from Antigravity snapshots
+    // Check if the work_summary's source_snapshot_ids reference Antigravity sessions
+    for item in &mut items {
+        // If this hour has an Antigravity work_item, mark the source as antigravity
+        // since the LLM summary was generated from Antigravity snapshot data
+        if antigravity_session_hours.values().any(|h| h == &item.hour_start) {
+            item.source = "antigravity".to_string();
+        }
+    }
+
+    // Only add Antigravity items for hours that DON'T already have entries
+    // (to avoid duplicates when we already have LLM-generated summaries)
+    for item in antigravity_items {
+        // Skip items without session_id or start_time - these are orphan entries
+        // that weren't properly linked to snapshots and would show incorrect times
+        if item.session_id.is_none() || item.start_time.is_none() {
+            continue;
+        }
+
+        // Extract hour from start_time (actual session time)
+        let hour_start = item
+            .start_time
+            .as_ref()
+            .and_then(|ts| {
+                // Parse ISO timestamp and convert to local timezone
+                chrono::DateTime::parse_from_rfc3339(ts)
+                    .ok()
+                    .map(|dt| dt.with_timezone(&chrono::Local).format("%H:00").to_string())
+            })
+            .unwrap_or_else(|| item.created_at.format("%H:00").to_string());
+
+        // Skip if we already have an entry for this hour (LLM summary exists)
+        if existing_hours.contains(&hour_start) {
+            continue;
+        }
+
         let hour_end = next_hour(&hour_start);
 
-        let files: Vec<String> = s.files_modified.as_ref()
-            .and_then(|f| serde_json::from_str(f).ok())
-            .unwrap_or_default();
+        // Extract summary from description, building a rich summary from available fields
+        let summary = item
+            .description
+            .as_ref()
+            .map(|desc| {
+                // Extract key fields from the description
+                let mut parts: Vec<String> = Vec::new();
 
-        let commits: Vec<GitCommitRef> = s.git_commits.as_ref()
-            .and_then(|g| {
-                serde_json::from_str::<Vec<serde_json::Value>>(g).ok().map(|arr| {
-                    arr.iter().filter_map(|v| {
-                        Some(GitCommitRef {
-                            hash: v.get("hash")?.as_str()?.to_string(),
-                            message: v.get("message")?.as_str()?.to_string(),
-                            timestamp: v.get("timestamp").and_then(|t| t.as_str()).unwrap_or("").to_string(),
-                        })
-                    }).collect()
-                })
+                // Get the summary line
+                let summary_text = desc.lines()
+                    .find(|line| line.starts_with("📋 Summary:"))
+                    .map(|line| line.trim_start_matches("📋 Summary:").trim().to_string())
+                    .filter(|s| !s.is_empty() && s.len() > 10) // Only use if meaningful (>10 chars)
+                    .unwrap_or_default();
+
+                if !summary_text.is_empty() {
+                    parts.push(summary_text);
+                }
+
+                // If summary is too short, add context from other fields
+                if parts.is_empty() || parts[0].len() < 15 {
+                    // Extract steps/duration info
+                    if let Some(steps_line) = desc.lines().find(|line| line.contains("Steps:")) {
+                        let steps_info = steps_line
+                            .trim_start_matches("💬 ")
+                            .trim();
+                        if !steps_info.is_empty() {
+                            parts.push(steps_info.to_string());
+                        }
+                    }
+
+                    // Extract branch info
+                    if let Some(branch_line) = desc.lines().find(|line| line.starts_with("🌿 Branch:")) {
+                        let branch = branch_line.trim_start_matches("🌿 Branch:").trim();
+                        if !branch.is_empty() && branch != "N/A" {
+                            parts.push(format!("Branch: {}", branch));
+                        }
+                    }
+                }
+
+                if parts.is_empty() {
+                    // Fall back to title without project prefix
+                    item.title
+                        .split(']')
+                        .nth(1)
+                        .map(|s| s.trim().to_string())
+                        .unwrap_or_else(|| item.title.clone())
+                } else {
+                    parts.join(" | ")
+                }
             })
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                // No description - use title
+                item.title
+                    .split(']')
+                    .nth(1)
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_else(|| item.title.clone())
+            });
 
-        let summary = s.user_messages.as_ref()
-            .and_then(|m| serde_json::from_str::<Vec<String>>(m).ok())
-            .map(|msgs| msgs.join("; "))
-            .unwrap_or_else(|| "工作進行中".to_string());
-
-        HourlyBreakdownItem {
+        items.push(HourlyBreakdownItem {
             hour_start,
             hour_end,
             summary,
-            files_modified: files,
-            git_commits: commits,
-        }
-    }).collect())
+            files_modified: Vec::new(),
+            git_commits: Vec::new(),
+            source: "antigravity".to_string(),
+        });
+    }
+
+    // Sort by source first (claude_code before antigravity), then by hour_start descending
+    items.sort_by(|a, b| {
+        // Primary: sort by hour_start descending
+        b.hour_start.cmp(&a.hour_start)
+    });
+    Ok(items)
 }
 
 /// Hourly breakdown item
@@ -589,10 +967,12 @@ pub struct HourlyBreakdownItem {
     pub summary: String,
     pub files_modified: Vec<String>,
     pub git_commits: Vec<GitCommitRef>,
+    /// Data source: "claude_code" or "antigravity"
+    pub source: String,
 }
 
 /// Git commit reference
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct GitCommitRef {
     pub hash: String,
     pub message: String,
@@ -625,6 +1005,55 @@ pub async fn trigger_compaction(
         weekly_compacted: result.weekly_compacted,
         monthly_compacted: result.monthly_compacted,
         errors: result.errors,
+        llm_warnings: result.llm_warnings,
+        latest_compacted_date: result.latest_compacted_date,
+    })
+}
+
+/// Force recompact all work summaries.
+///
+/// This operation deletes existing work_summaries and regenerates them from
+/// snapshot_raw_data. Use this when you've made changes to the compaction logic
+/// and want to retroactively apply them to historical data.
+///
+/// Original data (work_items, snapshot_raw_data) is preserved.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn force_recompact(
+    state: State<'_, AppState>,
+    token: String,
+    from_date: Option<String>,
+    to_date: Option<String>,
+    scales: Option<Vec<String>>,
+) -> Result<ForceRecompactResponse, String> {
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
+
+    let llm = recap_core::services::llm::create_llm_service(&db.pool, &claims.sub)
+        .await
+        .ok();
+
+    let options = recap_core::services::compaction::ForceRecompactOptions {
+        from_date,
+        to_date,
+        scales: scales.unwrap_or_default(),
+    };
+
+    let result = recap_core::services::compaction::force_recompact(
+        &db.pool,
+        llm.as_ref(),
+        &claims.sub,
+        options,
+    )
+    .await?;
+
+    Ok(ForceRecompactResponse {
+        summaries_deleted: result.summaries_deleted,
+        hourly_compacted: result.compaction_result.hourly_compacted,
+        daily_compacted: result.compaction_result.daily_compacted,
+        weekly_compacted: result.compaction_result.weekly_compacted,
+        monthly_compacted: result.compaction_result.monthly_compacted,
+        errors: result.compaction_result.errors,
+        latest_compacted_date: result.compaction_result.latest_compacted_date,
     })
 }
 

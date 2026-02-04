@@ -216,21 +216,44 @@ pub fn enrich_buckets_with_git_commits(
     buckets: &mut [HourlyBucket],
     project_path: &str,
 ) {
+    use chrono::{Local, NaiveDateTime, TimeZone};
+    use super::sync::resolve_git_root;
+
+    // Resolve the actual git root from the project path
+    // (project_path may be a subdirectory of the git repo)
+    let git_root = resolve_git_root(project_path);
+
     for bucket in buckets.iter_mut() {
         // Parse hour_bucket to get time range
+        // hour_bucket can be either:
+        // - RFC3339 with timezone: "2026-01-30T10:00:00+08:00"
+        // - Local time without timezone: "2026-01-30T10:00:00"
         let start = &bucket.hour_bucket;
-        let end = match DateTime::parse_from_rfc3339(start) {
+        let (start_str, end_str) = match DateTime::parse_from_rfc3339(start) {
             Ok(dt) => {
                 let end_dt = dt + chrono::Duration::hours(1);
-                end_dt.to_rfc3339()
+                (dt.to_rfc3339(), end_dt.to_rfc3339())
             }
-            Err(_) => continue,
+            Err(_) => {
+                // Try parsing as NaiveDateTime (local time without timezone)
+                match NaiveDateTime::parse_from_str(start, "%Y-%m-%dT%H:%M:%S") {
+                    Ok(ndt) => {
+                        let local_start = Local.from_local_datetime(&ndt).single();
+                        let local_end = Local.from_local_datetime(&(ndt + chrono::Duration::hours(1))).single();
+                        match (local_start, local_end) {
+                            (Some(s), Some(e)) => (s.to_rfc3339(), e.to_rfc3339()),
+                            _ => continue,
+                        }
+                    }
+                    Err(_) => continue,
+                }
+            }
         };
 
-        let commits = get_commits_in_time_range(project_path, start, &end);
+        let commits = get_commits_in_time_range(&git_root, &start_str, &end_str);
         for commit in commits {
             // Get file changes for additions/deletions
-            let (additions, deletions) = get_commit_stats(project_path, &commit.hash);
+            let (additions, deletions) = get_commit_stats(&git_root, &commit.hash);
 
             bucket.git_commits.push(CommitSnapshot {
                 hash: commit.hash,
@@ -590,5 +613,59 @@ mod tests {
         let files = find_jsonl_files(&dir.path().to_path_buf());
         assert_eq!(files.len(), 1);
         assert!(files[0].to_string_lossy().contains("session1.jsonl"));
+    }
+
+    #[test]
+    fn test_enrich_buckets_with_git_commits() {
+        // Test that enrich_buckets_with_git_commits can find commits
+        // using resolve_git_root to find the actual git repository
+
+        // Get the path to this crate (crates/recap-core)
+        let crate_path = env!("CARGO_MANIFEST_DIR");
+        // This is a subdirectory of the git repo, so resolve_git_root should find the parent
+
+        // Create a bucket with a known time range that has commits
+        let mut buckets = vec![HourlyBucket {
+            hour_bucket: "2026-01-30T09:00:00".to_string(), // Local time without timezone
+            user_messages: vec![],
+            assistant_summaries: vec![],
+            tool_calls: vec![],
+            files_modified: vec![],
+            git_commits: vec![],
+            message_count: 0,
+        }];
+
+        // Enrich with commits - should find the commit at 09:28:59
+        enrich_buckets_with_git_commits(&mut buckets, crate_path);
+
+        println!("Bucket hour: {}", buckets[0].hour_bucket);
+        println!("Found {} commits", buckets[0].git_commits.len());
+        for c in &buckets[0].git_commits {
+            println!("  - {} | {} | {}", c.hash, c.timestamp, c.message);
+        }
+
+        // Should have found at least 1 commit (the one at 09:28:59)
+        assert!(
+            !buckets[0].git_commits.is_empty(),
+            "Should find commits in 09:00-10:00 range using resolve_git_root"
+        );
+    }
+
+    #[test]
+    fn test_enrich_buckets_resolves_git_root() {
+        use crate::services::sync::resolve_git_root;
+
+        // Test that resolve_git_root works correctly
+        let crate_path = env!("CARGO_MANIFEST_DIR"); // crates/recap-core
+        let git_root = resolve_git_root(crate_path);
+
+        println!("crate_path: {}", crate_path);
+        println!("git_root: {}", git_root);
+
+        // The git root should be 2 levels up from crates/recap-core
+        assert!(
+            std::path::Path::new(&git_root).join(".git").exists(),
+            "resolve_git_root should find the actual git root"
+        );
     }
 }

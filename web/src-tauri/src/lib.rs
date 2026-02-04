@@ -35,6 +35,9 @@ pub fn run() {
             commands::config::update_config,
             commands::config::update_llm_config,
             commands::config::update_jira_config,
+            commands::config::test_llm_connection,
+            commands::config::get_onboarding_status,
+            commands::config::complete_onboarding,
             // Work Items - queries
             commands::work_items::queries::list_work_items,
             commands::work_items::queries::get_stats_summary,
@@ -62,6 +65,11 @@ pub fn run() {
             commands::claude::import_claude_sessions,
             commands::claude::summarize_claude_session,
             commands::claude::sync_claude_projects,
+            // Antigravity (Gemini Code)
+            commands::antigravity::check_antigravity_installed,
+            commands::antigravity::check_antigravity_api_status,
+            commands::antigravity::list_antigravity_sessions,
+            commands::antigravity::sync_antigravity_projects,
             // Reports - queries
             commands::reports::queries::get_personal_report,
             commands::reports::queries::get_summary_report,
@@ -107,6 +115,7 @@ pub fn run() {
             commands::background_sync::start_background_sync,
             commands::background_sync::stop_background_sync,
             commands::background_sync::trigger_background_sync,
+            commands::background_sync::trigger_sync_with_progress,
             // Notifications
             commands::notification::send_sync_notification,
             commands::notification::send_auth_notification,
@@ -115,6 +124,7 @@ pub fn run() {
             commands::snapshots::get_work_summaries,
             commands::snapshots::get_snapshot_detail,
             commands::snapshots::trigger_compaction,
+            commands::snapshots::force_recompact,
             // Worklog
             commands::snapshots::get_worklog_overview,
             commands::snapshots::get_hourly_breakdown,
@@ -136,33 +146,78 @@ pub fn run() {
             commands::projects::queries::get_project_directories,
             commands::projects::queries::get_claude_session_path,
             commands::projects::queries::update_claude_session_path,
+            commands::projects::queries::get_antigravity_session_path,
+            commands::projects::queries::update_antigravity_session_path,
             commands::projects::queries::add_manual_project,
             commands::projects::queries::remove_manual_project,
+            commands::projects::queries::get_project_readme,
+            // Projects - descriptions
+            commands::projects::descriptions::get_project_description,
+            commands::projects::descriptions::update_project_description,
+            commands::projects::descriptions::delete_project_description,
+            // Projects - timeline
+            commands::projects::timeline::get_project_timeline,
+            // Projects - summaries (unified)
+            commands::projects::summaries::get_cached_summary,
+            commands::projects::summaries::get_cached_summaries_batch,
+            commands::projects::summaries::trigger_summaries_generation,
+            commands::projects::summaries::generate_completed_summaries,
+            // Projects - summaries (legacy)
+            commands::projects::summaries::get_project_summary,
+            commands::projects::summaries::generate_project_summary,
+            commands::projects::summaries::check_summary_freshness,
+            // Projects - git diff
+            commands::projects::git_diff::get_commit_diff,
+            // Danger Zone
+            commands::danger_zone::clear_synced_data,
+            commands::danger_zone::factory_reset,
+            commands::danger_zone::force_recompact_with_progress,
+            // Batch Compaction (OpenAI Batch API)
+            commands::batch_compaction::check_batch_availability,
+            commands::batch_compaction::get_pending_hourly_compactions,
+            commands::batch_compaction::get_batch_job_status,
+            commands::batch_compaction::submit_batch_compaction,
+            commands::batch_compaction::refresh_batch_status,
+            commands::batch_compaction::process_completed_batch_job,
         ])
         .setup(|app| {
-            // Setup logging
+            // Setup Tauri logging plugin (for frontend) - must be first
             app.handle().plugin(
                 tauri_plugin_log::Builder::default()
                     .level(log::LevelFilter::Info)
                     .build(),
             )?;
 
+            // === Startup Info ===
+            log::info!("========================================");
+            log::info!("  Recap - Work Tracking & Reporting");
+            log::info!("========================================");
+            log::info!("Version: {}", env!("CARGO_PKG_VERSION"));
+            log::info!("Platform: {} ({})", std::env::consts::OS, std::env::consts::ARCH);
+            log::info!("Build: {}", if cfg!(debug_assertions) { "Debug" } else { "Release" });
+            log::info!("----------------------------------------");
+            log::info!("Setting up application...");
+            log::info!("  ✓ Tauri plugins loaded");
+
             // Initialize database and app state
+            log::info!("Initializing database...");
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 match recap_core::Database::new().await {
                     Ok(database) => {
-                        log::info!("Database initialized successfully");
+                        log::info!("  ✓ Database connected and migrated");
                         let state = commands::AppState::new(database);
                         app_handle.manage(state);
+                        log::info!("  ✓ Application state initialized");
                     }
                     Err(e) => {
-                        log::error!("Failed to initialize database: {}", e);
+                        log::error!("  ✗ Failed to initialize database: {}", e);
                     }
                 }
             });
 
             // Create tray menu
+            log::info!("Setting up system tray...");
             let show_item = MenuItem::with_id(app, "show", "開啟 Recap", true, None::<&str>)?;
             let sync_item = MenuItem::with_id(app, "sync_now", "立即同步", true, None::<&str>)?;
             let separator = MenuItem::with_id(app, "sep1", "─────────────", false, None::<&str>)?;
@@ -175,6 +230,7 @@ pub fn run() {
             let tray = app.tray_by_id("main-tray").expect("tray icon not found");
             tray.set_menu(Some(menu))?;
             tray.set_show_menu_on_left_click(false)?;
+            log::info!("  ✓ System tray configured");
             tray.on_menu_event(|app, event| match event.id.as_ref() {
                 "show" => {
                     if let Some(window) = app.get_webview_window("main") {
@@ -207,6 +263,10 @@ pub fn run() {
                     }
                 }
             });
+
+            log::info!("----------------------------------------");
+            log::info!("Recap is ready!");
+            log::info!("========================================");
 
             Ok(())
         })

@@ -21,6 +21,7 @@ export interface WorkItemFormData {
   date: string
   jira_issue_key: string
   category: string
+  project_name: string
 }
 
 export interface SettingsMessage {
@@ -48,6 +49,7 @@ export function useWorkItems(isAuthenticated: boolean, token: string | null) {
   const [timelineDate, setTimelineDate] = useState(() => new Date().toISOString().split('T')[0])
   const [timelineSessions, setTimelineSessions] = useState<TimelineSession[]>([])
   const [timelineLoading, setTimelineLoading] = useState(false)
+  const [timelineSources, setTimelineSources] = useState<string[]>(['claude_code', 'antigravity'])
 
   // UI state
   const [searchTerm, setSearchTerm] = useState('')
@@ -104,7 +106,9 @@ export function useWorkItems(isAuthenticated: boolean, token: string | null) {
   const fetchTimelineData = useCallback(async () => {
     setTimelineLoading(true)
     try {
-      const response = await workItems.getTimeline(timelineDate)
+      // Pass sources filter (undefined if all sources selected to use backend defaults)
+      const sourcesToPass = timelineSources.length === 2 ? undefined : timelineSources
+      const response = await workItems.getTimeline(timelineDate, sourcesToPass)
       const sessions: TimelineSession[] = response.sessions.map(s => ({
         id: s.id,
         project: s.project,
@@ -126,7 +130,7 @@ export function useWorkItems(isAuthenticated: boolean, token: string | null) {
     } finally {
       setTimelineLoading(false)
     }
-  }, [timelineDate])
+  }, [timelineDate, timelineSources])
 
   // Effects
   useEffect(() => {
@@ -146,7 +150,7 @@ export function useWorkItems(isAuthenticated: boolean, token: string | null) {
     if (viewMode === 'timeline') {
       fetchTimelineData()
     }
-  }, [viewMode, timelineDate, isAuthenticated, token, fetchTimelineData])
+  }, [viewMode, timelineDate, timelineSources, isAuthenticated, token, fetchTimelineData])
 
   // Handlers
   const handleSearch = useCallback((e: React.FormEvent) => {
@@ -276,6 +280,7 @@ export function useWorkItems(isAuthenticated: boolean, token: string | null) {
     timelineDate,
     timelineSessions,
     timelineLoading,
+    timelineSources,
     searchTerm,
     showFilters,
     expandedItems,
@@ -290,6 +295,7 @@ export function useWorkItems(isAuthenticated: boolean, token: string | null) {
     setFilters,
     setViewMode,
     setTimelineDate,
+    setTimelineSources,
     setSearchTerm,
     setShowFilters,
     // Actions
@@ -326,6 +332,7 @@ export function useWorkItemCrud(
     date: new Date().toISOString().split('T')[0],
     jira_issue_key: '',
     category: '',
+    project_name: '',
   })
 
   // Jira mapping state
@@ -340,6 +347,7 @@ export function useWorkItemCrud(
       date: new Date().toISOString().split('T')[0],
       jira_issue_key: '',
       category: '',
+      project_name: '',
     })
   }, [])
 
@@ -353,6 +361,7 @@ export function useWorkItemCrud(
         date: formData.date,
         jira_issue_key: formData.jira_issue_key || undefined,
         category: formData.category || undefined,
+        project_name: formData.project_name || undefined,
       })
       setShowCreateModal(false)
       resetForm()
@@ -374,6 +383,7 @@ export function useWorkItemCrud(
         date: formData.date,
         jira_issue_key: formData.jira_issue_key || undefined,
         category: formData.category || undefined,
+        project_name: formData.project_name || undefined,
       })
       setShowEditModal(false)
       setSelectedItem(null)
@@ -415,6 +425,25 @@ export function useWorkItemCrud(
 
   const openEditModal = useCallback((item: WorkItem) => {
     setSelectedItem(item)
+
+    // Derive project_name from project_path for manual items
+    // Manual project path format: ~/.recap/manual-projects/{project_name}
+    let project_name = ''
+    if (item.project_path?.includes('manual-projects')) {
+      const segments = item.project_path.split(/[/\\]/)
+      project_name = segments[segments.length - 1] || ''
+    } else if (item.project_path) {
+      // For non-manual items, use the last segment of project_path
+      const segments = item.project_path.split(/[/\\]/)
+      project_name = segments[segments.length - 1] || ''
+    }
+
+    // Legacy: also check title prefix for backward compatibility
+    if (!project_name && item.title.startsWith('[') && item.title.includes('] ')) {
+      const endIndex = item.title.indexOf('] ')
+      project_name = item.title.substring(1, endIndex)
+    }
+
     setFormData({
       title: item.title,
       description: item.description || '',
@@ -422,6 +451,7 @@ export function useWorkItemCrud(
       date: item.date,
       jira_issue_key: item.jira_issue_key || '',
       category: item.category || '',
+      project_name,
     })
     setShowEditModal(true)
   }, [])
