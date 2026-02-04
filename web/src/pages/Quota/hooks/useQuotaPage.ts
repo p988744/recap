@@ -22,7 +22,7 @@ export interface QuotaPageState {
   currentQuota: QuotaSnapshot[]
   providerAvailable: boolean
 
-  // History data
+  // History data (all window types combined)
   history: QuotaSnapshot[]
 
   // Loading/error states
@@ -32,8 +32,6 @@ export interface QuotaPageState {
   // Filter state
   provider: string
   setProvider: (provider: string) => void
-  windowType: string
-  setWindowType: (windowType: string) => void
   days: number
   setDays: (days: number) => void
 
@@ -55,7 +53,6 @@ export function useQuotaPage(): QuotaPageState {
 
   // Filter state
   const [provider, setProvider] = useState<string>('claude')
-  const [windowType, setWindowType] = useState<string>('5_hour')
   const [days, setDays] = useState<number>(7)
 
   // Fetch current quota
@@ -82,18 +79,24 @@ export function useQuotaPage(): QuotaPageState {
     }
   }, [])
 
-  // Fetch history data
+  // Fetch history data for all window types
   const fetchHistory = useCallback(async () => {
-    console.log(`${LOG_PREFIX} Fetching history: ${provider}/${windowType}, ${days} days`)
+    console.log(`${LOG_PREFIX} Fetching history for all window types, ${days} days`)
     try {
-      const result = await quota.getQuotaHistory(provider, windowType, days)
-      console.log(`${LOG_PREFIX} History fetched:`, result.length, 'points')
-      setHistory(result)
+      // Fetch history for primary window types in parallel
+      const windowTypes = ['5_hour', '7_day']
+      const results = await Promise.all(
+        windowTypes.map((wt) => quota.getQuotaHistory(provider, wt, days))
+      )
+      // Combine all results
+      const combined = results.flat()
+      console.log(`${LOG_PREFIX} History fetched:`, combined.length, 'points')
+      setHistory(combined)
     } catch (err) {
       console.error(`${LOG_PREFIX} Error fetching history:`, err)
       throw err
     }
-  }, [provider, windowType, days])
+  }, [provider, days])
 
   // Combined refresh
   const refresh = useCallback(async () => {
@@ -123,8 +126,6 @@ export function useQuotaPage(): QuotaPageState {
     error,
     provider,
     setProvider,
-    windowType,
-    setWindowType,
     days,
     setDays,
     refresh,

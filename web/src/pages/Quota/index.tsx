@@ -28,8 +28,6 @@ export function QuotaPage() {
     error,
     provider,
     setProvider,
-    windowType,
-    setWindowType,
     days,
     setDays,
     refresh,
@@ -180,20 +178,6 @@ export function QuotaPage() {
                   </SelectContent>
                 </Select>
 
-                {/* Window type filter */}
-                <Select value={windowType} onValueChange={setWindowType}>
-                  <SelectTrigger className="w-32 h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="5_hour">5 小時</SelectItem>
-                    <SelectItem value="7_day">7 天</SelectItem>
-                    <SelectItem value="7_day_opus">Opus</SelectItem>
-                    <SelectItem value="7_day_sonnet">Sonnet</SelectItem>
-                    <SelectItem value="monthly">月度</SelectItem>
-                  </SelectContent>
-                </Select>
-
                 {/* Days filter */}
                 <Select
                   value={days.toString()}
@@ -219,7 +203,6 @@ export function QuotaPage() {
               <QuotaStats
                 currentQuota={currentQuota}
                 historyData={history}
-                windowType={windowType}
               />
             )}
 

@@ -12,10 +12,8 @@ import type { QuotaSnapshot } from '@/types/quota'
 interface QuotaStatsProps {
   /** Current snapshots for all window types */
   currentQuota: QuotaSnapshot[]
-  /** History data for the selected window type */
+  /** History data for all window types */
   historyData: QuotaSnapshot[]
-  /** Selected window type for history */
-  windowType: string
 }
 
 function StatRow({
@@ -54,7 +52,7 @@ function StatRow({
   )
 }
 
-export function QuotaStats({ currentQuota, historyData, windowType }: QuotaStatsProps) {
+export function QuotaStats({ currentQuota, historyData }: QuotaStatsProps) {
   const stats = useMemo(() => {
     // Get current values from snapshots
     const getCurrent = (wt: string) => {
@@ -77,29 +75,19 @@ export function QuotaStats({ currentQuota, historyData, windowType }: QuotaStats
       }
     }
 
-    // 5-hour stats
+    // 5-hour stats (always calculate from history)
     const fiveHourCurrent = getCurrent('5_hour')
-    const fiveHourHistory = windowType === '5_hour'
-      ? getHistoryStats(historyData, '5_hour')
-      : { avg: null, max: null }
+    const fiveHourHistory = getHistoryStats(historyData, '5_hour')
 
-    // 7-day stats
+    // 7-day stats (always calculate from history)
     const sevenDayCurrent = getCurrent('7_day')
-    const sevenDayHistory = windowType === '7_day'
-      ? getHistoryStats(historyData, '7_day')
-      : { avg: null, max: null }
+    const sevenDayHistory = getHistoryStats(historyData, '7_day')
 
-    // 7-day Opus stats
+    // 7-day Opus stats (only current, no history tracking)
     const opusCurrent = getCurrent('7_day_opus')
-    const opusHistory = windowType === '7_day_opus'
-      ? getHistoryStats(historyData, '7_day_opus')
-      : { avg: null, max: null }
 
-    // 7-day Sonnet stats
+    // 7-day Sonnet stats (only current, no history tracking)
     const sonnetCurrent = getCurrent('7_day_sonnet')
-    const sonnetHistory = windowType === '7_day_sonnet'
-      ? getHistoryStats(historyData, '7_day_sonnet')
-      : { avg: null, max: null }
 
     return {
       fiveHour: {
@@ -114,16 +102,16 @@ export function QuotaStats({ currentQuota, historyData, windowType }: QuotaStats
       },
       opus: {
         current: opusCurrent,
-        avg: opusHistory.avg,
-        max: opusHistory.max,
+        avg: null,
+        max: null,
       },
       sonnet: {
         current: sonnetCurrent,
-        avg: sonnetHistory.avg,
-        max: sonnetHistory.max,
+        avg: null,
+        max: null,
       },
     }
-  }, [currentQuota, historyData, windowType])
+  }, [currentQuota, historyData])
 
   // Only show rows that have current data
   const hasOpus = stats.opus.current !== null
@@ -190,7 +178,7 @@ export function QuotaStats({ currentQuota, historyData, windowType }: QuotaStats
         </tbody>
       </table>
       <p className="text-[10px] text-muted-foreground mt-2">
-        * 平均和最高值基於所選時間範圍內的歷史資料（僅顯示當前選擇的週期類型）
+        * 平均和最高值基於所選時間範圍內的歷史資料
       </p>
     </div>
   )
