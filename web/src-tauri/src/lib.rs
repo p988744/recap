@@ -185,6 +185,12 @@ pub fn run() {
             commands::quota::get_stored_quota,
             commands::quota::get_quota_history,
             commands::quota::check_quota_provider_available,
+            // Quota Polling Timer
+            commands::quota_timer::start_quota_polling,
+            commands::quota_timer::stop_quota_polling,
+            commands::quota_timer::get_quota_polling_status,
+            commands::quota_timer::update_quota_polling_config,
+            commands::quota_timer::trigger_quota_poll,
         ])
         .setup(|app| {
             // Setup Tauri logging plugin (for frontend) - must be first
@@ -204,6 +210,11 @@ pub fn run() {
             log::info!("----------------------------------------");
             log::info!("Setting up application...");
             log::info!("  ✓ Tauri plugins loaded");
+
+            // Initialize quota polling service state (synchronously, before database)
+            log::info!("Initializing quota polling service...");
+            app.manage(commands::quota_timer::QuotaPollingServiceState::new());
+            log::info!("  ✓ Quota polling service state initialized");
 
             // Initialize database and app state
             log::info!("Initializing database...");
