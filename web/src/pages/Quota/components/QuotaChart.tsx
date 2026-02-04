@@ -101,51 +101,66 @@ export function QuotaChart({ data, settings, currentQuota }: QuotaChartProps) {
     return result
   }, [data])
 
-  // Calculate current window start time for 5-hour quota
-  // Only show the current window boundary to avoid confusion
-  const currentWindowBoundary = useMemo(() => {
-    if (!currentQuota || chartData.length === 0) return null
+  // Extract window boundaries from history data's resets_at
+  // Each distinct resets_at + 1 second = start of a new window
+  const windowBoundaries = useMemo(() => {
+    if (chartData.length === 0) return []
 
-    const fiveHourQuota = currentQuota.find(
-      (q) => q.provider === 'claude' && q.window_type === '5_hour' && q.resets_at
-    )
-    if (!fiveHourQuota?.resets_at) return null
+    // Get distinct resets_at values from 5-hour quota history
+    const resetsAtSet = new Set<string>()
+    data.forEach((snapshot) => {
+      if (snapshot.window_type === '5_hour' && snapshot.resets_at) {
+        resetsAtSet.add(snapshot.resets_at)
+      }
+    })
 
-    const resetsAt = new Date(fiveHourQuota.resets_at).getTime()
-    const windowDuration = WINDOW_DURATIONS['5_hour']
-    const windowStart = resetsAt - windowDuration
-
-    // Find closest data point to current window start
     const chartStart = chartData[0].timestamp
     const chartEnd = chartData[chartData.length - 1].timestamp
 
-    // Only show if window start is within chart range
-    if (windowStart < chartStart || windowStart > chartEnd) return null
+    const boundaries: { xValue: string; label: string }[] = []
 
-    let closestPoint = chartData[0]
-    let minDiff = Math.abs(chartData[0].timestamp - windowStart)
+    resetsAtSet.forEach((resetsAtStr) => {
+      // resets_at + 1 second = window start time
+      const resetsAt = new Date(resetsAtStr).getTime()
+      const windowStart = resetsAt + 1000 // Add 1 second
 
-    for (const point of chartData) {
-      const diff = Math.abs(point.timestamp - windowStart)
-      if (diff < minDiff) {
-        minDiff = diff
-        closestPoint = point
+      // Only include if within chart range
+      if (windowStart < chartStart || windowStart > chartEnd) return
+
+      // Find closest data point
+      let closestPoint = chartData[0]
+      let minDiff = Math.abs(chartData[0].timestamp - windowStart)
+
+      for (const point of chartData) {
+        if (!point.time) continue // Skip gap markers
+        const diff = Math.abs(point.timestamp - windowStart)
+        if (diff < minDiff) {
+          minDiff = diff
+          closestPoint = point
+        }
       }
-    }
 
-    // Only show if within 1 hour of a data point
-    const oneHour = 60 * 60 * 1000
-    if (minDiff > oneHour) return null
+      // Only show if within 1 hour of a data point
+      const oneHour = 60 * 60 * 1000
+      if (minDiff > oneHour) return
 
-    const date = new Date(windowStart)
-    return {
-      xValue: closestPoint.time,
-      label: date.toLocaleString('zh-TW', {
-        hour: '2-digit',
-        minute: '2-digit',
-      }),
-    }
-  }, [currentQuota, chartData])
+      const date = new Date(windowStart)
+      boundaries.push({
+        xValue: closestPoint.time,
+        label: date.toLocaleString('zh-TW', {
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
+      })
+    })
+
+    // Remove duplicates and sort by label
+    const unique = boundaries.filter(
+      (b, i, arr) => arr.findIndex((x) => x.xValue === b.xValue) === i
+    )
+
+    return unique
+  }, [data, chartData])
 
   return (
     <ResponsiveContainer width="100%" height={300}>
@@ -171,7 +186,7 @@ export function QuotaChart({ data, settings, currentQuota }: QuotaChartProps) {
         />
         <Tooltip
           formatter={(value: number, name: string) => {
-            const label = name === 'fiveHour' ? '5 小時' : '7 天'
+            const label = name === 'fiveHour' ? '5 小時' : '本週用量'
             return [`${value.toFixed(1)}%`, label]
           }}
           labelFormatter={(_, payload) => {
@@ -188,7 +203,7 @@ export function QuotaChart({ data, settings, currentQuota }: QuotaChartProps) {
           labelStyle={{ color: 'hsl(var(--popover-foreground))' }}
         />
         <Legend
-          formatter={(value: string) => (value === 'fiveHour' ? '5 小時' : '7 天')}
+          formatter={(value: string) => (value === 'fiveHour' ? '5 小時' : '本週用量')}
           wrapperStyle={{ fontSize: 12 }}
         />
         {/* Warning threshold line */}
@@ -215,20 +230,21 @@ export function QuotaChart({ data, settings, currentQuota }: QuotaChartProps) {
             fontSize: 11,
           }}
         />
-        {/* Current window boundary line (5-hour) */}
-        {currentWindowBoundary && (
+        {/* Window boundary lines from history resets_at */}
+        {windowBoundaries.map((boundary, index) => (
           <ReferenceLine
-            x={currentWindowBoundary.xValue}
+            key={`boundary-${index}`}
+            x={boundary.xValue}
             stroke="#64748b"
             strokeWidth={1}
             label={{
-              value: `窗口開始 ${currentWindowBoundary.label}`,
+              value: boundary.label,
               position: 'insideTopLeft',
               fill: '#64748b',
               fontSize: 10,
             }}
           />
-        )}
+        ))}
         {/* 5-hour usage bar */}
         <Bar
           dataKey="fiveHour"
@@ -237,7 +253,7 @@ export function QuotaChart({ data, settings, currentQuota }: QuotaChartProps) {
           radius={[2, 2, 0, 0]}
           barSize={8}
         />
-        {/* 7-day usage line - dashed line to connect gaps */}
+        {/* 7-day usage line - dashed line to connect gaps (hidden from tooltip) */}
         <Line
           type="monotone"
           dataKey="sevenDay"
@@ -248,6 +264,7 @@ export function QuotaChart({ data, settings, currentQuota }: QuotaChartProps) {
           activeDot={false}
           connectNulls
           legendType="none"
+          tooltipType="none"
         />
         {/* 7-day usage line - solid line for actual data */}
         <Line

@@ -74,9 +74,9 @@ export function getAlertLevel(
 export function formatWindowType(windowType: QuotaWindowType): string {
   switch (windowType) {
     case '5_hour':
-      return '5hr'
+      return '5小時'
     case '7_day':
-      return '7day'
+      return '本週'
     case '7_day_opus':
       return 'Opus'
     case '7_day_sonnet':
