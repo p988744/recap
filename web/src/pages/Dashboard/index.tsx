@@ -14,6 +14,7 @@ import {
   WorkItemsStatus,
   ProjectDistribution,
   RecentActivities,
+  QuotaCard,
 } from './components'
 
 export function Dashboard() {
@@ -50,6 +51,11 @@ export function Dashboard() {
         projectCount={dashboardState.projectCount}
         daysWorked={dashboardState.daysWorked}
       />
+
+      {/* Quota Card */}
+      <section className="animate-fade-up opacity-0 delay-2">
+        <QuotaCard />
+      </section>
 
       {/* Contribution Heatmap */}
       {dashboardState.heatmapStats?.daily_hours && dashboardState.heatmapStats.daily_hours.length > 0 && (
