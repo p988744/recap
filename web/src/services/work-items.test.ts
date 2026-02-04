@@ -182,7 +182,7 @@ describe('work-items service', () => {
       expect(result.date).toBe('2024-01-15')
       expect(mockInvoke).toHaveBeenCalledWith('get_timeline_data', {
         token: 'test-token',
-        date: '2024-01-15',
+        query: { date: '2024-01-15', sources: undefined },
       })
     })
   })

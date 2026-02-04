@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { AntigravityPathSetting } from './AntigravityPathSetting'
 import { antigravity } from '@/services/integrations'
+import type { AntigravityApiStatus } from '@/types'
 
 vi.mock('@/services/integrations', () => ({
   antigravity: {
@@ -170,7 +171,7 @@ describe('AntigravityPathSetting', () => {
   })
 
   it('should disable refresh button while re-checking', async () => {
-    let resolveCheck: (value: unknown) => void
+    let resolveCheck: (value: AntigravityApiStatus) => void
     vi.mocked(antigravity.checkApiStatus)
       .mockResolvedValueOnce({
         running: true,

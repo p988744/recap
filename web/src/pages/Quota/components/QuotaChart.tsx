@@ -24,8 +24,6 @@ import type { QuotaSnapshot, QuotaSettings } from '@/types/quota'
 interface QuotaChartProps {
   data: QuotaSnapshot[]
   settings: QuotaSettings
-  /** Current quota snapshots to calculate window boundaries */
-  currentQuota?: QuotaSnapshot[]
 }
 
 interface ChartDataPoint {
@@ -36,13 +34,7 @@ interface ChartDataPoint {
   sevenDay?: number
 }
 
-// Window durations in milliseconds
-const WINDOW_DURATIONS: Record<string, number> = {
-  '5_hour': 5 * 60 * 60 * 1000,
-  '7_day': 7 * 24 * 60 * 60 * 1000,
-}
-
-export function QuotaChart({ data, settings, currentQuota }: QuotaChartProps) {
+export function QuotaChart({ data, settings }: QuotaChartProps) {
   // Transform data for chart - group by timestamp and separate by window type
   // Insert gap markers where time difference is too large
   const chartData = useMemo(() => {
