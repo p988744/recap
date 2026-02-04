@@ -215,7 +215,6 @@ export function QuotaPage() {
               <QuotaChart
                 data={history}
                 settings={DEFAULT_QUOTA_SETTINGS}
-                currentQuota={currentQuota}
               />
             ) : (
               <div className="flex flex-col items-center justify-center h-[300px] text-muted-foreground">
