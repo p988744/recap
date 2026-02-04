@@ -152,7 +152,7 @@ export function QuotaStats({ currentQuota, historyData }: QuotaStatsProps) {
           />
           <StatRow
             icon={<Calendar className="w-4 h-4 text-green-500" />}
-            label="7 天"
+            label="本週用量"
             current={stats.sevenDay.current}
             avg={stats.sevenDay.avg}
             max={stats.sevenDay.max}
@@ -160,7 +160,7 @@ export function QuotaStats({ currentQuota, historyData }: QuotaStatsProps) {
           {hasOpus && (
             <StatRow
               icon={<span className="w-4 h-4 text-purple-500 text-xs font-bold">O</span>}
-              label="Opus (7天)"
+              label="Opus (本週)"
               current={stats.opus.current}
               avg={stats.opus.avg}
               max={stats.opus.max}
@@ -169,7 +169,7 @@ export function QuotaStats({ currentQuota, historyData }: QuotaStatsProps) {
           {hasSonnet && (
             <StatRow
               icon={<span className="w-4 h-4 text-orange-500 text-xs font-bold">S</span>}
-              label="Sonnet (7天)"
+              label="Sonnet (本週)"
               current={stats.sonnet.current}
               avg={stats.sonnet.avg}
               max={stats.sonnet.max}
