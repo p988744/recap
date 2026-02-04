@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "prepare": "cd .. && husky"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -57,6 +58,7 @@
     "@vitejs/plugin-react": "^4.3.3",
     "@vitest/coverage-v8": "^4.0.17",
     "autoprefixer": "^10.4.20",
+    "husky": "^9.1.7",
     "jsdom": "^27.4.0",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.14",
