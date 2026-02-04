@@ -8,12 +8,14 @@
 
 - **多來源自動收集** - 從 Git commits、Claude Code sessions、GitLab、Antigravity 自動追蹤工作
 - **本週總覽 (This Week)** - Gantt 甘特圖顯示每日工作時段，熱力圖一覽整週工作密度
+- **專案管理 (Projects)** - 專案總覽、工作時間軸、Git commit diff 檢視
 - **Worklog 每日/每週總覽** - 按日期分組檢視工作紀錄，支援每小時明細展開
 - **LLM 智能彙整** - 自動將工作描述摘要為簡潔的 Tempo worklog 描述
 - **工時正規化** - 自動將每日工時調整為標準工時
 - **Jira Tempo 整合** - 單筆、單日、整週匯出工時到 Jira Tempo，含預覽與 Issue 驗證
 - **多種檢視模式** - 時間軸、專案分組、列表檢視
 - **來源篩選** - 依資料來源（Git / Claude Code / Antigravity）篩選顯示
+- **背景自動同步** - 定時自動同步各資料來源，無需手動操作
 - **Excel 報表匯出** - 匯出工作報表
 - **跨平台支援** - macOS (Apple Silicon / Intel)、Windows、Linux
 
@@ -117,14 +119,23 @@ cargo tauri build
 - 每次匯出前 LLM 會自動摘要工作描述
 - 支援預覽（Preview）確認後再正式匯出
 
-### 6. 管理工作項目
+### 6. 專案管理 (Projects)
+
+在 **Projects** 頁面：
+- **專案總覽** - 左側顯示所有專案列表，包含工作時數統計
+- **專案資訊 (Info)** - 顯示專案 README、Git 資訊、最近活動
+- **工作時間軸 (Timeline)** - 視覺化專案的工作時段，支援日/週/月檢視
+- **專案設定 (Settings)** - 隱藏專案、管理專案來源
+- **Git Commit 差異檢視** - 點擊 commit 可查看完整 diff
+
+### 7. 管理工作項目
 
 在 **Work Items** 頁面：
 - **Timeline** - 時間軸檢視，顯示每日工作時段
 - **Grouped** - 按專案和 Jira Issue 分組
 - **List** - 傳統列表檢視
 
-### 7. 匯出報表
+### 8. 匯出報表
 
 在 **Reports** 頁面：
 - 選擇日期範圍
@@ -143,6 +154,7 @@ recap/
 │   │   │   ├── Dashboard/
 │   │   │   ├── ThisWeek/     # 本週總覽（Gantt + 熱力圖）
 │   │   │   ├── Worklog/      # 工時總覽（含 Tempo 匯出）
+│   │   │   ├── Projects/     # 專案管理（時間軸 + Git diff）
 │   │   │   ├── WorkItems/
 │   │   │   ├── Reports/
 │   │   │   └── Settings/
