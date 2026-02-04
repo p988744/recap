@@ -186,10 +186,10 @@ export function QuotaPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="five_hour">5 小時</SelectItem>
-                    <SelectItem value="seven_day">7 天</SelectItem>
-                    <SelectItem value="seven_day_opus">Opus</SelectItem>
-                    <SelectItem value="seven_day_sonnet">Sonnet</SelectItem>
+                    <SelectItem value="5_hour">5 小時</SelectItem>
+                    <SelectItem value="7_day">7 天</SelectItem>
+                    <SelectItem value="7_day_opus">Opus</SelectItem>
+                    <SelectItem value="7_day_sonnet">Sonnet</SelectItem>
                     <SelectItem value="monthly">月度</SelectItem>
                   </SelectContent>
                 </Select>

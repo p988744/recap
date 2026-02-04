@@ -7,12 +7,12 @@
 // Quota provider type
 export type QuotaProvider = 'claude' | 'antigravity'
 
-// Window type for quota tracking
+// Window type for quota tracking (matches database format)
 export type QuotaWindowType =
-  | 'five_hour'
-  | 'seven_day'
-  | 'seven_day_opus'
-  | 'seven_day_sonnet'
+  | '5_hour'
+  | '7_day'
+  | '7_day_opus'
+  | '7_day_sonnet'
   | 'monthly'
 
 // A single quota snapshot
@@ -73,13 +73,13 @@ export function getAlertLevel(
  */
 export function formatWindowType(windowType: QuotaWindowType): string {
   switch (windowType) {
-    case 'five_hour':
+    case '5_hour':
       return '5hr'
-    case 'seven_day':
+    case '7_day':
       return '7day'
-    case 'seven_day_opus':
+    case '7_day_opus':
       return 'Opus'
-    case 'seven_day_sonnet':
+    case '7_day_sonnet':
       return 'Sonnet'
     case 'monthly':
       return 'Monthly'

@@ -43,7 +43,7 @@ export function QuotaCard() {
 
       // Update tray title with quota percentage
       const fiveHour = result.snapshots.find(
-        (s) => s.provider === 'claude' && s.window_type === 'five_hour'
+        (s) => s.provider === 'claude' && s.window_type === '5_hour'
       )
       if (fiveHour) {
         tray.updateTrayQuota(fiveHour.used_percent).catch((err) => {
@@ -97,7 +97,7 @@ export function QuotaCard() {
 
   // Filter Claude snapshots
   const claudeSnapshots = snapshots.filter((s) => s.provider === 'claude')
-  const primarySnapshot = claudeSnapshots.find((s) => s.window_type === 'five_hour')
+  const primarySnapshot = claudeSnapshots.find((s) => s.window_type === '5_hour')
 
   if (!providerAvailable) {
     return (
