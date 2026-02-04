@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { RefreshCw, AlertTriangle, AlertCircle } from 'lucide-react'
-import { quota } from '@/services'
+import { quota, tray } from '@/services'
 import type { QuotaSnapshot, QuotaSettings, AlertLevel } from '@/types/quota'
 import { getAlertLevel, formatWindowType, formatResetTime } from '@/types/quota'
 import { cn } from '@/lib/utils'
@@ -40,6 +40,16 @@ export function QuotaCard() {
       console.log(`${LOG_PREFIX} Quota fetched:`, result)
       setSnapshots(result.snapshots)
       setProviderAvailable(result.provider_available)
+
+      // Update tray title with quota percentage
+      const fiveHour = result.snapshots.find(
+        (s) => s.provider === 'claude' && s.window_type === 'five_hour'
+      )
+      if (fiveHour) {
+        tray.updateTrayQuota(fiveHour.used_percent).catch((err) => {
+          console.error(`${LOG_PREFIX} Failed to update tray:`, err)
+        })
+      }
     } catch (err) {
       console.error(`${LOG_PREFIX} Error:`, err)
       setError(err instanceof Error ? err.message : 'Failed to fetch quota')
