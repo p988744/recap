@@ -1,6 +1,6 @@
 [package]
 name = "recap"
-version = "2.1.0-dev"
+version = "2.1.0-beta.1"
 description = "Recap - Work tracking and reporting tool"
 authors = ["Recap Team"]
 license = "MIT"
