@@ -371,6 +371,28 @@ impl BackgroundSyncService {
         self.last_compaction_at.read().await.clone()
     }
 
+    /// Record compaction completion
+    ///
+    /// Updates both `last_compaction_at` and calculates `next_compaction_at`.
+    /// Call this after compaction runs (e.g., in trigger_sync_with_progress).
+    pub async fn record_compaction_completed(&self) {
+        let now = chrono::Utc::now().to_rfc3339();
+        let interval = self.config.read().await.compaction_interval_minutes;
+
+        // Update last_compaction_at
+        {
+            let mut last = self.last_compaction_at.write().await;
+            *last = Some(now);
+        }
+
+        // Update next_compaction_at
+        {
+            let next = Self::calculate_next_compaction(interval);
+            let mut next_time = self.next_compaction_at.write().await;
+            *next_time = Some(next);
+        }
+    }
+
     /// Initialize timestamps from database on startup
     ///
     /// This should be called after the service is created to restore
@@ -1001,10 +1023,35 @@ impl BackgroundSyncService {
             }
         }
 
-        // Update last_sync_at
+        // Update last_sync_at (memory)
+        let now = chrono::Utc::now();
+        let now_str = now.to_rfc3339();
         {
             let mut sync_time = last_sync_at.write().await;
-            *sync_time = Some(chrono::Utc::now().to_rfc3339());
+            *sync_time = Some(now_str.clone());
+        }
+
+        // Persist to database: update sync_status table
+        let total_items: i32 = results.iter().map(|r| r.items_synced).sum();
+        if let Err(e) = sqlx::query(
+            r#"
+            UPDATE sync_status
+            SET status = 'success',
+                last_sync_at = ?,
+                last_item_count = ?,
+                error_message = NULL,
+                updated_at = ?
+            WHERE user_id = ?
+            "#
+        )
+        .bind(&now)
+        .bind(total_items)
+        .bind(&now)
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        {
+            log::warn!("Failed to persist sync status to database: {}", e);
         }
 
         // Transition back to Idle

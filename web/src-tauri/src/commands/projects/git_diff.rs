@@ -3,7 +3,8 @@
 //! Tauri commands for viewing git commit diffs.
 
 use std::path::Path;
-use std::process::Command;
+
+use recap_core::utils::create_command;
 
 use super::types::{CommitDiffResponse, CommitFileChange, CommitStats, GetCommitDiffRequest};
 use crate::commands::AppState;
@@ -225,7 +226,7 @@ fn get_diff_text(git_root: &Path, commit_hash: &str) -> Result<String, String> {
 
 /// Run a git command with timeout
 fn run_git_command(git_root: &Path, args: &[&str]) -> Result<String, String> {
-    let child = Command::new("git")
+    let child = create_command("git")
         .args(args)
         .current_dir(git_root)
         .stdout(std::process::Stdio::piped())

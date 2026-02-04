@@ -401,6 +401,36 @@ impl Database {
             .await
             .ok();
 
+        // Add background sync config columns
+        sqlx::query("ALTER TABLE users ADD COLUMN sync_enabled BOOLEAN DEFAULT 1")
+            .execute(&self.pool)
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE users ADD COLUMN sync_interval_minutes INTEGER DEFAULT 15")
+            .execute(&self.pool)
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE users ADD COLUMN compaction_interval_minutes INTEGER DEFAULT 60")
+            .execute(&self.pool)
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE users ADD COLUMN auto_generate_summaries BOOLEAN DEFAULT 1")
+            .execute(&self.pool)
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE users ADD COLUMN sync_git BOOLEAN DEFAULT 1")
+            .execute(&self.pool)
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE users ADD COLUMN sync_claude BOOLEAN DEFAULT 1")
+            .execute(&self.pool)
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE users ADD COLUMN sync_antigravity BOOLEAN DEFAULT 1")
+            .execute(&self.pool)
+            .await
+            .ok();
+
         // Create snapshot_raw_data table for hourly session snapshots
         sqlx::query(
             r#"

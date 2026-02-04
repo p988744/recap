@@ -14,6 +14,10 @@ pub mod db;
 pub mod error;
 pub mod models;
 pub mod services;
+pub mod utils;
+
+// Re-export utils for convenience
+pub use utils::create_command;
 
 // Re-exports for convenience
 pub use db::Database;
