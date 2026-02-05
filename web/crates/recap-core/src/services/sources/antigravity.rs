@@ -105,22 +105,32 @@ impl SyncSource for AntigravitySource {
     ) -> Result<SourceSyncResult, String> {
         let mut result = SourceSyncResult::new(self.source_name());
 
+        log::debug!("Antigravity: 開始同步");
+
         // Get connection (needed for both phases)
         let connection = match self.get_connection() {
-            Some(conn) => conn,
+            Some(conn) => {
+                log::debug!("Antigravity: API 連線成功 (port: {})", conn.port);
+                conn
+            }
             None => {
-                log::debug!("Antigravity not running, skipping sync");
+                log::info!("Antigravity: API 未連線，跳過同步");
                 return Ok(result);
             }
         };
 
         // Phase 1: Sync from API - get session metadata (timestamps, summaries, etc.)
+        log::debug!("Antigravity: Phase 1 - 同步 session 資料");
         let api_projects = match fetch_all_trajectories(&connection).await {
             Ok(api_response) => {
                 let projects = convert_to_projects(api_response);
                 result.projects_scanned = projects.len();
+                log::debug!("Antigravity: 發現 {} 個專案", projects.len());
 
-                for project in &projects {
+                for (idx, project) in projects.iter().enumerate() {
+                    log::debug!("[{}/{}] 處理專案: {} ({} sessions)",
+                        idx + 1, projects.len(), project.name, project.sessions.len());
+
                     for session in &project.sessions {
                         match process_session(pool, user_id, session, self.source_name()).await {
                             Ok(ProcessResult::Created) => {
@@ -135,7 +145,7 @@ impl SyncSource for AntigravitySource {
                                 result.sessions_skipped += 1;
                             }
                             Err(e) => {
-                                log::error!("Failed to process Antigravity session: {}", e);
+                                log::error!("Antigravity: 處理 session 失敗: {}", e);
                                 result.sessions_skipped += 1;
                             }
                         }
@@ -144,16 +154,17 @@ impl SyncSource for AntigravitySource {
                 projects
             }
             Err(e) => {
-                log::warn!("Failed to fetch from Antigravity API: {}", e);
+                log::warn!("Antigravity: API 取得資料失敗: {}", e);
                 Vec::new()
             }
         };
 
         // Phase 2: Capture detailed snapshots from API (GetCascadeTrajectorySteps)
         // This enables LLM-powered summary generation via compaction
+        log::debug!("Antigravity: Phase 2 - 擷取快照");
         let snapshots_captured = capture_api_snapshots(pool, user_id, &connection, &api_projects).await;
         log::info!(
-            "Antigravity sync: {} work items, {} snapshots captured",
+            "Antigravity: 同步完成 - {} 個 work items, {} 個快照",
             result.work_items_created + result.work_items_updated,
             snapshots_captured
         );
