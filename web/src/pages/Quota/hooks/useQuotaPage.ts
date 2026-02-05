@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { quota, tray } from '@/services'
-import type { QuotaSnapshot, QuotaSettings } from '@/types/quota'
+import type { QuotaSnapshot, QuotaSettings, CostSummary } from '@/types/quota'
 
 const LOG_PREFIX = '[useQuotaPage]'
 
@@ -24,6 +24,9 @@ export interface QuotaPageState {
 
   // History data (all window types combined)
   history: QuotaSnapshot[]
+
+  // Cost data (from local JSONL files)
+  costSummary: CostSummary | null
 
   // Loading/error states
   loading: boolean
@@ -46,6 +49,9 @@ export function useQuotaPage(): QuotaPageState {
 
   // History state
   const [history, setHistory] = useState<QuotaSnapshot[]>([])
+
+  // Cost state
+  const [costSummary, setCostSummary] = useState<CostSummary | null>(null)
 
   // Loading/error state
   const [loading, setLoading] = useState(true)
@@ -98,6 +104,19 @@ export function useQuotaPage(): QuotaPageState {
     }
   }, [provider, days])
 
+  // Fetch cost summary from local JSONL files
+  const fetchCostSummary = useCallback(async () => {
+    console.log(`${LOG_PREFIX} Fetching cost summary...`)
+    try {
+      const result = await quota.getCostSummary(30)
+      console.log(`${LOG_PREFIX} Cost summary fetched: today=$${result.today_cost.toFixed(2)}`)
+      setCostSummary(result)
+    } catch (err) {
+      console.error(`${LOG_PREFIX} Error fetching cost summary:`, err)
+      // Don't throw - cost data is supplementary
+    }
+  }, [])
+
   // Combined refresh
   const refresh = useCallback(async () => {
     console.log(`${LOG_PREFIX} Refreshing all data...`)
@@ -105,13 +124,13 @@ export function useQuotaPage(): QuotaPageState {
     setError(null)
 
     try {
-      await Promise.all([fetchCurrent(), fetchHistory()])
+      await Promise.all([fetchCurrent(), fetchHistory(), fetchCostSummary()])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch quota data')
     } finally {
       setLoading(false)
     }
-  }, [fetchCurrent, fetchHistory])
+  }, [fetchCurrent, fetchHistory, fetchCostSummary])
 
   // Initial load
   useEffect(() => {
@@ -122,6 +141,7 @@ export function useQuotaPage(): QuotaPageState {
     currentQuota,
     providerAvailable,
     history,
+    costSummary,
     loading,
     error,
     provider,

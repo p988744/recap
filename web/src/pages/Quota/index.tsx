@@ -14,9 +14,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { RefreshCw, Gauge, History } from 'lucide-react'
+import { RefreshCw, Gauge, History, DollarSign } from 'lucide-react'
 import { useQuotaPage, DEFAULT_QUOTA_SETTINGS } from './hooks'
-import { QuotaChart, QuotaSummaryCard, ClaudeAuthConfig, QuotaStats } from './components'
+import { QuotaChart, QuotaSummaryCard, ClaudeAuthConfig, QuotaStats, CostCard, CostChart } from './components'
 import { cn } from '@/lib/utils'
 
 export function QuotaPage() {
@@ -24,6 +24,7 @@ export function QuotaPage() {
     currentQuota,
     providerAvailable,
     history,
+    costSummary,
     loading,
     error,
     provider,
@@ -155,8 +156,37 @@ export function QuotaPage() {
         </section>
       )}
 
+      {/* Cost Summary */}
+      {costSummary && (
+        <section className="animate-fade-up opacity-0 delay-3">
+          <div className="flex items-center gap-2 mb-4">
+            <DollarSign className="w-4 h-4 text-muted-foreground" strokeWidth={1.5} />
+            <h2 className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+              費用統計
+            </h2>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Cost Card */}
+            <CostCard costSummary={costSummary} />
+
+            {/* Cost Chart */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-xs font-medium text-muted-foreground">
+                  每日費用趨勢 (30天)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <CostChart costSummary={costSummary} />
+              </CardContent>
+            </Card>
+          </div>
+        </section>
+      )}
+
       {/* History Chart */}
-      <section className="animate-fade-up opacity-0 delay-3">
+      <section className="animate-fade-up opacity-0 delay-4">
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between flex-wrap gap-4">
