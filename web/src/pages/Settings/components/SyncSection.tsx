@@ -50,7 +50,7 @@ interface SyncSectionProps {
   intervalMinutes: number
   setIntervalMinutes: (v: number) => void
   compactionIntervalMinutes: number
-  setCompactionIntervalHours: (v: number) => void
+  setCompactionIntervalMinutes: (v: number) => void
   autoGenerateSummaries: boolean
   setAutoGenerateSummaries: (v: boolean) => void
   // Source toggles
@@ -128,7 +128,7 @@ export function SyncSection({
   intervalMinutes,
   setIntervalMinutes,
   compactionIntervalMinutes,
-  setCompactionIntervalHours,
+  setCompactionIntervalMinutes,
   autoGenerateSummaries,
   setAutoGenerateSummaries,
   syncGit,
@@ -251,15 +251,15 @@ export function SyncSection({
               <Clock className="w-4 h-4 text-muted-foreground" />
               <select
                 value={compactionIntervalMinutes}
-                onChange={(e) => setCompactionIntervalHours(Number(e.target.value))}
+                onChange={(e) => setCompactionIntervalMinutes(Number(e.target.value))}
                 className="px-3 py-2 bg-background border border-border text-sm focus:outline-none focus:ring-1 focus:ring-foreground"
                 disabled={!enabled || !autoGenerateSummaries}
               >
-                <option value={1}>每小時</option>
-                <option value={3}>每 3 小時</option>
-                <option value={6}>每 6 小時</option>
-                <option value={12}>每 12 小時</option>
-                <option value={24}>每天</option>
+                <option value={60}>每小時</option>
+                <option value={180}>每 3 小時</option>
+                <option value={360}>每 6 小時</option>
+                <option value={720}>每 12 小時</option>
+                <option value={1440}>每天</option>
               </select>
             </div>
           </div>

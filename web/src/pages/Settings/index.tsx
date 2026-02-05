@@ -115,7 +115,7 @@ export function SettingsPage() {
             intervalMinutes={syncForm.intervalMinutes}
             setIntervalMinutes={syncForm.setIntervalMinutes}
             compactionIntervalMinutes={syncForm.compactionIntervalMinutes}
-            setCompactionIntervalHours={syncForm.setCompactionIntervalHours}
+            setCompactionIntervalMinutes={syncForm.setCompactionIntervalMinutes}
             autoGenerateSummaries={syncForm.autoGenerateSummaries}
             setAutoGenerateSummaries={syncForm.setAutoGenerateSummaries}
             syncGit={syncForm.syncGit}

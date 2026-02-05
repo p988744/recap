@@ -114,7 +114,7 @@ export function useSyncForm() {
     setState((prev) => ({ ...prev, intervalMinutes }))
   }, [])
 
-  const setCompactionIntervalHours = useCallback((compactionIntervalMinutes: number) => {
+  const setCompactionIntervalMinutes = useCallback((compactionIntervalMinutes: number) => {
     setState((prev) => ({ ...prev, compactionIntervalMinutes }))
   }, [])
 
@@ -159,17 +159,32 @@ export function useSyncForm() {
           auto_generate_summaries: state.autoGenerateSummaries,
         })
 
+        // Refresh config from backend to confirm saved values
+        const savedConfig = await backgroundSync.getConfig()
+        setState((prev) => ({
+          ...prev,
+          enabled: savedConfig.enabled,
+          intervalMinutes: savedConfig.interval_minutes,
+          compactionIntervalMinutes: savedConfig.compaction_interval_minutes,
+          autoGenerateSummaries: savedConfig.auto_generate_summaries,
+          syncGit: savedConfig.sync_git,
+          syncClaude: savedConfig.sync_claude,
+          syncAntigravity: savedConfig.sync_antigravity,
+          syncGitlab: savedConfig.sync_gitlab,
+          syncJira: savedConfig.sync_jira,
+          saving: false,
+        }))
+
         // Refresh shared status so sidebar updates too
         await refreshStatus()
 
         setMessage({ type: 'success', text: '同步設定已儲存' })
       } catch (err) {
+        setState((prev) => ({ ...prev, saving: false }))
         setMessage({
           type: 'error',
           text: err instanceof Error ? err.message : '儲存失敗',
         })
-      } finally {
-        setState((prev) => ({ ...prev, saving: false }))
       }
     },
     [state, refreshStatus]
@@ -199,7 +214,7 @@ export function useSyncForm() {
     intervalMinutes: state.intervalMinutes,
     setIntervalMinutes,
     compactionIntervalMinutes: state.compactionIntervalMinutes,
-    setCompactionIntervalHours,
+    setCompactionIntervalMinutes,
     autoGenerateSummaries: state.autoGenerateSummaries,
     setAutoGenerateSummaries,
     // Source toggles
