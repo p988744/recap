@@ -77,11 +77,16 @@ impl SyncSource for ClaudeSource {
         let mut result = SourceSyncResult::new(self.source_name());
         result.projects_scanned = projects.len();
 
-        for project in &projects {
+        log::debug!("Claude Code: 發現 {} 個專案", projects.len());
+
+        for (idx, project) in projects.iter().enumerate() {
             // Skip root path projects (MCP/no-context sessions)
             if project.canonical_path == "/" || project.canonical_path.is_empty() {
+                log::debug!("[{}/{}] 跳過根路徑專案: {}", idx + 1, projects.len(), project.name);
                 continue;
             }
+
+            log::debug!("[{}/{}] 處理專案: {} ({})", idx + 1, projects.len(), project.name, project.canonical_path);
 
             for claude_dir in &project.claude_dirs {
                 if !claude_dir.is_dir() {

@@ -440,12 +440,15 @@ pub async fn trigger_sync_with_progress(
     }
 
     // Phase 3: Run compaction cycle
+    log::info!("========== 開始資料壓縮 ==========");
     emit("compaction", None, 0, 100, "正在處理摘要...");
 
     if config.sync_claude {
         let llm = recap_core::services::llm::create_llm_service(&pool, &user_id)
             .await
             .ok();
+
+        log::info!("LLM 服務: {}", if llm.is_some() { "已啟用" } else { "未設定" });
 
         // Find uncompacted items count for progress
         let uncompacted: Vec<(String, String)> = sqlx::query_as(
@@ -466,7 +469,11 @@ pub async fn trigger_sync_with_progress(
         .unwrap_or_default();
 
         let total_items = uncompacted.len();
+        log::info!("---------- Phase 3a: 小時摘要壓縮 ----------");
+        log::info!("待處理: {} 個未壓縮的小時區塊", total_items);
 
+        let mut hourly_success = 0;
+        let mut hourly_errors = 0;
         for (idx, (project_path, hour_bucket)) in uncompacted.iter().enumerate() {
             if idx % 5 == 0 || idx == total_items - 1 {
                 emit(
@@ -478,38 +485,55 @@ pub async fn trigger_sync_with_progress(
                 );
             }
 
-            let _ = recap_core::services::compaction::compact_hourly(
+            match recap_core::services::compaction::compact_hourly(
                 &pool,
                 llm.as_ref(),
                 &user_id,
                 project_path,
                 hour_bucket,
             )
-            .await;
+            .await {
+                Ok(_) => {
+                    hourly_success += 1;
+                    log::debug!("[{}/{}] 壓縮成功: {} @ {}", idx + 1, total_items, project_path, hour_bucket);
+                }
+                Err(e) => {
+                    hourly_errors += 1;
+                    log::warn!("[{}/{}] 壓縮失敗: {} @ {} - {}", idx + 1, total_items, project_path, hour_bucket, e);
+                }
+            }
+        }
+
+        if total_items > 0 {
+            log::info!("小時摘要壓縮完成: {} 成功, {} 失敗", hourly_success, hourly_errors);
         }
 
         // Daily compaction
+        log::info!("---------- Phase 3b: 每日摘要壓縮 ----------");
         emit("compaction", None, 100, 100, "處理每日摘要...");
 
         match recap_core::services::compaction::run_compaction_cycle(&pool, llm.as_ref(), &user_id).await {
             Ok(cr) => {
-                if cr.hourly_compacted > 0 || cr.daily_compacted > 0 {
-                    log::info!(
-                        "Compaction: {} hourly, {} daily summaries",
-                        cr.hourly_compacted,
-                        cr.daily_compacted
-                    );
-                }
+                log::info!(
+                    "每日壓縮完成: {} 小時摘要, {} 每日摘要, {} 每月摘要",
+                    cr.hourly_compacted,
+                    cr.daily_compacted,
+                    cr.monthly_compacted
+                );
             }
-            Err(e) => log::warn!("Compaction cycle error: {}", e),
+            Err(e) => log::warn!("壓縮週期錯誤: {}", e),
         }
+    } else {
+        log::info!("Claude 同步未啟用，跳過資料壓縮");
     }
 
     // Phase 4: Generate timeline summaries for completed periods
+    log::info!("---------- Phase 4: 時間軸摘要 ----------");
     if config.auto_generate_summaries {
         emit("summaries", None, 0, 100, "生成時間軸摘要...");
 
         let time_units = ["week", "month", "quarter", "year"];
+        log::info!("處理時間單位: {:?}", time_units);
         match crate::commands::projects::summaries::generate_all_completed_summaries(
             &pool,
             &user_id,
@@ -520,25 +544,38 @@ pub async fn trigger_sync_with_progress(
             Ok(count) => {
                 if count > 0 {
                     emit("summaries", None, 100, 100, &format!("已生成 {} 個時間軸摘要", count));
-                    log::info!("Generated {} timeline summaries", count);
+                    log::info!("時間軸摘要生成完成: {} 個新摘要", count);
                 } else {
                     emit("summaries", None, 100, 100, "時間軸摘要已是最新");
+                    log::info!("時間軸摘要已是最新，無需生成");
                 }
             }
             Err(e) => {
                 emit("summaries", None, 100, 100, &format!("摘要生成錯誤: {}", e));
-                log::warn!("Timeline summary generation error: {}", e);
+                log::warn!("時間軸摘要生成錯誤: {}", e);
             }
         }
+    } else {
+        log::info!("自動生成摘要未啟用，跳過時間軸摘要");
     }
+
+    log::info!("========== 資料壓縮結束 ==========");
 
     // Record compaction completion (updates last_compaction_at and next_compaction_at)
     if config.sync_claude {
         state.background_sync.record_compaction_completed().await;
+        log::info!("已記錄壓縮完成時間");
     }
 
     // Complete
     let total_items: i32 = results.iter().map(|r| r.items_synced).sum();
+    let total_projects: i32 = results.iter().map(|r| r.projects_scanned).sum();
+    let total_created: i32 = results.iter().map(|r| r.items_created).sum();
+
+    log::info!("========== 手動同步完成摘要 ==========");
+    log::info!("總計掃描: {} 個專案", total_projects);
+    log::info!("總計處理: {} 筆資料 (新增 {} 筆)", total_items, total_created);
+
     emit(
         "complete",
         None,

@@ -943,7 +943,11 @@ impl BackgroundSyncService {
         config: &BackgroundSyncConfig,
         user_id: &str,
     ) -> Vec<SyncOperationResult> {
-        log::info!("Starting data sync for user: {}", user_id);
+        log::info!("========== 開始資料同步 ==========");
+        log::info!("使用者: {}", user_id);
+        log::info!("同步設定: Git={}, Claude={}, Antigravity={}, GitLab={}, Jira={}",
+            config.sync_git, config.sync_claude, config.sync_antigravity,
+            config.sync_gitlab, config.sync_jira);
 
         // Transition to Syncing
         {
@@ -971,25 +975,29 @@ impl BackgroundSyncService {
         };
 
         // Phase 1: Sync all enabled sources
+        log::info!("---------- Phase 1: 同步資料來源 ----------");
         let sync_config = config.to_sync_config();
         let sources = recap_core::services::sources::get_enabled_sources(&sync_config).await;
+        log::info!("已啟用的資料來源: {} 個", sources.len());
 
-        for source in &sources {
-            log::info!("Syncing {} for user: {}", source.display_name(), user_id);
+        for (idx, source) in sources.iter().enumerate() {
+            log::info!("[{}/{}] 開始同步: {}", idx + 1, sources.len(), source.display_name());
 
             match source.sync_sessions(&pool, user_id).await {
                 Ok(source_result) => {
                     let result = SyncOperationResult::from(source_result);
                     log::info!(
-                        "{} sync complete: {} items, {} created",
+                        "[{}/{}] {} 同步完成: 掃描 {} 個專案, 發現 {} 筆資料, 新增 {} 筆",
+                        idx + 1, sources.len(),
                         source.display_name(),
+                        result.projects_scanned,
                         result.items_synced,
                         result.items_created
                     );
                     results.push(result);
                 }
                 Err(e) => {
-                    log::error!("{} sync error: {}", source.display_name(), e);
+                    log::error!("[{}/{}] {} 同步失敗: {}", idx + 1, sources.len(), source.display_name(), e);
                     results.push(SyncOperationResult {
                         source: source.source_name().to_string(),
                         success: false,
@@ -1001,10 +1009,13 @@ impl BackgroundSyncService {
         }
 
         // Phase 2: Capture hourly snapshots
+        log::info!("---------- Phase 2: 擷取快照 ----------");
         if config.sync_claude {
             let projects = recap_core::services::SyncService::discover_project_paths();
+            log::info!("發現 {} 個專案需要擷取快照", projects.len());
             let mut snapshot_count = 0;
-            for project in &projects {
+            let mut snapshot_errors = 0;
+            for (idx, project) in projects.iter().enumerate() {
                 match recap_core::services::snapshot::capture_snapshots_for_project(
                     &pool,
                     user_id,
@@ -1012,15 +1023,21 @@ impl BackgroundSyncService {
                 )
                 .await
                 {
-                    Ok(n) => snapshot_count += n,
+                    Ok(n) => {
+                        if n > 0 {
+                            log::info!("[{}/{}] {} 擷取 {} 個快照", idx + 1, projects.len(), project.name, n);
+                        }
+                        snapshot_count += n;
+                    }
                     Err(e) => {
-                        log::warn!("Snapshot capture error for {}: {}", project.name, e);
+                        log::warn!("[{}/{}] {} 快照擷取失敗: {}", idx + 1, projects.len(), project.name, e);
+                        snapshot_errors += 1;
                     }
                 }
             }
-            if snapshot_count > 0 {
-                log::info!("Captured {} hourly snapshots", snapshot_count);
-            }
+            log::info!("快照擷取完成: {} 個成功, {} 個失敗", snapshot_count, snapshot_errors);
+        } else {
+            log::info!("Claude 同步未啟用，跳過快照擷取");
         }
 
         // Update last_sync_at (memory)
@@ -1064,22 +1081,28 @@ impl BackgroundSyncService {
         }
 
         // Record results
-        {
-            let total_projects: i32 = results.iter().map(|r| r.projects_scanned).sum();
-            let total_created: i32 = results.iter().map(|r| r.items_created).sum();
-            let errors: Vec<String> = results.iter().filter_map(|r| r.error.clone()).collect();
+        let total_projects: i32 = results.iter().map(|r| r.projects_scanned).sum();
+        let total_items: i32 = results.iter().map(|r| r.items_synced).sum();
+        let total_created: i32 = results.iter().map(|r| r.items_created).sum();
+        let errors: Vec<String> = results.iter().filter_map(|r| r.error.clone()).collect();
 
-            {
-                let mut result = last_result.write().await;
-                *result = Some(format!("已掃描 {} 個專案，發現 {} 筆新資料", total_projects, total_created));
-            }
-            {
-                let mut error = last_error.write().await;
-                *error = if errors.is_empty() { None } else { Some(errors.join("; ")) };
-            }
+        {
+            let mut result = last_result.write().await;
+            *result = Some(format!("已掃描 {} 個專案，發現 {} 筆新資料", total_projects, total_created));
+        }
+        {
+            let mut error = last_error.write().await;
+            *error = if errors.is_empty() { None } else { Some(errors.join("; ")) };
         }
 
-        log::info!("Data sync completed: {} sources processed", results.len());
+        log::info!("---------- 同步完成摘要 ----------");
+        log::info!("處理 {} 個資料來源", results.len());
+        log::info!("掃描 {} 個專案", total_projects);
+        log::info!("發現 {} 筆資料 (新增 {} 筆)", total_items, total_created);
+        if !errors.is_empty() {
+            log::warn!("發生 {} 個錯誤: {}", errors.len(), errors.join("; "));
+        }
+        log::info!("========== 資料同步結束 ==========");
         results
     }
 
