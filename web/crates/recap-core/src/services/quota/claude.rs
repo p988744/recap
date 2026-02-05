@@ -15,16 +15,6 @@
 //!
 //! The token is then used to call the Anthropic usage API.
 //!
-//! # Token Expiration
-//!
-//! **Important:** Anthropic's OAuth does NOT support automatic token refresh.
-//! When the token expires (typically after a few hours), users can:
-//!
-//! 1. Try `claude setup-token` for a long-lived token (1 year, experimental)
-//! 2. Or re-authenticate via `claude /login` (standard method)
-//!
-//! See: https://github.com/anthropics/claude-code/issues/12447
-//!
 //! # Quota Windows
 //!
 //! Claude provides several quota windows:
@@ -111,10 +101,8 @@ struct ClaudeOAuthCredentials {
     #[serde(rename = "accessToken")]
     access_token: Option<String>,
 
-    /// OAuth refresh token (present in file but NOT functional - Anthropic doesn't support token refresh)
-    /// See: https://github.com/anthropics/claude-code/issues/12447
+    /// OAuth refresh token (optional, not used)
     #[serde(rename = "refreshToken")]
-    #[allow(dead_code)]
     refresh_token: Option<String>,
 
     /// Expiration time in milliseconds since epoch
@@ -467,7 +455,7 @@ impl ClaudeQuotaProvider {
 
         if token.is_empty() {
             return Err(QuotaError::Unauthorized(
-                "Access token is empty. Try 'claude setup-token' or re-login with 'claude /login'.".to_string(),
+                "Access token is empty. Please re-authenticate with Claude Code.".to_string(),
             ));
         }
 
@@ -630,7 +618,7 @@ impl ClaudeQuotaProvider {
         if status == 401 || status == 403 {
             log::warn!("[quota:claude] Authentication failed: HTTP {}", status);
             return Err(QuotaError::Unauthorized(format!(
-                "API authentication failed (HTTP {}). Token expired. Try 'claude setup-token' for a long-lived token, or re-login with 'claude /login'.",
+                "API authentication failed (HTTP {}). Token may be expired. Please run 'claude' CLI to refresh.",
                 status
             )));
         }
