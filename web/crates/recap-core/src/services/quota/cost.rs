@@ -19,7 +19,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use chrono::{NaiveDate, TimeZone, Utc};
+use chrono::{NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================

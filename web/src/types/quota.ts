@@ -27,10 +27,18 @@ export interface QuotaSnapshot {
   fetched_at: string
 }
 
+// Account information
+export interface AccountInfo {
+  email: string | null
+  plan: string | null
+  display_name: string | null
+}
+
 // Response from get_current_quota command
 export interface CurrentQuotaResponse {
   snapshots: QuotaSnapshot[]
   provider_available: boolean
+  account_info: AccountInfo | null
 }
 
 // Quota settings configuration

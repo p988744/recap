@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { quota, tray } from '@/services'
-import type { QuotaSnapshot, QuotaSettings, CostSummary } from '@/types/quota'
+import type { QuotaSnapshot, QuotaSettings, CostSummary, AccountInfo } from '@/types/quota'
 
 const LOG_PREFIX = '[useQuotaPage]'
 
@@ -21,6 +21,7 @@ export interface QuotaPageState {
   // Current quota data
   currentQuota: QuotaSnapshot[]
   providerAvailable: boolean
+  accountInfo: AccountInfo | null
 
   // History data (all window types combined)
   history: QuotaSnapshot[]
@@ -46,6 +47,7 @@ export function useQuotaPage(): QuotaPageState {
   // Current quota state
   const [currentQuota, setCurrentQuota] = useState<QuotaSnapshot[]>([])
   const [providerAvailable, setProviderAvailable] = useState(true)
+  const [accountInfo, setAccountInfo] = useState<AccountInfo | null>(null)
 
   // History state
   const [history, setHistory] = useState<QuotaSnapshot[]>([])
@@ -69,6 +71,7 @@ export function useQuotaPage(): QuotaPageState {
       console.log(`${LOG_PREFIX} Current quota fetched:`, result)
       setCurrentQuota(result.snapshots)
       setProviderAvailable(result.provider_available)
+      setAccountInfo(result.account_info)
 
       // Update tray with primary quota
       const fiveHour = result.snapshots.find(
@@ -140,6 +143,7 @@ export function useQuotaPage(): QuotaPageState {
   return {
     currentQuota,
     providerAvailable,
+    accountInfo,
     history,
     costSummary,
     loading,

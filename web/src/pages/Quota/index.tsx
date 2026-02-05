@@ -23,6 +23,7 @@ export function QuotaPage() {
   const {
     currentQuota,
     providerAvailable,
+    accountInfo,
     history,
     costSummary,
     loading,
@@ -33,6 +34,13 @@ export function QuotaPage() {
     setDays,
     refresh,
   } = useQuotaPage()
+
+  // Format plan name for display
+  const formatPlan = (plan: string | null) => {
+    if (!plan) return null
+    // Capitalize first letter
+    return plan.charAt(0).toUpperCase() + plan.slice(1)
+  }
 
   // Filter snapshots by provider for summary cards
   const claudeSnapshots = currentQuota.filter((s) => s.provider === 'claude')
@@ -83,6 +91,11 @@ export function QuotaPage() {
               <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
                 配額
               </p>
+              {accountInfo?.plan && (
+                <span className="px-2 py-0.5 text-[10px] font-medium bg-primary/10 text-primary rounded-full">
+                  {formatPlan(accountInfo.plan)}
+                </span>
+              )}
             </div>
             <h1 className="font-display text-3xl text-foreground tracking-tight">
               配額使用量

@@ -21,6 +21,19 @@ pub struct CurrentQuotaResponse {
     pub snapshots: Vec<QuotaSnapshotDto>,
     /// Whether the quota provider is available (authenticated)
     pub provider_available: bool,
+    /// Account/plan information (if available)
+    pub account_info: Option<AccountInfoDto>,
+}
+
+/// Account information DTO
+#[derive(Debug, Serialize)]
+pub struct AccountInfoDto {
+    /// User email (if available)
+    pub email: Option<String>,
+    /// Subscription plan (e.g., "max", "pro")
+    pub plan: Option<String>,
+    /// Display name (if available)
+    pub display_name: Option<String>,
 }
 
 /// DTO for quota snapshot data
@@ -84,8 +97,23 @@ pub async fn get_current_quota(
         return Ok(CurrentQuotaResponse {
             snapshots: vec![],
             provider_available: false,
+            account_info: None,
         });
     }
+
+    // Get account info (subscription plan)
+    let account_info = provider
+        .get_account_info()
+        .await
+        .ok()
+        .flatten()
+        .map(|info| AccountInfoDto {
+            email: info.email,
+            plan: info.plan,
+            display_name: info.display_name,
+        });
+
+    log::debug!("[quota:cmd] Account info: {:?}", account_info);
 
     // Fetch quota from provider
     let quota_snapshots = provider.fetch_quota().await.map_err(|e| {
@@ -132,6 +160,7 @@ pub async fn get_current_quota(
     Ok(CurrentQuotaResponse {
         snapshots,
         provider_available: true,
+        account_info,
     })
 }
 

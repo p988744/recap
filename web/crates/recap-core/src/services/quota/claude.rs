@@ -373,6 +373,12 @@ impl ClaudeQuotaProvider {
 
     /// Parse credentials JSON and extract the access token
     fn parse_credentials_json(content: &str) -> Result<String, QuotaError> {
+        let (token, _, _) = Self::parse_credentials_full(content)?;
+        Ok(token)
+    }
+
+    /// Parse credentials JSON and extract full info (token, subscription_type, rate_limit_tier)
+    fn parse_credentials_full(content: &str) -> Result<(String, Option<String>, Option<String>), QuotaError> {
         let credentials_file: CredentialsFile = serde_json::from_str(content).map_err(|e| {
             log::error!("[quota:claude] Failed to parse credentials: {}", e);
             QuotaError::ParseError(format!("Invalid credentials file format: {}", e))
@@ -400,8 +406,80 @@ impl ClaudeQuotaProvider {
             ));
         }
 
-        log::debug!("[quota:claude] Successfully parsed OAuth token");
-        Ok(token)
+        log::debug!("[quota:claude] Successfully parsed OAuth credentials");
+        Ok((
+            token,
+            oauth_credentials.subscription_type,
+            oauth_credentials.rate_limit_tier,
+        ))
+    }
+
+    /// Load account info from credentials (subscription type, rate limit tier)
+    fn load_account_info(&self) -> Result<AccountInfo, QuotaError> {
+        // Priority 1: Manual token (no account info available)
+        if self.manual_token.is_some() {
+            return Ok(AccountInfo {
+                email: None,
+                plan: None,
+                display_name: None,
+                is_active: true,
+                raw_data: None,
+            });
+        }
+
+        // Priority 2: Try Keychain on macOS
+        #[cfg(target_os = "macos")]
+        {
+            if let Ok(content) = Self::load_keychain_content() {
+                if let Ok((_, subscription_type, _)) = Self::parse_credentials_full(&content) {
+                    return Ok(AccountInfo {
+                        email: None,
+                        plan: subscription_type,
+                        display_name: None,
+                        is_active: true,
+                        raw_data: None,
+                    });
+                }
+            }
+        }
+
+        // Priority 3: File fallback
+        if self.credentials_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&self.credentials_path) {
+                if let Ok((_, subscription_type, _)) = Self::parse_credentials_full(&content) {
+                    return Ok(AccountInfo {
+                        email: None,
+                        plan: subscription_type,
+                        display_name: None,
+                        is_active: true,
+                        raw_data: None,
+                    });
+                }
+            }
+        }
+
+        Ok(AccountInfo {
+            email: None,
+            plan: None,
+            display_name: None,
+            is_active: false,
+            raw_data: None,
+        })
+    }
+
+    /// Load raw content from macOS Keychain
+    #[cfg(target_os = "macos")]
+    fn load_keychain_content() -> Result<String, QuotaError> {
+        use security_framework::passwords::get_generic_password;
+
+        let username = std::env::var("USER").unwrap_or_else(|_| "default".to_string());
+        let password_bytes = get_generic_password(KEYCHAIN_SERVICE, &username).map_err(|e| {
+            QuotaError::NotInstalled(format!("Keychain access failed: {}", e))
+        })?;
+
+        String::from_utf8(password_bytes.to_vec()).map_err(|e| {
+            QuotaError::ParseError(format!("Invalid UTF-8 in Keychain: {}", e))
+        })
     }
 
 
@@ -625,9 +703,17 @@ impl QuotaProvider for ClaudeQuotaProvider {
     }
 
     async fn get_account_info(&self) -> Result<Option<AccountInfo>, QuotaError> {
-        // The usage API doesn't provide account info
-        // A future implementation could call a different endpoint
-        Ok(None)
+        // Load account info from credentials (subscription type)
+        match self.load_account_info() {
+            Ok(info) => {
+                if info.plan.is_some() {
+                    Ok(Some(info))
+                } else {
+                    Ok(None)
+                }
+            }
+            Err(_) => Ok(None),
+        }
     }
 }
 
