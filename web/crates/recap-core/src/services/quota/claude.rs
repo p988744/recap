@@ -98,25 +98,26 @@ struct ClaudeOAuthCredentials {
     #[serde(rename = "accessToken")]
     access_token: Option<String>,
 
-    /// OAuth refresh token (optional)
+    /// OAuth refresh token (optional, not used)
     #[serde(rename = "refreshToken")]
-    #[allow(dead_code)]
     refresh_token: Option<String>,
 
     /// Expiration time in milliseconds since epoch
     #[serde(rename = "expiresAt")]
-    #[allow(dead_code)]
     expires_at: Option<i64>,
 
     /// OAuth scopes (optional)
-    #[allow(dead_code)]
     scopes: Option<Vec<String>>,
+
+    /// Subscription type (optional)
+    #[serde(rename = "subscriptionType")]
+    subscription_type: Option<String>,
 
     /// Rate limit tier (optional)
     #[serde(rename = "rateLimitTier")]
-    #[allow(dead_code)]
     rate_limit_tier: Option<String>,
 }
+
 
 // ============================================================================
 // API Response Types
@@ -403,6 +404,7 @@ impl ClaudeQuotaProvider {
         Ok(token)
     }
 
+
     /// Call the Anthropic usage API
     async fn call_usage_api(&self, token: &str) -> Result<OAuthUsageResponse, QuotaError> {
         log::info!("[quota:claude] Fetching quota from Anthropic API");
@@ -424,7 +426,7 @@ impl ClaudeQuotaProvider {
         if status == 401 || status == 403 {
             log::warn!("[quota:claude] Authentication failed: HTTP {}", status);
             return Err(QuotaError::Unauthorized(format!(
-                "API authentication failed (HTTP {}). Token may be expired.",
+                "API authentication failed (HTTP {}). Token may be expired. Please run 'claude' CLI to refresh.",
                 status
             )));
         }
