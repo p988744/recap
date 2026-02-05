@@ -514,17 +514,25 @@ pub async fn trigger_sync_with_progress(
 
         match recap_core::services::compaction::run_compaction_cycle(&pool, llm.as_ref(), &user_id).await {
             Ok(cr) => {
+                // 單行摘要 log - 方便事後追蹤每次壓縮紀錄
+                let now_local = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+                let error_count = cr.errors.len();
                 log::info!(
-                    "每日壓縮完成: {} 小時摘要, {} 每日摘要, {} 每月摘要",
+                    "[COMPACTION] {} | 小時:{} 每日:{} 每月:{} 錯誤:{}",
+                    now_local,
                     cr.hourly_compacted,
                     cr.daily_compacted,
-                    cr.monthly_compacted
+                    cr.monthly_compacted,
+                    error_count
                 );
             }
-            Err(e) => log::warn!("壓縮週期錯誤: {}", e),
+            Err(e) => {
+                let now_local = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+                log::warn!("[COMPACTION] {} | 錯誤: {}", now_local, e);
+            }
         }
     } else {
-        log::info!("Claude 同步未啟用，跳過資料壓縮");
+        log::debug!("Claude 同步未啟用，跳過資料壓縮");
     }
 
     // Phase 4: Generate timeline summaries for completed periods
@@ -559,12 +567,11 @@ pub async fn trigger_sync_with_progress(
         log::info!("自動生成摘要未啟用，跳過時間軸摘要");
     }
 
-    log::info!("========== 資料壓縮結束 ==========");
+    log::debug!("========== 資料壓縮結束 ==========");
 
     // Record compaction completion (updates last_compaction_at and next_compaction_at)
     if config.sync_claude {
         state.background_sync.record_compaction_completed().await;
-        log::info!("已記錄壓縮完成時間");
     }
 
     // Complete
@@ -572,9 +579,12 @@ pub async fn trigger_sync_with_progress(
     let total_projects: i32 = results.iter().map(|r| r.projects_scanned).sum();
     let total_created: i32 = results.iter().map(|r| r.items_created).sum();
 
-    log::info!("========== 手動同步完成摘要 ==========");
-    log::info!("總計掃描: {} 個專案", total_projects);
-    log::info!("總計處理: {} 筆資料 (新增 {} 筆)", total_items, total_created);
+    // 單行摘要 log - 方便事後追蹤每次手動同步紀錄
+    let now_local = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    log::info!(
+        "[MANUAL_SYNC] {} | 來源:{} 專案:{} 資料:{} 新增:{}",
+        now_local, results.len(), total_projects, total_items, total_created
+    );
 
     emit(
         "complete",

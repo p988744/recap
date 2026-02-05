@@ -1095,14 +1095,26 @@ impl BackgroundSyncService {
             *error = if errors.is_empty() { None } else { Some(errors.join("; ")) };
         }
 
-        log::info!("---------- 同步完成摘要 ----------");
-        log::info!("處理 {} 個資料來源", results.len());
-        log::info!("掃描 {} 個專案", total_projects);
-        log::info!("發現 {} 筆資料 (新增 {} 筆)", total_items, total_created);
-        if !errors.is_empty() {
-            log::warn!("發生 {} 個錯誤: {}", errors.len(), errors.join("; "));
+        // 單行摘要 log - 方便事後追蹤每次同步紀錄
+        let now_local = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        let next_sync = Self::calculate_next_sync(config.interval_minutes);
+        let next_local = chrono::DateTime::parse_from_rfc3339(&next_sync)
+            .map(|dt| dt.with_timezone(&chrono::Local).format("%H:%M:%S").to_string())
+            .unwrap_or_else(|_| "N/A".to_string());
+
+        if errors.is_empty() {
+            log::info!(
+                "[SYNC] {} | 來源:{} 專案:{} 資料:{} 新增:{} | 下次:{}",
+                now_local, results.len(), total_projects, total_items, total_created, next_local
+            );
+        } else {
+            log::warn!(
+                "[SYNC] {} | 來源:{} 專案:{} 資料:{} 新增:{} 錯誤:{} | 下次:{}",
+                now_local, results.len(), total_projects, total_items, total_created, errors.len(), next_local
+            );
         }
-        log::info!("========== 資料同步結束 ==========");
+
+        log::debug!("========== 資料同步結束 ==========");
         results
     }
 
