@@ -60,6 +60,7 @@ pub mod provider;
 pub mod claude;
 pub mod store;
 pub mod timer;
+pub mod cost;
 
 // Re-export main types
 pub use types::{
@@ -91,4 +92,13 @@ pub use timer::{
     create_shared_state,
     MIN_INTERVAL_MINUTES,
     DEFAULT_INTERVAL_MINUTES,
+};
+
+// Re-export cost calculator
+pub use cost::{
+    CostCalculator,
+    CostSummary,
+    DailyUsage,
+    ModelUsage,
+    TokenUsage,
 };

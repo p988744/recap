@@ -6,7 +6,7 @@
  */
 
 import { invokeAuth } from './client'
-import type { CurrentQuotaResponse, QuotaSnapshot, ClaudeAuthStatus } from '@/types/quota'
+import type { CurrentQuotaResponse, QuotaSnapshot, ClaudeAuthStatus, CostSummary } from '@/types/quota'
 
 const LOG_PREFIX = '[quota]'
 
@@ -141,6 +141,30 @@ export async function checkClaudeAuthStatus(): Promise<ClaudeAuthStatus> {
     return result
   } catch (error) {
     console.error(`${LOG_PREFIX} Failed to check Claude auth status:`, error)
+    throw error
+  }
+}
+
+// ============================================================================
+// Cost Calculation (from local JSONL files)
+// ============================================================================
+
+/**
+ * Get cost summary from local Claude Code JSONL files.
+ * Calculates token usage and costs without API calls.
+ * @param days Number of days to calculate (default: 30)
+ * @returns Cost summary including daily and per-model breakdown
+ */
+export async function getCostSummary(days?: number): Promise<CostSummary> {
+  console.log(`${LOG_PREFIX} Calculating cost summary for ${days ?? 30} days...`)
+  try {
+    const result = await invokeAuth<CostSummary>('get_cost_summary', {
+      days,
+    })
+    console.log(`${LOG_PREFIX} Cost summary: today=$${result.today_cost.toFixed(2)}, 30d=$${result.last_30_days_cost.toFixed(2)}`)
+    return result
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Failed to get cost summary:`, error)
     throw error
   }
 }

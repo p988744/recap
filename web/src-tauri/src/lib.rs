@@ -189,6 +189,8 @@ pub fn run() {
             commands::quota::get_claude_oauth_token,
             commands::quota::set_claude_oauth_token,
             commands::quota::check_claude_auth_status,
+            // Quota - Cost Calculation (from local JSONL files)
+            commands::quota::get_cost_summary,
             // Quota Polling Timer
             commands::quota_timer::start_quota_polling,
             commands::quota_timer::stop_quota_polling,

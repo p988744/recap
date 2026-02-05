@@ -103,3 +103,78 @@ export function formatResetTime(resetsAt: string | null): string {
   if (hours > 0) return `${hours}h ${mins}m`
   return `${mins}m`
 }
+
+// ============================================================================
+// Cost Calculation Types
+// ============================================================================
+
+/**
+ * Daily usage summary
+ */
+export interface DailyUsage {
+  /** Date in YYYY-MM-DD format */
+  date: string
+  /** Total tokens for this day */
+  total_tokens: number
+  /** Total cost for this day (USD) */
+  total_cost: number
+}
+
+/**
+ * Per-model usage breakdown
+ */
+export interface ModelUsage {
+  /** Model name (e.g., "claude-opus-4-5-20251101") */
+  model: string
+  /** Input tokens */
+  input_tokens: number
+  /** Output tokens */
+  output_tokens: number
+  /** Cache creation tokens */
+  cache_creation_tokens: number
+  /** Cache read tokens */
+  cache_read_tokens: number
+  /** Total cost for this model (USD) */
+  total_cost: number
+}
+
+/**
+ * Cost summary from local JSONL files
+ */
+export interface CostSummary {
+  /** Total cost for today (USD) */
+  today_cost: number
+  /** Total tokens for today */
+  today_tokens: number
+  /** Total cost for the last 30 days (USD) */
+  last_30_days_cost: number
+  /** Total tokens for the last 30 days */
+  last_30_days_tokens: number
+  /** Daily usage breakdown */
+  daily_usage: DailyUsage[]
+  /** Per-model breakdown */
+  model_breakdown: ModelUsage[]
+}
+
+/**
+ * Format cost as currency string
+ */
+export function formatCost(cost: number): string {
+  return `$${cost.toFixed(2)}`
+}
+
+/**
+ * Format token count with K/M suffix
+ */
+export function formatTokens(tokens: number): string {
+  if (tokens >= 1_000_000_000) {
+    return `${(tokens / 1_000_000_000).toFixed(1)}B`
+  }
+  if (tokens >= 1_000_000) {
+    return `${(tokens / 1_000_000).toFixed(1)}M`
+  }
+  if (tokens >= 1_000) {
+    return `${(tokens / 1_000).toFixed(1)}K`
+  }
+  return tokens.toString()
+}

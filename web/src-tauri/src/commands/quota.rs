@@ -4,7 +4,7 @@
 //! for Claude Code and other AI coding assistants.
 
 use recap_core::auth::verify_token;
-use recap_core::services::quota::{ClaudeQuotaProvider, QuotaProvider, QuotaStore};
+use recap_core::services::quota::{ClaudeQuotaProvider, CostCalculator, QuotaProvider, QuotaStore};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -389,4 +389,106 @@ pub struct ClaudeAuthStatus {
     pub manual_valid: bool,
     /// Which auth source is active: "auto", "manual", or "none"
     pub active_source: String,
+}
+
+// ============================================================================
+// Cost Calculation Commands
+// ============================================================================
+
+/// Cost summary response DTO
+#[derive(Debug, Serialize)]
+pub struct CostSummaryDto {
+    /// Total cost for today (USD)
+    pub today_cost: f64,
+    /// Total tokens for today
+    pub today_tokens: i64,
+    /// Total cost for the last 30 days (USD)
+    pub last_30_days_cost: f64,
+    /// Total tokens for the last 30 days
+    pub last_30_days_tokens: i64,
+    /// Daily usage breakdown
+    pub daily_usage: Vec<DailyUsageDto>,
+    /// Per-model breakdown
+    pub model_breakdown: Vec<ModelUsageDto>,
+}
+
+/// Daily usage DTO
+#[derive(Debug, Serialize)]
+pub struct DailyUsageDto {
+    /// Date in YYYY-MM-DD format
+    pub date: String,
+    /// Total tokens for this day
+    pub total_tokens: i64,
+    /// Total cost for this day (USD)
+    pub total_cost: f64,
+}
+
+/// Per-model usage DTO
+#[derive(Debug, Serialize)]
+pub struct ModelUsageDto {
+    /// Model name
+    pub model: String,
+    /// Input tokens
+    pub input_tokens: i64,
+    /// Output tokens
+    pub output_tokens: i64,
+    /// Cache creation tokens
+    pub cache_creation_tokens: i64,
+    /// Cache read tokens
+    pub cache_read_tokens: i64,
+    /// Total cost for this model (USD)
+    pub total_cost: f64,
+}
+
+/// Get cost summary from local Claude Code JSONL files.
+///
+/// This calculates token usage and costs by parsing local session files,
+/// similar to CodexBar's approach. No API calls needed.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn get_cost_summary(
+    token: String,
+    days: Option<u32>,
+) -> Result<CostSummaryDto, String> {
+    let _claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let days = days.unwrap_or(30);
+
+    log::info!("[quota:cmd] Calculating cost summary for last {} days", days);
+
+    let calculator = CostCalculator::new();
+    let summary = calculator.calculate_summary(days);
+
+    log::info!(
+        "[quota:cmd] Cost summary: today=${:.2}, 30d=${:.2}, {} daily records",
+        summary.today_cost,
+        summary.last_30_days_cost,
+        summary.daily_usage.len()
+    );
+
+    Ok(CostSummaryDto {
+        today_cost: summary.today_cost,
+        today_tokens: summary.today_tokens,
+        last_30_days_cost: summary.last_30_days_cost,
+        last_30_days_tokens: summary.last_30_days_tokens,
+        daily_usage: summary
+            .daily_usage
+            .into_iter()
+            .map(|d| DailyUsageDto {
+                date: d.date,
+                total_tokens: d.total_tokens,
+                total_cost: d.total_cost,
+            })
+            .collect(),
+        model_breakdown: summary
+            .model_breakdown
+            .into_iter()
+            .map(|m| ModelUsageDto {
+                model: m.model,
+                input_tokens: m.input_tokens,
+                output_tokens: m.output_tokens,
+                cache_creation_tokens: m.cache_creation_tokens,
+                cache_read_tokens: m.cache_read_tokens,
+                total_cost: m.total_cost,
+            })
+            .collect(),
+    })
 }
