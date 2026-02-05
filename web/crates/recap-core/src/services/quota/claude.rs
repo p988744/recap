@@ -60,6 +60,9 @@ use super::types::{AccountInfo, QuotaProviderType, QuotaSnapshot, QuotaWindowTyp
 /// Anthropic OAuth usage API endpoint
 const USAGE_API_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 
+/// Anthropic OAuth profile API endpoint
+const PROFILE_API_URL: &str = "https://api.anthropic.com/api/oauth/profile";
+
 /// OAuth beta header value for API access
 const OAUTH_BETA_HEADER: &str = "oauth-2025-04-20";
 
@@ -167,6 +170,56 @@ struct ExtraUsage {
     /// Currency (e.g., "USD")
     #[allow(dead_code)]
     currency: Option<String>,
+}
+
+/// Response from Anthropic's OAuth profile API
+#[derive(Debug, Deserialize, serde::Serialize)]
+struct OAuthProfileResponse {
+    /// Account information
+    account: Option<ProfileAccount>,
+    /// Organization information
+    organization: Option<ProfileOrganization>,
+}
+
+/// Account information from profile API
+#[derive(Debug, Deserialize, serde::Serialize)]
+struct ProfileAccount {
+    /// Account UUID
+    #[allow(dead_code)]
+    uuid: Option<String>,
+    /// Full name
+    full_name: Option<String>,
+    /// Display name
+    display_name: Option<String>,
+    /// Email address
+    email: Option<String>,
+    /// Has Claude Max subscription
+    has_claude_max: Option<bool>,
+    /// Has Claude Pro subscription
+    has_claude_pro: Option<bool>,
+    /// Account creation date
+    #[allow(dead_code)]
+    created_at: Option<String>,
+}
+
+/// Organization information from profile API
+#[derive(Debug, Deserialize, serde::Serialize)]
+struct ProfileOrganization {
+    /// Organization UUID
+    #[allow(dead_code)]
+    uuid: Option<String>,
+    /// Organization name
+    #[allow(dead_code)]
+    name: Option<String>,
+    /// Organization type (e.g., "claude_max")
+    organization_type: Option<String>,
+    /// Rate limit tier
+    #[allow(dead_code)]
+    rate_limit_tier: Option<String>,
+    /// Whether extra usage is enabled
+    has_extra_usage_enabled: Option<bool>,
+    /// Subscription status (e.g., "active")
+    subscription_status: Option<String>,
 }
 
 // ============================================================================
@@ -482,6 +535,67 @@ impl ClaudeQuotaProvider {
         })
     }
 
+    /// Call the Anthropic profile API to get account info
+    async fn call_profile_api(&self, token: &str) -> Result<AccountInfo, QuotaError> {
+        log::info!("[quota:claude] Fetching profile from Anthropic API");
+
+        let response = self
+            .client
+            .get(PROFILE_API_URL)
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Accept", "application/json")
+            .header("anthropic-beta", OAUTH_BETA_HEADER)
+            .header("User-Agent", "Recap")
+            .send()
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            log::warn!("[quota:claude] Profile API failed: HTTP {}", status);
+            return Err(QuotaError::ApiError(format!("Profile API returned HTTP {}", status)));
+        }
+
+        let profile: OAuthProfileResponse = response.json().await.map_err(|e| {
+            log::error!("[quota:claude] Failed to parse profile response: {}", e);
+            QuotaError::ParseError(format!("Invalid profile response: {}", e))
+        })?;
+
+        // Extract account info
+        let account = profile.account.as_ref();
+        let org = profile.organization.as_ref();
+
+        // Determine plan from organization type or account flags
+        let plan = org
+            .and_then(|o| o.organization_type.clone())
+            .or_else(|| {
+                account.and_then(|a| {
+                    if a.has_claude_max == Some(true) {
+                        Some("max".to_string())
+                    } else if a.has_claude_pro == Some(true) {
+                        Some("pro".to_string())
+                    } else {
+                        None
+                    }
+                })
+            });
+
+        // Subscription status
+        let is_active = org
+            .and_then(|o| o.subscription_status.as_ref())
+            .map(|s| s == "active")
+            .unwrap_or(true);
+
+        // Store raw response for debugging
+        let raw_data = serde_json::to_string(&profile).ok();
+
+        Ok(AccountInfo {
+            email: account.and_then(|a| a.email.clone()),
+            display_name: account.and_then(|a| a.display_name.clone()),
+            plan,
+            is_active,
+            raw_data,
+        })
+    }
 
     /// Call the Anthropic usage API
     async fn call_usage_api(&self, token: &str) -> Result<OAuthUsageResponse, QuotaError> {
@@ -703,16 +817,23 @@ impl QuotaProvider for ClaudeQuotaProvider {
     }
 
     async fn get_account_info(&self) -> Result<Option<AccountInfo>, QuotaError> {
-        // Load account info from credentials (subscription type)
-        match self.load_account_info() {
-            Ok(info) => {
-                if info.plan.is_some() {
-                    Ok(Some(info))
-                } else {
-                    Ok(None)
+        // Try to load OAuth token first
+        let token = match self.load_oauth_token() {
+            Ok(t) => t,
+            Err(_) => return Ok(None),
+        };
+
+        // Call the profile API to get account info
+        match self.call_profile_api(&token).await {
+            Ok(info) => Ok(Some(info)),
+            Err(e) => {
+                log::warn!("[quota:claude] Failed to get account info from profile API: {}", e);
+                // Fall back to local credentials
+                match self.load_account_info() {
+                    Ok(info) if info.plan.is_some() => Ok(Some(info)),
+                    _ => Ok(None),
                 }
             }
-            Err(_) => Ok(None),
         }
     }
 }

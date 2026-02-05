@@ -14,9 +14,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { RefreshCw, Gauge, History, DollarSign } from 'lucide-react'
+import { RefreshCw, Gauge, History, User, DollarSign } from 'lucide-react'
 import { useQuotaPage, DEFAULT_QUOTA_SETTINGS } from './hooks'
-import { QuotaChart, QuotaSummaryCard, ClaudeAuthConfig, QuotaStats, CostCard, CostChart } from './components'
+import { QuotaChart, QuotaSummaryCard, ClaudeAuthConfig, QuotaStats, CostCard, CostChart, AccountCard } from './components'
 import { cn } from '@/lib/utils'
 
 export function QuotaPage() {
@@ -169,9 +169,22 @@ export function QuotaPage() {
         </section>
       )}
 
+      {/* Account Info */}
+      {accountInfo && (
+        <section className="animate-fade-up opacity-0 delay-3">
+          <div className="flex items-center gap-2 mb-4">
+            <User className="w-4 h-4 text-muted-foreground" strokeWidth={1.5} />
+            <h2 className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+              帳戶資訊
+            </h2>
+          </div>
+          <AccountCard accountInfo={accountInfo} />
+        </section>
+      )}
+
       {/* Cost Summary */}
       {costSummary && (
-        <section className="animate-fade-up opacity-0 delay-3">
+        <section className="animate-fade-up opacity-0 delay-4">
           <div className="flex items-center gap-2 mb-4">
             <DollarSign className="w-4 h-4 text-muted-foreground" strokeWidth={1.5} />
             <h2 className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
@@ -199,7 +212,7 @@ export function QuotaPage() {
       )}
 
       {/* History Chart */}
-      <section className="animate-fade-up opacity-0 delay-4">
+      <section className="animate-fade-up opacity-0 delay-5">
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between flex-wrap gap-4">

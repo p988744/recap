@@ -32,6 +32,7 @@ export interface AccountInfo {
   email: string | null
   plan: string | null
   display_name: string | null
+  is_active: boolean
 }
 
 // Response from get_current_quota command

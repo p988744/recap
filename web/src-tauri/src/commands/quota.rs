@@ -34,6 +34,8 @@ pub struct AccountInfoDto {
     pub plan: Option<String>,
     /// Display name (if available)
     pub display_name: Option<String>,
+    /// Whether the subscription is active
+    pub is_active: bool,
 }
 
 /// DTO for quota snapshot data
@@ -111,6 +113,7 @@ pub async fn get_current_quota(
             email: info.email,
             plan: info.plan,
             display_name: info.display_name,
+            is_active: info.is_active,
         });
 
     log::debug!("[quota:cmd] Account info: {:?}", account_info);
