@@ -1,8 +1,7 @@
 import { Eye, EyeOff, ChevronRight, Trash2, GitBranch } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import type { ProjectInfo } from '@/types'
-import { ClaudeIcon } from './icons/ClaudeIcon'
-import { GeminiIcon } from './icons/GeminiIcon'
+import { ClaudeIcon, GeminiIcon } from '@/components/icons'
 
 const SOURCE_CONFIG: Record<string, { icon: React.ReactNode; label: string; badgeBgClass: string }> = {
   claude_code: {

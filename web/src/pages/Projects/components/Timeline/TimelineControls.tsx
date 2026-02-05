@@ -15,8 +15,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover'
 import type { TimeUnit } from '@/types'
-import { ClaudeIcon } from '@/pages/Settings/components/ProjectsSection/icons/ClaudeIcon'
-import { GeminiIcon } from '@/pages/Settings/components/ProjectsSection/icons/GeminiIcon'
+import { ClaudeIcon, GeminiIcon } from '@/components/icons'
 
 interface TimelineControlsProps {
   timeUnit: TimeUnit

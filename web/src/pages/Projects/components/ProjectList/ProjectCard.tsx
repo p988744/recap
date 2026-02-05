@@ -1,8 +1,7 @@
 import { Folder, Clock, EyeOff, GitBranch } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ProjectInfo } from '@/types'
-import { ClaudeIcon } from '@/pages/Settings/components/ProjectsSection/icons/ClaudeIcon'
-import { GeminiIcon } from '@/pages/Settings/components/ProjectsSection/icons/GeminiIcon'
+import { ClaudeIcon, GeminiIcon } from '@/components/icons'
 
 interface ProjectCardProps {
   project: ProjectInfo

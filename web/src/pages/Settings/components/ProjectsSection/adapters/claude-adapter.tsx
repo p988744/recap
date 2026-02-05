@@ -1,6 +1,6 @@
 import { claude } from '@/services/integrations'
 import type { DataSourceAdapter, DiscoveredProject, SyncResult } from '../types'
-import { ClaudeIcon } from '../icons/ClaudeIcon'
+import { ClaudeIcon } from '@/components/icons'
 
 export function createClaudeAdapter(): DataSourceAdapter {
   return {

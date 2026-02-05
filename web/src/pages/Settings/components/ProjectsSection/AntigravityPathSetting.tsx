@@ -3,7 +3,7 @@ import { CheckCircle2, XCircle, RefreshCw, Loader2 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { antigravity } from '@/services/integrations'
 import type { AntigravityApiStatus } from '@/types'
-import { GeminiIcon } from './icons/GeminiIcon'
+import { GeminiIcon } from '@/components/icons'
 
 export function AntigravityPathSetting() {
   const [status, setStatus] = useState<AntigravityApiStatus | null>(null)

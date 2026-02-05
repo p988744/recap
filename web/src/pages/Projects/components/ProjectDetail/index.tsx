@@ -6,8 +6,7 @@ import { cn } from '@/lib/utils'
 import { InfoTab } from './InfoTab'
 import { TimelineTab } from './TimelineTab'
 import { useProjectDetail } from '../../hooks/useProjectDetail'
-import { ClaudeIcon } from '@/pages/Settings/components/ProjectsSection/icons/ClaudeIcon'
-import { GeminiIcon } from '@/pages/Settings/components/ProjectsSection/icons/GeminiIcon'
+import { ClaudeIcon, GeminiIcon } from '@/components/icons'
 
 const SOURCE_CONFIG: Record<string, { icon: React.ReactNode; label: string; className: string }> = {
   claude_code: {

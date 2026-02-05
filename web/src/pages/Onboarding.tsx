@@ -21,8 +21,7 @@ import {
 import { projects as projectsService, config as configService, auth as authService } from '@/services'
 import { antigravity } from '@/services/integrations'
 import type { AntigravityApiStatus } from '@/types'
-import { ClaudeIcon } from '@/pages/Settings/components/ProjectsSection/icons/ClaudeIcon'
-import { GeminiIcon } from '@/pages/Settings/components/ProjectsSection/icons/GeminiIcon'
+import { ClaudeIcon, GeminiIcon } from '@/components/icons'
 
 const LLM_PROVIDERS = [
   { id: 'openai', label: 'OpenAI', desc: 'GPT-5 系列', defaultModel: 'gpt-5-nano' },

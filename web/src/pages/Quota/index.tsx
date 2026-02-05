@@ -1,22 +1,15 @@
 /**
- * Quota Page
+ * Quota Page (Overview)
  *
- * Dedicated page for viewing Claude Code quota usage history.
- * Displays current quota summary cards and a history chart with filters.
+ * Overview page showing all quota tools with their status.
+ * Each tool card shows account info, current quota, and links to detail page.
  */
 
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import { RefreshCw, Gauge, History, User, DollarSign } from 'lucide-react'
+import { RefreshCw, Gauge } from 'lucide-react'
 import { useQuotaPage, DEFAULT_QUOTA_SETTINGS } from './hooks'
-import { QuotaChart, QuotaSummaryCard, ClaudeAuthConfig, QuotaStats, CostCard, CostChart, AccountCard } from './components'
+import { ClaudeAuthConfig, ToolOverviewCard } from './components'
+import { QUOTA_TOOLS, TOOL_IDS } from './tools'
 import { cn } from '@/lib/utils'
 
 export function QuotaPage() {
@@ -24,34 +17,21 @@ export function QuotaPage() {
     currentQuota,
     providerAvailable,
     accountInfo,
-    history,
-    costSummary,
     loading,
     error,
-    provider,
-    setProvider,
-    days,
-    setDays,
     refresh,
   } = useQuotaPage()
 
-  // Format plan name for display
-  const formatPlan = (plan: string | null) => {
-    if (!plan) return null
-    // Capitalize first letter
-    return plan.charAt(0).toUpperCase() + plan.slice(1)
-  }
-
-  // Filter snapshots by provider for summary cards
-  const claudeSnapshots = currentQuota.filter((s) => s.provider === 'claude')
-  const antigravitySnapshots = currentQuota.filter((s) => s.provider === 'antigravity')
-
+  // If provider not available, show auth config
   if (!providerAvailable) {
     return (
       <div className="space-y-6">
         <header className="animate-fade-up opacity-0 delay-1">
           <div className="flex items-center gap-2 mb-2">
-            <Gauge className="w-4 h-4 text-muted-foreground" strokeWidth={1.5} />
+            <Gauge
+              className="w-4 h-4 text-muted-foreground"
+              strokeWidth={1.5}
+            />
             <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
               配額
             </p>
@@ -61,18 +41,19 @@ export function QuotaPage() {
           </h1>
         </header>
 
-        <Card className="border-l-2 border-l-muted">
-          <CardContent className="pt-6 space-y-3">
-            <p className="text-muted-foreground">
-              尚未設定 Claude Code OAuth 認證。
-            </p>
-            <p className="text-sm text-muted-foreground">
-              此功能需要 Claude Max 訂閱用戶的 OAuth token。請在終端機執行{' '}
-              <code className="bg-muted px-1.5 py-0.5 rounded text-foreground">claude /login</code>{' '}
-              進行認證，或在下方手動輸入 Token。
-            </p>
-          </CardContent>
-        </Card>
+        {/* Tool cards - show disabled state for all */}
+        <div className="space-y-4 animate-fade-up opacity-0 delay-2">
+          {TOOL_IDS.map((toolId) => {
+            const tool = QUOTA_TOOLS[toolId]
+            return (
+              <ToolOverviewCard
+                key={toolId}
+                tool={{ ...tool, disabled: true }}
+                settings={DEFAULT_QUOTA_SETTINGS}
+              />
+            )
+          })}
+        </div>
 
         {/* Manual OAuth token configuration */}
         <ClaudeAuthConfig onAuthStatusChange={refresh} />
@@ -87,15 +68,13 @@ export function QuotaPage() {
         <div className="flex items-center justify-between">
           <div>
             <div className="flex items-center gap-2 mb-2">
-              <Gauge className="w-4 h-4 text-muted-foreground" strokeWidth={1.5} />
+              <Gauge
+                className="w-4 h-4 text-muted-foreground"
+                strokeWidth={1.5}
+              />
               <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
                 配額
               </p>
-              {accountInfo?.plan && (
-                <span className="px-2 py-0.5 text-[10px] font-medium bg-primary/10 text-primary rounded-full">
-                  {formatPlan(accountInfo.plan)}
-                </span>
-              )}
             </div>
             <h1 className="font-display text-3xl text-foreground tracking-tight">
               配額使用量
@@ -128,164 +107,33 @@ export function QuotaPage() {
         </div>
       )}
 
-      {/* Current Quota Summary */}
-      {currentQuota.length > 0 && (
-        <section className="animate-fade-up opacity-0 delay-2">
-          <div className="flex items-center gap-2 mb-4">
-            <Gauge className="w-4 h-4 text-muted-foreground" strokeWidth={1.5} />
-            <h2 className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-              目前用量
-            </h2>
-          </div>
+      {/* Tool Cards */}
+      <div className="space-y-4 animate-fade-up opacity-0 delay-2">
+        {TOOL_IDS.map((toolId) => {
+          const tool = QUOTA_TOOLS[toolId]
+          // Filter snapshots for this tool
+          const toolSnapshots = currentQuota.filter(
+            (s) => s.provider === toolId
+          )
+          // Account info is only available for claude currently
+          const toolAccountInfo = toolId === 'claude' ? accountInfo : null
 
-          {/* Claude snapshots */}
-          {claudeSnapshots.length > 0 && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-              {claudeSnapshots.map((snapshot) => (
-                <QuotaSummaryCard
-                  key={`${snapshot.provider}-${snapshot.window_type}`}
-                  snapshot={snapshot}
-                  settings={DEFAULT_QUOTA_SETTINGS}
-                />
-              ))}
-            </div>
-          )}
-
-          {/* Antigravity snapshots (if any) */}
-          {antigravitySnapshots.length > 0 && (
-            <>
-              <p className="text-xs text-muted-foreground mb-2 mt-4">Antigravity</p>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                {antigravitySnapshots.map((snapshot) => (
-                  <QuotaSummaryCard
-                    key={`${snapshot.provider}-${snapshot.window_type}`}
-                    snapshot={snapshot}
-                    settings={DEFAULT_QUOTA_SETTINGS}
-                  />
-                ))}
-              </div>
-            </>
-          )}
-        </section>
-      )}
-
-      {/* Account Info */}
-      {accountInfo && (
-        <section className="animate-fade-up opacity-0 delay-3">
-          <div className="flex items-center gap-2 mb-4">
-            <User className="w-4 h-4 text-muted-foreground" strokeWidth={1.5} />
-            <h2 className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-              帳戶資訊
-            </h2>
-          </div>
-          <AccountCard accountInfo={accountInfo} />
-        </section>
-      )}
-
-      {/* Cost Summary */}
-      {costSummary && (
-        <section className="animate-fade-up opacity-0 delay-4">
-          <div className="flex items-center gap-2 mb-4">
-            <DollarSign className="w-4 h-4 text-muted-foreground" strokeWidth={1.5} />
-            <h2 className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-              費用統計
-            </h2>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Cost Card */}
-            <CostCard costSummary={costSummary} />
-
-            {/* Cost Chart */}
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-xs font-medium text-muted-foreground">
-                  每日費用趨勢 (30天)
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <CostChart costSummary={costSummary} />
-              </CardContent>
-            </Card>
-          </div>
-        </section>
-      )}
-
-      {/* History Chart */}
-      <section className="animate-fade-up opacity-0 delay-5">
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between flex-wrap gap-4">
-              <div className="flex items-center gap-2">
-                <History className="w-4 h-4 text-muted-foreground" strokeWidth={1.5} />
-                <CardTitle className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground font-normal">
-                  使用歷史
-                </CardTitle>
-              </div>
-              <div className="flex gap-2 flex-wrap">
-                {/* Provider filter */}
-                <Select value={provider} onValueChange={setProvider}>
-                  <SelectTrigger className="w-32 h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="claude">Claude</SelectItem>
-                    <SelectItem value="antigravity">Antigravity</SelectItem>
-                  </SelectContent>
-                </Select>
-
-                {/* Days filter */}
-                <Select
-                  value={days.toString()}
-                  onValueChange={(v) => setDays(parseInt(v, 10))}
-                >
-                  <SelectTrigger className="w-28 h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="1">1 天</SelectItem>
-                    <SelectItem value="3">3 天</SelectItem>
-                    <SelectItem value="7">7 天</SelectItem>
-                    <SelectItem value="14">14 天</SelectItem>
-                    <SelectItem value="30">30 天</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Statistics */}
-            {currentQuota.length > 0 && (
-              <QuotaStats
-                currentQuota={currentQuota}
-                historyData={history}
-              />
-            )}
-
-            {/* Chart */}
-            {loading && history.length === 0 ? (
-              <div className="flex items-center justify-center h-[300px]">
-                <div className="w-5 h-5 border border-border border-t-foreground/60 rounded-full animate-spin" />
-              </div>
-            ) : history.length > 0 ? (
-              <QuotaChart
-                data={history}
-                settings={DEFAULT_QUOTA_SETTINGS}
-              />
-            ) : (
-              <div className="flex flex-col items-center justify-center h-[300px] text-muted-foreground">
-                <History className="w-8 h-8 mb-2 opacity-50" />
-                <p>尚無歷史資料</p>
-                <p className="text-xs mt-1">
-                  開始追蹤後，配額資料將顯示在此
-                </p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </section>
+          return (
+            <ToolOverviewCard
+              key={toolId}
+              tool={tool}
+              accountInfo={toolAccountInfo}
+              snapshots={toolSnapshots}
+              settings={DEFAULT_QUOTA_SETTINGS}
+            />
+          )
+        })}
+      </div>
     </div>
   )
 }
 
 export default QuotaPage
+
+// Re-export ToolDetailPage for routing
+export { ToolDetailPage } from './ToolDetailPage'

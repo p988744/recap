@@ -7,7 +7,7 @@ import { OnboardingPage } from '@/pages/Onboarding'
 import { ThisWeekPage, DayDetailPage, ProjectDayDetailPage } from '@/pages/ThisWeek'
 import { ProjectsPage, TimelinePeriodDetailPage } from '@/pages/Projects'
 import { SettingsPage } from '@/pages/Settings'
-import { QuotaPage } from '@/pages/Quota'
+import { QuotaPage, ToolDetailPage } from '@/pages/Quota'
 
 function App() {
   return (
@@ -34,6 +34,7 @@ function App() {
             <Route path="projects/:projectName/period" element={<TimelinePeriodDetailPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="quota" element={<QuotaPage />} />
+            <Route path="quota/:toolId" element={<ToolDetailPage />} />
           </Route>
         </Routes>
       </BrowserRouter>

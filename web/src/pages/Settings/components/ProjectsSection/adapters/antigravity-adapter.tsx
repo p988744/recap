@@ -1,6 +1,6 @@
 import { antigravity } from '@/services/integrations'
 import type { DataSourceAdapter, DiscoveredProject, SyncResult } from '../types'
-import { GeminiIcon } from '../icons/GeminiIcon'
+import { GeminiIcon } from '@/components/icons'
 
 /**
  * Antigravity (Gemini Code) adapter.

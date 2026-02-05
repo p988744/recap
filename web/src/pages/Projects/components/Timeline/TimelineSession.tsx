@@ -3,8 +3,7 @@ import { ChevronDown, ChevronRight, Clock, GitCommit, Plus, Minus } from 'lucide
 import { cn } from '@/lib/utils'
 import type { TimelineSessionDetail, TimelineCommitDetail } from '@/types'
 import { MarkdownSummary } from '@/components/MarkdownSummary'
-import { ClaudeIcon } from '@/pages/Settings/components/ProjectsSection/icons/ClaudeIcon'
-import { GeminiIcon } from '@/pages/Settings/components/ProjectsSection/icons/GeminiIcon'
+import { ClaudeIcon, GeminiIcon } from '@/components/icons'
 import { CommitDiffModal } from '../Modals/CommitDiffModal'
 
 interface TimelineSessionProps {

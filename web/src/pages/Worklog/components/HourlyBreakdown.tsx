@@ -2,8 +2,7 @@ import { useMemo } from 'react'
 import { Clock, GitCommit, FileCode } from 'lucide-react'
 import type { HourlyBreakdownItem } from '@/types/worklog'
 import { MarkdownSummary } from '@/components/MarkdownSummary'
-import { ClaudeIcon } from '@/pages/Settings/components/ProjectsSection/icons/ClaudeIcon'
-import { GeminiIcon } from '@/pages/Settings/components/ProjectsSection/icons/GeminiIcon'
+import { ClaudeIcon, GeminiIcon } from '@/components/icons'
 
 interface HourlyBreakdownProps {
   items: HourlyBreakdownItem[]
