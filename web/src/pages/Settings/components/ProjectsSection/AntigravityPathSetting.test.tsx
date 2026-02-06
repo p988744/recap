@@ -1,12 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { AntigravityPathSetting } from './AntigravityPathSetting'
-import { projects } from '@/services'
+import { antigravity } from '@/services/integrations'
 
-vi.mock('@/services', () => ({
-  projects: {
-    getAntigravitySessionPath: vi.fn(),
-    updateAntigravitySessionPath: vi.fn(),
+vi.mock('@/services/integrations', () => ({
+  antigravity: {
+    checkApiStatus: vi.fn(),
   },
 }))
 
@@ -15,263 +14,120 @@ describe('AntigravityPathSetting', () => {
     vi.clearAllMocks()
   })
 
-  it('should render with default path', async () => {
-    vi.mocked(projects.getAntigravitySessionPath).mockResolvedValue({
-      path: '/Users/test/.gemini/antigravity',
-      is_default: true,
+  it('should show loading state initially', () => {
+    vi.mocked(antigravity.checkApiStatus).mockImplementation(
+      () => new Promise(() => {}) // never resolves
+    )
+
+    render(<AntigravityPathSetting />)
+
+    expect(screen.getByText('Antigravity API')).toBeInTheDocument()
+  })
+
+  it('should show healthy status when API is running', async () => {
+    vi.mocked(antigravity.checkApiStatus).mockResolvedValue({
+      running: true,
+      healthy: true,
+      api_url: 'http://localhost:3000',
+      session_count: 5,
     })
 
     render(<AntigravityPathSetting />)
 
     await waitFor(() => {
-      expect(screen.getByText('/Users/test/.gemini/antigravity')).toBeInTheDocument()
+      expect(screen.getByText('連線正常')).toBeInTheDocument()
     })
 
-    expect(screen.getByText('預設')).toBeInTheDocument()
-    expect(screen.getByText('Antigravity Session 路徑')).toBeInTheDocument()
+    expect(screen.getByText('http://localhost:3000')).toBeInTheDocument()
+    expect(screen.getByText('5')).toBeInTheDocument()
   })
 
-  it('should render with custom path (non-default)', async () => {
-    vi.mocked(projects.getAntigravitySessionPath).mockResolvedValue({
-      path: '/custom/path/antigravity',
-      is_default: false,
+  it('should show disconnected status when API is not running', async () => {
+    vi.mocked(antigravity.checkApiStatus).mockResolvedValue({
+      running: false,
+      healthy: false,
     })
 
     render(<AntigravityPathSetting />)
 
     await waitFor(() => {
-      expect(screen.getByText('/custom/path/antigravity')).toBeInTheDocument()
+      expect(screen.getByText('未連線')).toBeInTheDocument()
     })
 
-    // Should not show "預設" badge
-    expect(screen.queryByText('預設')).not.toBeInTheDocument()
+    expect(screen.getByText(/請先開啟 Antigravity 應用程式/)).toBeInTheDocument()
   })
 
-  it('should enter edit mode when path is clicked', async () => {
-    vi.mocked(projects.getAntigravitySessionPath).mockResolvedValue({
-      path: '/Users/test/.gemini/antigravity',
-      is_default: true,
-    })
-
-    render(<AntigravityPathSetting />)
-
-    await waitFor(() => {
-      expect(screen.getByText('/Users/test/.gemini/antigravity')).toBeInTheDocument()
-    })
-
-    // Click the path to enter edit mode
-    fireEvent.click(screen.getByText('/Users/test/.gemini/antigravity'))
-
-    // Should show input with current value
-    const input = screen.getByRole('textbox')
-    expect(input).toBeInTheDocument()
-    expect(input).toHaveValue('/Users/test/.gemini/antigravity')
-
-    // Should show save and cancel buttons
-    expect(screen.getByText('儲存')).toBeInTheDocument()
-    expect(screen.getByText('取消')).toBeInTheDocument()
-  })
-
-  it('should cancel edit mode', async () => {
-    vi.mocked(projects.getAntigravitySessionPath).mockResolvedValue({
-      path: '/Users/test/.gemini/antigravity',
-      is_default: true,
-    })
-
-    render(<AntigravityPathSetting />)
-
-    await waitFor(() => {
-      expect(screen.getByText('/Users/test/.gemini/antigravity')).toBeInTheDocument()
-    })
-
-    // Enter edit mode
-    fireEvent.click(screen.getByText('/Users/test/.gemini/antigravity'))
-
-    // Click cancel
-    fireEvent.click(screen.getByText('取消'))
-
-    // Should exit edit mode
-    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
-    expect(screen.getByText('/Users/test/.gemini/antigravity')).toBeInTheDocument()
-  })
-
-  it('should save new path', async () => {
-    vi.mocked(projects.getAntigravitySessionPath).mockResolvedValue({
-      path: '/Users/test/.gemini/antigravity',
-      is_default: true,
-    })
-    vi.mocked(projects.updateAntigravitySessionPath).mockResolvedValue('ok')
-
-    render(<AntigravityPathSetting />)
-
-    await waitFor(() => {
-      expect(screen.getByText('/Users/test/.gemini/antigravity')).toBeInTheDocument()
-    })
-
-    // Enter edit mode
-    fireEvent.click(screen.getByText('/Users/test/.gemini/antigravity'))
-
-    // Change value
-    const input = screen.getByRole('textbox')
-    fireEvent.change(input, { target: { value: '/new/custom/path' } })
-
-    // Update mock to return new path
-    vi.mocked(projects.getAntigravitySessionPath).mockResolvedValue({
-      path: '/new/custom/path',
-      is_default: false,
-    })
-
-    // Save
-    fireEvent.click(screen.getByText('儲存'))
-
-    await waitFor(() => {
-      expect(projects.updateAntigravitySessionPath).toHaveBeenCalledWith('/new/custom/path')
-    })
-  })
-
-  it('should show reset button for non-default path', async () => {
-    vi.mocked(projects.getAntigravitySessionPath).mockResolvedValue({
-      path: '/custom/path/antigravity',
-      is_default: false,
-    })
-
-    render(<AntigravityPathSetting />)
-
-    await waitFor(() => {
-      expect(screen.getByText('/custom/path/antigravity')).toBeInTheDocument()
-    })
-
-    // Enter edit mode
-    fireEvent.click(screen.getByText('/custom/path/antigravity'))
-
-    // Should show reset button
-    expect(screen.getByText('重設為預設')).toBeInTheDocument()
-  })
-
-  it('should not show reset button for default path', async () => {
-    vi.mocked(projects.getAntigravitySessionPath).mockResolvedValue({
-      path: '/Users/test/.gemini/antigravity',
-      is_default: true,
-    })
-
-    render(<AntigravityPathSetting />)
-
-    await waitFor(() => {
-      expect(screen.getByText('/Users/test/.gemini/antigravity')).toBeInTheDocument()
-    })
-
-    // Enter edit mode
-    fireEvent.click(screen.getByText('/Users/test/.gemini/antigravity'))
-
-    // Should NOT show reset button
-    expect(screen.queryByText('重設為預設')).not.toBeInTheDocument()
-  })
-
-  it('should reset to default path', async () => {
-    vi.mocked(projects.getAntigravitySessionPath).mockResolvedValue({
-      path: '/custom/path/antigravity',
-      is_default: false,
-    })
-    vi.mocked(projects.updateAntigravitySessionPath).mockResolvedValue('ok')
-
-    render(<AntigravityPathSetting />)
-
-    await waitFor(() => {
-      expect(screen.getByText('/custom/path/antigravity')).toBeInTheDocument()
-    })
-
-    // Enter edit mode
-    fireEvent.click(screen.getByText('/custom/path/antigravity'))
-
-    // Update mock to return default path after reset
-    vi.mocked(projects.getAntigravitySessionPath).mockResolvedValue({
-      path: '/Users/test/.gemini/antigravity',
-      is_default: true,
-    })
-
-    // Click reset
-    fireEvent.click(screen.getByText('重設為預設'))
-
-    await waitFor(() => {
-      expect(projects.updateAntigravitySessionPath).toHaveBeenCalledWith(null)
-    })
-  })
-
-  it('should show error message on save failure', async () => {
-    vi.mocked(projects.getAntigravitySessionPath).mockResolvedValue({
-      path: '/Users/test/.gemini/antigravity',
-      is_default: true,
-    })
-    vi.mocked(projects.updateAntigravitySessionPath).mockRejectedValue(
-      new Error('Path is not a valid directory')
+  it('should show disconnected status on API error', async () => {
+    vi.mocked(antigravity.checkApiStatus).mockRejectedValue(
+      new Error('Connection refused')
     )
 
     render(<AntigravityPathSetting />)
 
     await waitFor(() => {
-      expect(screen.getByText('/Users/test/.gemini/antigravity')).toBeInTheDocument()
-    })
-
-    // Enter edit mode
-    fireEvent.click(screen.getByText('/Users/test/.gemini/antigravity'))
-
-    // Change to invalid path
-    const input = screen.getByRole('textbox')
-    fireEvent.change(input, { target: { value: '/invalid/path' } })
-
-    // Save
-    fireEvent.click(screen.getByText('儲存'))
-
-    await waitFor(() => {
-      expect(screen.getByText('Error: Path is not a valid directory')).toBeInTheDocument()
+      expect(screen.getByText('未連線')).toBeInTheDocument()
     })
   })
 
-  it('should save on Enter key press', async () => {
-    vi.mocked(projects.getAntigravitySessionPath).mockResolvedValue({
-      path: '/Users/test/.gemini/antigravity',
-      is_default: true,
-    })
-    vi.mocked(projects.updateAntigravitySessionPath).mockResolvedValue('ok')
-
-    render(<AntigravityPathSetting />)
-
-    await waitFor(() => {
-      expect(screen.getByText('/Users/test/.gemini/antigravity')).toBeInTheDocument()
-    })
-
-    // Enter edit mode
-    fireEvent.click(screen.getByText('/Users/test/.gemini/antigravity'))
-
-    // Press Enter
-    const input = screen.getByRole('textbox')
-    fireEvent.keyDown(input, { key: 'Enter' })
-
-    await waitFor(() => {
-      expect(projects.updateAntigravitySessionPath).toHaveBeenCalled()
-    })
-  })
-
-  it('should cancel on Escape key press', async () => {
-    vi.mocked(projects.getAntigravitySessionPath).mockResolvedValue({
-      path: '/Users/test/.gemini/antigravity',
-      is_default: true,
+  it('should show healthy but without session count when not provided', async () => {
+    vi.mocked(antigravity.checkApiStatus).mockResolvedValue({
+      running: true,
+      healthy: true,
+      api_url: 'http://localhost:3000',
     })
 
     render(<AntigravityPathSetting />)
 
     await waitFor(() => {
-      expect(screen.getByText('/Users/test/.gemini/antigravity')).toBeInTheDocument()
+      expect(screen.getByText('連線正常')).toBeInTheDocument()
     })
 
-    // Enter edit mode
-    fireEvent.click(screen.getByText('/Users/test/.gemini/antigravity'))
+    expect(screen.getByText('http://localhost:3000')).toBeInTheDocument()
+    // Session count should not be shown
+    expect(screen.queryByText('Session 數')).not.toBeInTheDocument()
+  })
 
-    // Press Escape
-    const input = screen.getByRole('textbox')
-    fireEvent.keyDown(input, { key: 'Escape' })
+  it('should re-check status when refresh button is clicked', async () => {
+    vi.mocked(antigravity.checkApiStatus).mockResolvedValue({
+      running: false,
+      healthy: false,
+    })
 
-    // Should exit edit mode
-    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+    render(<AntigravityPathSetting />)
+
+    await waitFor(() => {
+      expect(screen.getByText('未連線')).toBeInTheDocument()
+    })
+
+    // Now mock healthy response
+    vi.mocked(antigravity.checkApiStatus).mockResolvedValue({
+      running: true,
+      healthy: true,
+      api_url: 'http://localhost:3000',
+    })
+
+    // Click refresh button
+    fireEvent.click(screen.getByTitle('重新檢查'))
+
+    await waitFor(() => {
+      expect(screen.getByText('連線正常')).toBeInTheDocument()
+    })
+
+    expect(antigravity.checkApiStatus).toHaveBeenCalledTimes(2)
+  })
+
+  it('should show hint text when not connected', async () => {
+    vi.mocked(antigravity.checkApiStatus).mockResolvedValue({
+      running: true,
+      healthy: false,
+    })
+
+    render(<AntigravityPathSetting />)
+
+    await waitFor(() => {
+      expect(screen.getByText('未連線')).toBeInTheDocument()
+    })
+
+    expect(screen.getByText(/請先開啟 Antigravity 應用程式/)).toBeInTheDocument()
   })
 })
