@@ -93,8 +93,43 @@ jobs:
         with:
           projectPath: web
           releaseId: ${{ needs.create-release.outputs.release_id }}
-          includeUpdaterJson: true
           args: ${{ matrix.args }}
+
+      - name: Upload updater artifacts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+
+          if [[ "${{ matrix.platform }}" == "macos-latest" ]]; then
+            ARCH=$(echo "${{ matrix.args }}" | grep -o 'aarch64\|x86_64')
+            if [ "$ARCH" = "aarch64" ]; then
+              SUFFIX="aarch64"
+            else
+              SUFFIX="x64"
+            fi
+            BUNDLE_DIR="web/target/${ARCH}-apple-darwin/release/bundle/macos"
+            # Rename to avoid name conflicts between architectures
+            cp "${BUNDLE_DIR}/Recap.app.tar.gz" "Recap_${SUFFIX}.app.tar.gz"
+            cp "${BUNDLE_DIR}/Recap.app.tar.gz.sig" "Recap_${SUFFIX}.app.tar.gz.sig"
+            gh release upload "$TAG" \
+              "Recap_${SUFFIX}.app.tar.gz" \
+              "Recap_${SUFFIX}.app.tar.gz.sig"
+
+          elif [[ "${{ matrix.platform }}" == "ubuntu-22.04" ]]; then
+            BUNDLE_DIR="web/target/release/bundle/appimage"
+            gh release upload "$TAG" \
+              "${BUNDLE_DIR}/Recap_${VERSION}_amd64.AppImage.tar.gz" \
+              "${BUNDLE_DIR}/Recap_${VERSION}_amd64.AppImage.tar.gz.sig"
+
+          elif [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
+            BUNDLE_DIR="web/target/release/bundle/nsis"
+            gh release upload "$TAG" \
+              "${BUNDLE_DIR}/Recap_${VERSION}_x64-setup.nsis.zip" \
+              "${BUNDLE_DIR}/Recap_${VERSION}_x64-setup.nsis.zip.sig"
+          fi
 
   publish-release:
     name: Publish Release
@@ -131,49 +166,48 @@ jobs:
               return await resp.text();
             };
 
-            const pub_date = new Date().toISOString();
+            core.info(`Found ${assets.length} assets: ${assets.map(a => a.name).join(', ')}`);
 
-            // Build platforms object
+            const pub_date = new Date().toISOString();
             const platforms = {};
 
-            // macOS aarch64
-            const macArmSig = await getAssetSig(`Recap.app.tar.gz.sig`);
-            const macArmUrl = getAssetUrl(`Recap_${version}_aarch64.dmg`);
-            if (macArmUrl) {
-              // For macOS updater, we need the .tar.gz URL but we upload .dmg
-              // The updater expects .tar.gz with signature
+            // macOS aarch64 - updater uses .app.tar.gz
+            const macArmUrl = getAssetUrl('Recap_aarch64.app.tar.gz');
+            const macArmSig = await getAssetSig('Recap_aarch64.app.tar.gz.sig');
+            if (macArmUrl && macArmSig) {
               platforms['darwin-aarch64'] = {
-                signature: macArmSig || '',
+                signature: macArmSig,
                 url: macArmUrl
               };
             }
 
-            // macOS x86_64
-            const macX64Url = getAssetUrl(`Recap_${version}_x64.dmg`);
-            if (macX64Url) {
+            // macOS x86_64 - updater uses .app.tar.gz
+            const macX64Url = getAssetUrl('Recap_x64.app.tar.gz');
+            const macX64Sig = await getAssetSig('Recap_x64.app.tar.gz.sig');
+            if (macX64Url && macX64Sig) {
               platforms['darwin-x86_64'] = {
-                signature: '',
+                signature: macX64Sig,
                 url: macX64Url
               };
             }
 
-            // Linux
-            const linuxAppImage = getAssetUrl(`Recap_${version}_amd64.AppImage`);
+            // Linux - updater uses .AppImage.tar.gz
+            const linuxUrl = getAssetUrl(`Recap_${version}_amd64.AppImage.tar.gz`);
             const linuxSig = await getAssetSig(`Recap_${version}_amd64.AppImage.tar.gz.sig`);
-            if (linuxAppImage) {
+            if (linuxUrl && linuxSig) {
               platforms['linux-x86_64'] = {
-                signature: linuxSig || '',
-                url: linuxAppImage
+                signature: linuxSig,
+                url: linuxUrl
               };
             }
 
-            // Windows
-            const winSetup = getAssetUrl(`Recap_${version}_x64-setup.exe`);
+            // Windows - updater uses .nsis.zip
+            const winUrl = getAssetUrl(`Recap_${version}_x64-setup.nsis.zip`);
             const winSig = await getAssetSig(`Recap_${version}_x64-setup.nsis.zip.sig`);
-            if (winSetup) {
+            if (winUrl && winSig) {
               platforms['windows-x86_64'] = {
-                signature: winSig || '',
-                url: winSetup
+                signature: winSig,
+                url: winUrl
               };
             }
 
