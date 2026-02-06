@@ -137,7 +137,10 @@ export function useAppSync(isAuthenticated: boolean, token: string | null): Sync
     }
   }, [isAuthenticated, token, refreshStatus])
 
-  // Start background sync service when authenticated
+  // Track whether initial sync has been performed
+  const initialSyncDone = useRef(false)
+
+  // Start background sync service and trigger initial sync when authenticated
   useEffect(() => {
     if (!isAuthenticated || !token) return
 
@@ -145,17 +148,16 @@ export function useAppSync(isAuthenticated: boolean, token: string | null): Sync
       console.warn('Failed to start background sync:', err)
     })
 
+    // Trigger initial sync once after authentication is ready
+    if (!initialSyncDone.current) {
+      initialSyncDone.current = true
+      performFullSync()
+    }
+
     return () => {
       backgroundSync.stop().catch(() => {})
     }
-  }, [isAuthenticated, token])
-
-  // Initial sync on first mount
-  useEffect(() => {
-    if (dataSyncState === 'idle') {
-      performFullSync()
-    }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, token, performFullSync])
 
   // Periodic status polling to stay in sync with backend
   useEffect(() => {
