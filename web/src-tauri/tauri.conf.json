@@ -62,7 +62,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYzM0I2OTg0QjkxQTVGNDYKUldUMlh3b0V0Rlk1c1lSWVN3VFBZYWo5RVRLczQ5cVdyUHQ2R01tYjFBdDAwUW5lMC9FeHcxa0wK",
       "endpoints": [
-        "https://github.com/recap/recap/releases/latest/download/latest.json"
+        "https://github.com/p988744/recap/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"
