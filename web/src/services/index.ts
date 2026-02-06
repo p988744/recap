@@ -30,6 +30,7 @@ export * as notification from './notification'
 export * as llmUsage from './llm-usage'
 export * as dangerZone from './danger-zone'
 export * as batchCompaction from './batch-compaction'
+export * as updater from './updater'
 
 // Re-export integrations
 export * as gitlab from './integrations/gitlab'
