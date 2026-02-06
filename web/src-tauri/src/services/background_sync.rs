@@ -674,8 +674,9 @@ impl BackgroundSyncService {
             let user_id = Arc::clone(&self.user_id);
 
             tokio::spawn(async move {
+                // tokio::time::interval first tick fires immediately,
+                // then repeats every interval_minutes. No need to skip.
                 let mut timer = interval(Duration::from_secs(interval_minutes as u64 * 60));
-                timer.tick().await; // Skip first tick
 
                 loop {
                     tokio::select! {
@@ -734,8 +735,9 @@ impl BackgroundSyncService {
             }
 
             tokio::spawn(async move {
+                // tokio::time::interval first tick fires immediately,
+                // then repeats every compaction_interval_minutes. No need to skip.
                 let mut timer = interval(Duration::from_secs(compaction_interval_minutes as u64 * 60));
-                timer.tick().await; // Skip first tick
 
                 loop {
                     tokio::select! {
