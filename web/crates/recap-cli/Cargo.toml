@@ -48,5 +48,6 @@ shellexpand = "3"
 [dev-dependencies]
 tempfile = "3"
 assert_cmd = "2"
+escargot = "0.5"
 predicates = "3"
 serial_test = "3"

@@ -6,10 +6,22 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use serial_test::serial;
+use std::time::Duration;
 
-/// Get a Command for the recap binary
+/// Get a Command for the recap CLI binary.
+///
+/// Uses escargot to explicitly build the `recap` binary from the `recap-cli`
+/// package, avoiding ambiguity with the identically-named Tauri binary in
+/// the workspace (which would hang waiting for a display server).
 fn recap() -> Command {
-    Command::cargo_bin("recap").unwrap()
+    let cargo_run = escargot::CargoBuild::new()
+        .bin("recap")
+        .package("recap-cli")
+        .run()
+        .expect("Failed to build recap-cli binary");
+    let mut cmd = Command::new(cargo_run.path());
+    cmd.timeout(Duration::from_secs(30));
+    cmd
 }
 
 // =============================================================================
