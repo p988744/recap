@@ -91,6 +91,7 @@ jobs:
         with:
           projectPath: web
           releaseId: ${{ needs.create-release.outputs.release_id }}
+          includeUpdaterJson: true
           args: ${{ matrix.args }}
 
   publish-release:
