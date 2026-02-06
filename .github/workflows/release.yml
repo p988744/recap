@@ -85,17 +85,13 @@ jobs:
         run: npm ci
 
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
+        working-directory: ./web
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
-        with:
-          projectPath: web
-          releaseId: ${{ needs.create-release.outputs.release_id }}
-          args: ${{ matrix.args }}
+        run: npx tauri build ${{ matrix.args }}
 
-      - name: Upload updater artifacts
+      - name: Upload release artifacts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
@@ -103,45 +99,69 @@ jobs:
           TAG="${GITHUB_REF#refs/tags/}"
           VERSION="${TAG#v}"
 
-          echo "=== Finding updater artifacts ==="
-          find . -type f \( -name "*.tar.gz" -o -name "*.tar.gz.sig" -o -name "*.nsis.zip" -o -name "*.nsis.zip.sig" \) 2>/dev/null || true
+          echo "=== Listing all bundle artifacts ==="
+          find web/target -type f \( -name "*.dmg" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.exe" -o -name "*.tar.gz" -o -name "*.sig" -o -name "*.nsis.zip" \) 2>/dev/null || true
 
           if [[ "${{ matrix.platform }}" == "macos-latest" ]]; then
             ARCH=$(echo "${{ matrix.args }}" | grep -o 'aarch64\|x86_64')
-            SUFFIX=$([[ "$ARCH" == "aarch64" ]] && echo "aarch64" || echo "x64")
+            if [ "$ARCH" = "aarch64" ]; then
+              SUFFIX="aarch64"
+            else
+              SUFFIX="x64"
+            fi
+            BUNDLE_DIR="web/target/${ARCH}-apple-darwin/release/bundle"
 
-            TARGZ=$(find . -name "Recap.app.tar.gz" -path "*/${ARCH}-apple-darwin/*" 2>/dev/null | head -1)
-            SIG=$(find . -name "Recap.app.tar.gz.sig" -path "*/${ARCH}-apple-darwin/*" 2>/dev/null | head -1)
+            # Upload .dmg installer
+            DMG=$(find "$BUNDLE_DIR/dmg" -name "*.dmg" 2>/dev/null | head -1)
+            if [ -n "$DMG" ]; then
+              gh release upload "$TAG" "$DMG#Recap_${VERSION}_${SUFFIX}.dmg"
+            fi
 
+            # Upload updater .tar.gz + .sig (rename to avoid arch conflicts)
+            TARGZ=$(find "$BUNDLE_DIR/macos" -name "Recap.app.tar.gz" 2>/dev/null | head -1)
+            SIG=$(find "$BUNDLE_DIR/macos" -name "Recap.app.tar.gz.sig" 2>/dev/null | head -1)
             if [ -n "$TARGZ" ] && [ -n "$SIG" ]; then
               cp "$TARGZ" "Recap_${SUFFIX}.app.tar.gz"
               cp "$SIG" "Recap_${SUFFIX}.app.tar.gz.sig"
               gh release upload "$TAG" "Recap_${SUFFIX}.app.tar.gz" "Recap_${SUFFIX}.app.tar.gz.sig"
-            else
-              echo "WARNING: macOS ${ARCH} updater artifacts not found"
-              echo "TARGZ='$TARGZ' SIG='$SIG'"
             fi
 
           elif [[ "${{ matrix.platform }}" == "ubuntu-22.04" ]]; then
-            TARGZ=$(find . -name "*_amd64.AppImage.tar.gz" -not -name "*.sig" 2>/dev/null | head -1)
-            SIG=$(find . -name "*_amd64.AppImage.tar.gz.sig" 2>/dev/null | head -1)
+            BUNDLE_DIR="web/target/release/bundle"
 
+            # Upload .AppImage
+            APPIMAGE=$(find "$BUNDLE_DIR/appimage" -name "*.AppImage" -not -name "*.sig" -not -name "*.tar.gz" 2>/dev/null | head -1)
+            if [ -n "$APPIMAGE" ]; then
+              gh release upload "$TAG" "$APPIMAGE"
+            fi
+
+            # Upload .deb
+            DEB=$(find "$BUNDLE_DIR/deb" -name "*.deb" -not -name "*.sig" 2>/dev/null | head -1)
+            if [ -n "$DEB" ]; then
+              gh release upload "$TAG" "$DEB"
+            fi
+
+            # Upload updater .tar.gz + .sig
+            TARGZ=$(find "$BUNDLE_DIR/appimage" -name "*.AppImage.tar.gz" -not -name "*.sig" 2>/dev/null | head -1)
+            SIG=$(find "$BUNDLE_DIR/appimage" -name "*.AppImage.tar.gz.sig" 2>/dev/null | head -1)
             if [ -n "$TARGZ" ] && [ -n "$SIG" ]; then
               gh release upload "$TAG" "$TARGZ" "$SIG"
-            else
-              echo "WARNING: Linux updater artifacts not found"
-              echo "TARGZ='$TARGZ' SIG='$SIG'"
             fi
 
           elif [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
-            NSIS=$(find . -name "*_x64-setup.nsis.zip" -not -name "*.sig" 2>/dev/null | head -1)
-            SIG=$(find . -name "*_x64-setup.nsis.zip.sig" 2>/dev/null | head -1)
+            BUNDLE_DIR="web/target/release/bundle"
 
+            # Upload .exe installer
+            EXE=$(find "$BUNDLE_DIR/nsis" -name "*-setup.exe" -not -name "*.sig" 2>/dev/null | head -1)
+            if [ -n "$EXE" ]; then
+              gh release upload "$TAG" "$EXE"
+            fi
+
+            # Upload updater .nsis.zip + .sig
+            NSIS=$(find "$BUNDLE_DIR/nsis" -name "*.nsis.zip" -not -name "*.sig" 2>/dev/null | head -1)
+            SIG=$(find "$BUNDLE_DIR/nsis" -name "*.nsis.zip.sig" 2>/dev/null | head -1)
             if [ -n "$NSIS" ] && [ -n "$SIG" ]; then
               gh release upload "$TAG" "$NSIS" "$SIG"
-            else
-              echo "WARNING: Windows updater artifacts not found"
-              echo "NSIS='$NSIS' SIG='$SIG'"
             fi
           fi
 
