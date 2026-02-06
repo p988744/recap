@@ -60,7 +60,7 @@
       "open": true
     },
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYzM0I2OTg0QjkxQTVGNDYKUldUMlh3b0V0Rlk1c1lSWVN3VFBZYWo5RVRLczQ5cVdyUHQ2R01tYjFBdDAwUW5lMC9FeHcxa0wK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdENTc4NjVEOUY0RDhFMDYKUldRR2prMmZYWVpYZlh5NThRSjl6UnRqZTAvVS9SMFRPcFNEQ3hTQlVJNzBraXd4YWVIVEl6VlQK",
       "endpoints": [
         "https://github.com/p988744/recap/releases/latest/download/latest.json"
       ],
