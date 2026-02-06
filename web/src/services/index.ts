@@ -32,6 +32,7 @@ export * as quota from './quota'
 export * as quotaTimer from './quota-timer'
 export * as dangerZone from './danger-zone'
 export * as batchCompaction from './batch-compaction'
+export * as updater from './updater'
 
 // Re-export integrations
 export * as gitlab from './integrations/gitlab'

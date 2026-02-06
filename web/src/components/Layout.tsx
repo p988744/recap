@@ -28,6 +28,7 @@ import {
   taskTypeLabels,
   phaseLabels,
 } from '@/hooks/useBackgroundTask'
+import { useUpdateCheckerState, UpdateProvider } from '@/hooks/useUpdateChecker'
 
 const navItems = [
   { to: '/', icon: CalendarDays, label: '本週工作' },
@@ -57,6 +58,9 @@ export function Layout() {
   // App-level background task state (recompaction, etc.)
   const backgroundTaskValue = useBackgroundTaskState()
   const { task } = backgroundTaskValue
+
+  // App-level update checker
+  const updateValue = useUpdateCheckerState()
 
   // Calculate progress percentage
   const taskProgressPercent = task.progress
@@ -102,20 +106,25 @@ export function Layout() {
 
         {/* Footer */}
         <div className="p-4 border-t border-border">
-          <NavLink
-            to="/settings"
-            className={({ isActive }) =>
-              cn(
-                "flex items-center gap-3 px-3 py-2.5 text-sm transition-all duration-200",
-                isActive
-                  ? "text-foreground border-l-2 border-l-charcoal -ml-px font-medium"
-                  : "text-muted-foreground hover:text-foreground"
-              )
-            }
-          >
-            <Settings className="w-4 h-4" strokeWidth={1.5} />
-            <span>設定</span>
-          </NavLink>
+          <div className="relative">
+            <NavLink
+              to="/settings"
+              className={({ isActive }) =>
+                cn(
+                  "flex items-center gap-3 px-3 py-2.5 text-sm transition-all duration-200",
+                  isActive
+                    ? "text-foreground border-l-2 border-l-charcoal -ml-px font-medium"
+                    : "text-muted-foreground hover:text-foreground"
+                )
+              }
+            >
+              <Settings className="w-4 h-4" strokeWidth={1.5} />
+              <span>設定</span>
+            </NavLink>
+            {updateValue.status === 'available' && (
+              <span className="absolute top-2 right-2 w-2 h-2 bg-sage rounded-full" />
+            )}
+          </div>
 
           {/* User info */}
           {user && (
@@ -250,9 +259,11 @@ export function Layout() {
       <main className="flex-1 ml-56 h-screen overflow-y-auto">
         <SyncProvider value={syncValue}>
           <BackgroundTaskProvider value={backgroundTaskValue}>
-            <div className="px-12 py-10 max-w-5xl">
-              <Outlet />
-            </div>
+            <UpdateProvider value={updateValue}>
+              <div className="px-12 py-10 max-w-5xl">
+                <Outlet />
+              </div>
+            </UpdateProvider>
           </BackgroundTaskProvider>
         </SyncProvider>
       </main>

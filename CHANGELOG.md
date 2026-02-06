@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0-rc.1] - 2026-02-06
+
+### Added
+
+- **Antigravity (Gemini Code) 整合** - 透過 API 即時偵測 Antigravity 應用狀態、背景同步 session 資料
+- **Projects 頁面** - 全新 master-detail 佈局，含 README 預覽、專案時間軸、描述管理
+- **ThisWeek 頁面** - 本週總覽含 heatmap、Gantt chart、可展開的每日卡片
+- **手動專案/工作項目** - 支援新增、編輯、刪除手動工作項目，含專案選擇器
+- **Compaction 系統** - 批次壓縮、進度追蹤、背景執行、danger zone UI
+- **Onboarding 引導精靈** - 重新設計為初始設定精靈
+- **Tempo 匯出** - 日期詳情頁直接匯出至 Tempo
+- **SyncSource trait** - 資料來源抽象化，簡化新增整合來源
+- **Release CI/CD** - 自動化跨平台建置與發布工作流程
+
+### Changed
+
+- Gantt chart 顯示手動項目，並重新命名 Antigravity badge
+- 手動項目格式從 Markdown 改為 JSONL
+- 移除 GitLab/Jira 同步開關和回顧頁面
+- 專案描述改用 README 內容
+
+### Fixed
+
+- Compaction interval 單位不一致問題
+- 背景同步狀態在 app 重啟後遺失
+- Gantt chart 佈局溢出與連續時間段合併
+- Antigravity 資料顯示與 LLM 摘要
+- Git commit 資料流中的時間戳與 git root 解析
+- Windows 建置時隱藏 CMD 視窗
+
 ## [2.0.0-rc.3] - 2026-01-28
 
 ### Changed
