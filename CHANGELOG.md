@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0-alpha.5] - 2026-02-06
+
+### Added
+
+- **App 版本更新檢查** - Settings > About 支援檢查 GitHub Releases 更新、下載安裝、重新啟動，定期（24h）自動檢查
+
+### Fixed
+
+- App 啟動時背景同步未觸發的問題
+
 ## [2.1.0-rc.1] - 2026-02-06
 
 ### Added
