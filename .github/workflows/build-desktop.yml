@@ -5,12 +5,7 @@ on:
   schedule:
     - cron: '0 18 * * *'
 
-  # Release build - 推送 tag 時觸發
-  push:
-    tags:
-      - 'v*'
-
-  # 手動觸發
+  # 手動觸發（v* tag push 由 release.yml 處理）
   workflow_dispatch:
     inputs:
       release_type:
