@@ -1,15 +1,13 @@
-import { User, Cloud, LogOut } from 'lucide-react'
+import { User, Cloud } from 'lucide-react'
 import { Card } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
 import type { UserResponse, AppStatus } from '@/types'
 
 interface AccountSectionProps {
   user: UserResponse | null
   appStatus: AppStatus | null
-  onLogout: () => void
 }
 
-export function AccountSection({ user, appStatus, onLogout }: AccountSectionProps) {
+export function AccountSection({ user, appStatus }: AccountSectionProps) {
   return (
     <section className="animate-fade-up opacity-0 delay-1">
       <h2 className="font-display text-2xl text-foreground mb-6">帳號</h2>
@@ -51,16 +49,6 @@ export function AccountSection({ user, appStatus, onLogout }: AccountSectionProp
             </div>
           </div>
 
-          {/* Logout button */}
-          <div className="pt-4 border-t border-border">
-            <Button variant="outline" onClick={onLogout} className="text-destructive hover:text-destructive">
-              <LogOut className="w-4 h-4" strokeWidth={1.5} />
-              登出
-            </Button>
-            <p className="text-xs text-muted-foreground mt-2">
-              登出後將清除本地登入狀態，重新啟動 App 會自動登入。
-            </p>
-          </div>
         </div>
       </Card>
     </section>

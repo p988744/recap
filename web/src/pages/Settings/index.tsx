@@ -89,7 +89,7 @@ export function SettingsPage() {
             onSave={profileForm.handleSave}
             setMessage={settings.setMessage}
             user={settings.user}
-            onLogout={settings.logout}
+
           />
         )}
 

@@ -1,4 +1,4 @@
-import { Save, Loader2, User, LogOut } from 'lucide-react'
+import { Save, Loader2, User } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -21,7 +21,6 @@ interface ProfileSectionProps {
   onSave: (setMessage: (msg: SettingsMessage | null) => void) => Promise<void>
   setMessage: (msg: SettingsMessage | null) => void
   user: UserResponse | null
-  onLogout: () => void
 }
 
 export function ProfileSection({
@@ -39,7 +38,6 @@ export function ProfileSection({
   onSave,
   setMessage,
   user,
-  onLogout,
 }: ProfileSectionProps) {
   return (
     <section className="animate-fade-up opacity-0 delay-1 space-y-8">
@@ -58,15 +56,6 @@ export function ProfileSection({
             </div>
           </div>
 
-          <div className="pt-4 border-t border-border">
-            <Button variant="outline" onClick={onLogout} className="text-destructive hover:text-destructive">
-              <LogOut className="w-4 h-4" strokeWidth={1.5} />
-              登出
-            </Button>
-            <p className="text-xs text-muted-foreground mt-2">
-              登出後將清除本地登入狀態，重新啟動 App 會自動登入。
-            </p>
-          </div>
         </div>
       </Card>
 

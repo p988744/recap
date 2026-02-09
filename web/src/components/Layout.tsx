@@ -214,31 +214,44 @@ export function Layout() {
 
             {/* Sync status & help */}
             <div className="flex items-center justify-between">
-              <button
-                onClick={() => navigate('/settings?section=projects')}
-                className="flex items-center gap-2 hover:text-foreground transition-colors"
-              >
-                {syncValue.dataSyncState === 'syncing' || syncValue.summaryState === 'syncing' || syncValue.backendStatus?.is_syncing ? (
-                  <>
-                    <RefreshCw className="w-3 h-3 text-muted-foreground animate-spin" strokeWidth={1.5} />
-                    <span className="text-[10px] text-muted-foreground">同步中...</span>
-                  </>
-                ) : syncValue.backendStatus?.is_compacting ? (
-                  <>
-                    <RefreshCw className="w-3 h-3 text-muted-foreground animate-spin" strokeWidth={1.5} />
-                    <span className="text-[10px] text-muted-foreground">壓縮中...</span>
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle2 className="w-3 h-3 text-sage" strokeWidth={1.5} />
-                    <span className="text-[10px] text-muted-foreground">
-                      {syncValue.backendStatus?.last_sync_at
-                        ? `上次同步 ${new Date(syncValue.backendStatus.last_sync_at).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}`
-                        : '尚未同步'}
-                    </span>
-                  </>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => navigate('/settings?section=projects')}
+                  className="flex items-center gap-2 hover:text-foreground transition-colors"
+                >
+                  {syncValue.dataSyncState === 'syncing' || syncValue.summaryState === 'syncing' || syncValue.backendStatus?.is_syncing ? (
+                    <>
+                      <RefreshCw className="w-3 h-3 text-muted-foreground animate-spin" strokeWidth={1.5} />
+                      <span className="text-[10px] text-muted-foreground">同步中...</span>
+                    </>
+                  ) : syncValue.backendStatus?.is_compacting ? (
+                    <>
+                      <RefreshCw className="w-3 h-3 text-muted-foreground animate-spin" strokeWidth={1.5} />
+                      <span className="text-[10px] text-muted-foreground">壓縮中...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-3 h-3 text-sage" strokeWidth={1.5} />
+                      <span className="text-[10px] text-muted-foreground">
+                        {syncValue.backendStatus?.last_sync_at
+                          ? `上次同步 ${new Date(syncValue.backendStatus.last_sync_at).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}`
+                          : '尚未同步'}
+                      </span>
+                    </>
+                  )}
+                </button>
+                {!(syncValue.dataSyncState === 'syncing' || syncValue.summaryState === 'syncing' || syncValue.backendStatus?.is_syncing || syncValue.backendStatus?.is_compacting) && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-5 w-5 text-muted-foreground hover:text-foreground"
+                    onClick={() => syncValue.performFullSync()}
+                    title="立即同步"
+                  >
+                    <RefreshCw className="w-3 h-3" strokeWidth={1.5} />
+                  </Button>
                 )}
-              </button>
+              </div>
               <Button
                 variant="ghost"
                 size="icon"

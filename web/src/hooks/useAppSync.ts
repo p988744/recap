@@ -140,7 +140,9 @@ export function useAppSync(isAuthenticated: boolean, token: string | null): Sync
   // Track whether initial sync has been performed
   const initialSyncDone = useRef(false)
 
-  // Start background sync service and trigger initial sync when authenticated
+  // Start background sync service and trigger initial sync when authenticated.
+  // The service runs for the entire app lifetime — no cleanup stop() needed
+  // since the app auto-logs in and never truly logs out.
   useEffect(() => {
     if (!isAuthenticated || !token) return
 
@@ -153,11 +155,8 @@ export function useAppSync(isAuthenticated: boolean, token: string | null): Sync
       initialSyncDone.current = true
       performFullSync()
     }
-
-    return () => {
-      backgroundSync.stop().catch(() => {})
-    }
-  }, [isAuthenticated, token, performFullSync])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, token])
 
   // Periodic status polling to stay in sync with backend
   useEffect(() => {
