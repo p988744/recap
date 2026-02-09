@@ -46,16 +46,16 @@ jobs:
         include:
           - platform: 'macos-latest'
             args: '--target aarch64-apple-darwin'
-            bundles: 'dmg,updater'
+            bundles: 'dmg,app'
           - platform: 'macos-latest'
             args: '--target x86_64-apple-darwin'
-            bundles: 'dmg,updater'
+            bundles: 'dmg,app'
           - platform: 'ubuntu-22.04'
             args: ''
-            bundles: 'deb,appimage,updater'
+            bundles: 'deb,appimage'
           - platform: 'windows-latest'
             args: ''
-            bundles: 'nsis,updater'
+            bundles: 'nsis'
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -92,7 +92,6 @@ jobs:
         working-directory: ./web
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
         run: npx tauri build ${{ matrix.args }} --bundles ${{ matrix.bundles }}
 
       - name: Upload release artifacts
