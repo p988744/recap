@@ -7,7 +7,7 @@ members = [
 ]
 
 [workspace.package]
-version = "2.1.0-rc.5"
+version = "2.2.0-alpha.6"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/recap/recap"
