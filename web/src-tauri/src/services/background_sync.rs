@@ -7,8 +7,11 @@
 //! to dynamically discover and sync work items from multiple data sources.
 
 use std::sync::Arc;
+use std::pin::Pin;
+use std::future::Future;
 use tokio::sync::{Mutex, RwLock};
-use tokio::time::{interval, Duration};
+use tokio::time::Duration;
+use tokio_cron_scheduler::{Job, JobScheduler};
 
 use recap_core::services::sources::{SyncConfig, SourceSyncResult};
 
@@ -192,6 +195,17 @@ impl ServiceLifecycle {
         }
     }
 
+    /// Update next_sync_at time (only effective in Idle state)
+    pub fn update_next_sync_at(self, next_sync_at: Option<String>) -> Self {
+        match self {
+            Self::Idle { last_sync_at, .. } => Self::Idle {
+                last_sync_at,
+                next_sync_at,
+            },
+            other => other,
+        }
+    }
+
     /// Transition: Any -> Stopped
     pub fn stop(self) -> Self {
         Self::Stopped
@@ -335,10 +349,12 @@ pub struct BackgroundSyncService {
     last_result: Arc<RwLock<Option<String>>>,
     /// Last error message
     last_error: Arc<RwLock<Option<String>>>,
-    /// Shutdown signal sender for sync task
-    shutdown_tx: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
-    /// Shutdown signal sender for compaction task
-    compaction_shutdown_tx: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+    /// Job scheduler instance
+    scheduler: Arc<Mutex<Option<JobScheduler>>>,
+    /// Data sync job ID (for querying next fire time)
+    sync_job_id: Arc<RwLock<Option<uuid::Uuid>>>,
+    /// Compaction job ID (for querying next fire time)
+    compaction_job_id: Arc<RwLock<Option<uuid::Uuid>>>,
     /// Database connection for sync operations
     db: Arc<Mutex<recap_core::Database>>,
     /// User ID for sync operations
@@ -358,8 +374,9 @@ impl BackgroundSyncService {
             next_compaction_at: Arc::new(RwLock::new(None)),
             last_result: Arc::new(RwLock::new(None)),
             last_error: Arc::new(RwLock::new(None)),
-            shutdown_tx: Arc::new(Mutex::new(None)),
-            compaction_shutdown_tx: Arc::new(Mutex::new(None)),
+            scheduler: Arc::new(Mutex::new(None)),
+            sync_job_id: Arc::new(RwLock::new(None)),
+            compaction_job_id: Arc::new(RwLock::new(None)),
             db,
             user_id: Arc::new(RwLock::new(None)),
             is_compacting: Arc::new(RwLock::new(false)),
@@ -490,6 +507,9 @@ impl BackgroundSyncService {
 
     /// Get the current status (API response format)
     pub async fn get_status(&self) -> SyncServiceStatus {
+        // Refresh next fire times from the scheduler before reading
+        self.refresh_next_times().await;
+
         let lifecycle = self.lifecycle.read().await;
         let last_sync_at = self.last_sync_at.read().await.clone();
         let last_compaction_at = self.last_compaction_at.read().await.clone();
@@ -613,9 +633,12 @@ impl BackgroundSyncService {
 
     /// Start the background sync service
     ///
-    /// Spawns two independent tasks:
-    /// 1. **Data Sync Task** - Runs every N minutes for discovery and extraction
-    /// 2. **Compaction Task** - Runs every N hours for hierarchical summary generation
+    /// Uses `tokio-cron-scheduler` to schedule two independent jobs:
+    /// 1. **Data Sync Job** - Runs every N minutes for discovery and extraction
+    /// 2. **Compaction Job** - Runs every N hours for hierarchical summary generation
+    ///
+    /// The scheduler manages timing independently of job execution duration,
+    /// ensuring accurate "next sync" times even when sync operations take long.
     pub async fn start(&self) {
         let config = self.config.read().await;
         if !config.enabled {
@@ -644,18 +667,16 @@ impl BackgroundSyncService {
             }
         }
 
-        // Create shutdown channels for both tasks
-        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        {
-            let mut tx = self.shutdown_tx.lock().await;
-            *tx = Some(shutdown_tx);
-        }
-
-        let (compaction_shutdown_tx, mut compaction_shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        {
-            let mut tx = self.compaction_shutdown_tx.lock().await;
-            *tx = Some(compaction_shutdown_tx);
-        }
+        // Create the job scheduler
+        let sched = match JobScheduler::new().await {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Failed to create job scheduler: {:?}", e);
+                let mut lifecycle = self.lifecycle.write().await;
+                *lifecycle = lifecycle.clone().stop();
+                return;
+            }
+        };
 
         log::info!(
             "Starting background sync service: data sync every {}min, compaction every {}min",
@@ -663,8 +684,8 @@ impl BackgroundSyncService {
             compaction_interval_minutes
         );
 
-        // ===== Task 1: Data Sync (frequent) =====
-        {
+        // ===== Job 1: Data Sync (frequent) =====
+        let sync_job = {
             let config = Arc::clone(&self.config);
             let lifecycle = Arc::clone(&self.lifecycle);
             let last_sync_at = Arc::clone(&self.last_sync_at);
@@ -672,53 +693,106 @@ impl BackgroundSyncService {
             let last_error = Arc::clone(&self.last_error);
             let db = Arc::clone(&self.db);
             let user_id = Arc::clone(&self.user_id);
+            let scheduler_ref = Arc::clone(&self.scheduler);
+            let sync_job_id_ref = Arc::clone(&self.sync_job_id);
 
-            tokio::spawn(async move {
-                // tokio::time::interval first tick fires immediately,
-                // then repeats every interval_minutes. No need to skip.
-                let mut timer = interval(Duration::from_secs(interval_minutes as u64 * 60));
+            Job::new_repeated_async(
+                Duration::from_secs(interval_minutes as u64 * 60),
+                move |_uuid, _lock| {
+                    let config = Arc::clone(&config);
+                    let lifecycle = Arc::clone(&lifecycle);
+                    let last_sync_at = Arc::clone(&last_sync_at);
+                    let last_result = Arc::clone(&last_result);
+                    let last_error = Arc::clone(&last_error);
+                    let db = Arc::clone(&db);
+                    let user_id = Arc::clone(&user_id);
+                    let scheduler_ref = Arc::clone(&scheduler_ref);
+                    let sync_job_id_ref = Arc::clone(&sync_job_id_ref);
 
-                loop {
-                    tokio::select! {
-                        _ = timer.tick() => {
-                            let cfg = config.read().await;
-                            if !cfg.enabled {
-                                log::info!("Background sync disabled, stopping data sync loop");
-                                break;
-                            }
-                            let sync_config = cfg.clone();
-                            drop(cfg);
+                    Box::pin(async move {
+                        // Check config.enabled
+                        let cfg = config.read().await;
+                        if !cfg.enabled {
+                            log::info!("Background sync disabled, skipping data sync tick");
+                            return;
+                        }
+                        let sync_config = cfg.clone();
+                        drop(cfg);
 
-                            let uid = user_id.read().await.clone();
-                            if uid.is_none() {
+                        // Check user_id
+                        let uid = user_id.read().await.clone();
+                        let uid = match uid {
+                            Some(id) => id,
+                            None => {
                                 log::warn!("No user ID set, skipping data sync");
-                                continue;
+                                return;
                             }
+                        };
 
-                            Self::perform_data_sync(
-                                &db,
-                                &lifecycle,
-                                &last_sync_at,
-                                &last_result,
-                                &last_error,
-                                &sync_config,
-                                &uid.unwrap(),
-                            ).await;
+                        // Overlap prevention: skip if already syncing
+                        {
+                            let lc = lifecycle.read().await;
+                            if lc.is_syncing() {
+                                log::warn!("Previous sync still running, skipping this tick");
+                                return;
+                            }
                         }
-                        _ = &mut shutdown_rx => {
-                            log::info!("Data sync task received shutdown signal");
-                            break;
-                        }
-                    }
-                }
 
-                let mut lc = lifecycle.write().await;
-                *lc = lc.clone().stop();
-                log::info!("Data sync task stopped");
-            });
+                        // Perform sync
+                        Self::perform_data_sync(
+                            &db,
+                            &lifecycle,
+                            &last_sync_at,
+                            &last_result,
+                            &last_error,
+                            &sync_config,
+                            &uid,
+                        ).await;
+
+                        // Update next_sync_at from scheduler's real next fire time
+                        // Clone scheduler out of Mutex, then query (avoids holding Mutex across await)
+                        let sched = {
+                            let guard = scheduler_ref.lock().await;
+                            guard.clone()
+                        };
+                        if let (Some(mut sched), Some(job_id)) = (sched, *sync_job_id_ref.read().await) {
+                            Self::update_next_sync_from_scheduler(&mut sched, job_id, &lifecycle).await;
+                        }
+                    }) as Pin<Box<dyn Future<Output = ()> + Send>>
+                },
+            )
+        };
+
+        let sync_job = match sync_job {
+            Ok(job) => job,
+            Err(e) => {
+                log::error!("Failed to create data sync job: {:?}", e);
+                let mut lifecycle = self.lifecycle.write().await;
+                *lifecycle = lifecycle.clone().stop();
+                return;
+            }
+        };
+
+        let sync_id = match sched.add(sync_job).await {
+            Ok(id) => {
+                log::info!("Data sync job added with ID: {}", id);
+                id
+            }
+            Err(e) => {
+                log::error!("Failed to add data sync job: {:?}", e);
+                let mut lifecycle = self.lifecycle.write().await;
+                *lifecycle = lifecycle.clone().stop();
+                return;
+            }
+        };
+
+        // Store sync job ID
+        {
+            let mut id = self.sync_job_id.write().await;
+            *id = Some(sync_id);
         }
 
-        // ===== Task 2: Data Compaction (periodic) =====
+        // ===== Job 2: Data Compaction (periodic) =====
         if auto_generate_summaries {
             let config = Arc::clone(&self.config);
             let db = Arc::clone(&self.db);
@@ -726,6 +800,8 @@ impl BackgroundSyncService {
             let last_compaction_at = Arc::clone(&self.last_compaction_at);
             let next_compaction_at = Arc::clone(&self.next_compaction_at);
             let is_compacting = Arc::clone(&self.is_compacting);
+            let scheduler_ref = Arc::clone(&self.scheduler);
+            let compaction_job_id_ref = Arc::clone(&self.compaction_job_id);
 
             // Set initial next_compaction_at
             {
@@ -734,76 +810,125 @@ impl BackgroundSyncService {
                 *nca = Some(next);
             }
 
-            tokio::spawn(async move {
-                // tokio::time::interval first tick fires immediately,
-                // then repeats every compaction_interval_minutes. No need to skip.
-                let mut timer = interval(Duration::from_secs(compaction_interval_minutes as u64 * 60));
+            let compaction_job = Job::new_repeated_async(
+                Duration::from_secs(compaction_interval_minutes as u64 * 60),
+                move |_uuid, _lock| {
+                    let config = Arc::clone(&config);
+                    let db = Arc::clone(&db);
+                    let user_id = Arc::clone(&user_id);
+                    let last_compaction_at = Arc::clone(&last_compaction_at);
+                    let next_compaction_at = Arc::clone(&next_compaction_at);
+                    let is_compacting = Arc::clone(&is_compacting);
+                    let scheduler_ref = Arc::clone(&scheduler_ref);
+                    let compaction_job_id_ref = Arc::clone(&compaction_job_id_ref);
 
-                loop {
-                    tokio::select! {
-                        _ = timer.tick() => {
-                            let cfg = config.read().await;
-                            if !cfg.enabled || !cfg.auto_generate_summaries {
-                                log::info!("Compaction disabled, skipping");
-                                // Update next compaction time
-                                let mut nca = next_compaction_at.write().await;
-                                *nca = Some(Self::calculate_next_compaction(cfg.compaction_interval_minutes));
-                                continue;
-                            }
-                            let interval_minutes = cfg.compaction_interval_minutes;
-                            drop(cfg);
-
-                            let uid = user_id.read().await.clone();
-                            if uid.is_none() {
-                                log::warn!("No user ID set, skipping compaction");
-                                continue;
-                            }
-
-                            Self::perform_compaction(
-                                &db,
-                                &last_compaction_at,
-                                &is_compacting,
-                                &uid.unwrap(),
-                            ).await;
-
-                            // Update next compaction time after completion
-                            let mut nca = next_compaction_at.write().await;
-                            *nca = Some(Self::calculate_next_compaction(interval_minutes));
+                    Box::pin(async move {
+                        // Check config
+                        let cfg = config.read().await;
+                        if !cfg.enabled || !cfg.auto_generate_summaries {
+                            log::info!("Compaction disabled, skipping");
+                            return;
                         }
-                        _ = &mut compaction_shutdown_rx => {
-                            log::info!("Compaction task received shutdown signal");
-                            break;
+                        drop(cfg);
+
+                        // Check user_id
+                        let uid = user_id.read().await.clone();
+                        let uid = match uid {
+                            Some(id) => id,
+                            None => {
+                                log::warn!("No user ID set, skipping compaction");
+                                return;
+                            }
+                        };
+
+                        // Overlap prevention: skip if already compacting
+                        {
+                            let compacting = is_compacting.read().await;
+                            if *compacting {
+                                log::warn!("Previous compaction still running, skipping this tick");
+                                return;
+                            }
+                        }
+
+                        // Perform compaction
+                        Self::perform_compaction(
+                            &db,
+                            &last_compaction_at,
+                            &is_compacting,
+                            &uid,
+                        ).await;
+
+                        // Update next_compaction_at from scheduler's real next fire time
+                        let sched = {
+                            let guard = scheduler_ref.lock().await;
+                            guard.clone()
+                        };
+                        if let (Some(mut sched), Some(job_id)) = (sched, *compaction_job_id_ref.read().await) {
+                            Self::update_next_compaction_from_scheduler(&mut sched, job_id, &next_compaction_at).await;
+                        }
+                    }) as Pin<Box<dyn Future<Output = ()> + Send>>
+                },
+            );
+
+            match compaction_job {
+                Ok(job) => {
+                    match sched.add(job).await {
+                        Ok(id) => {
+                            log::info!("Compaction job added with ID: {}", id);
+                            let mut cid = self.compaction_job_id.write().await;
+                            *cid = Some(id);
+                        }
+                        Err(e) => {
+                            log::error!("Failed to add compaction job: {:?}", e);
                         }
                     }
                 }
-
-                log::info!("Compaction task stopped");
-            });
+                Err(e) => {
+                    log::error!("Failed to create compaction job: {:?}", e);
+                }
+            }
         }
+
+        // Start the scheduler
+        if let Err(e) = sched.start().await {
+            log::error!("Failed to start job scheduler: {:?}", e);
+            let mut lifecycle = self.lifecycle.write().await;
+            *lifecycle = lifecycle.clone().stop();
+            return;
+        }
+
+        // Store scheduler instance
+        {
+            let mut guard = self.scheduler.lock().await;
+            *guard = Some(sched);
+        }
+
+        log::info!("Background sync scheduler started successfully");
     }
 
     /// Stop the background sync service
     pub async fn stop(&self) {
-        // Stop sync task
-        let tx = {
-            let mut guard = self.shutdown_tx.lock().await;
+        // Shutdown the scheduler (stops all jobs)
+        let sched = {
+            let mut guard = self.scheduler.lock().await;
             guard.take()
         };
 
-        if let Some(tx) = tx {
-            let _ = tx.send(());
-            log::info!("Sent shutdown signal to data sync task");
+        if let Some(mut sched) = sched {
+            if let Err(e) = sched.shutdown().await {
+                log::warn!("Error shutting down scheduler: {:?}", e);
+            }
+            log::info!("Job scheduler shut down");
         }
 
-        // Stop compaction task
-        let compaction_tx = {
-            let mut guard = self.compaction_shutdown_tx.lock().await;
-            guard.take()
-        };
-
-        if let Some(tx) = compaction_tx {
-            let _ = tx.send(());
-            log::info!("Sent shutdown signal to compaction task");
+        // Clear job IDs
+        {
+            let mut id = self.sync_job_id.write().await;
+            *id = None;
+        }
+        {
+            let mut id = self.compaction_job_id.write().await;
+            *id = None;
         }
 
         // Transition lifecycle to Stopped
@@ -1074,9 +1199,11 @@ impl BackgroundSyncService {
         }
 
         // Transition back to Idle
+        // Pass None for next_sync_at — the scheduler job closure will update it
+        // with the real next fire time from the scheduler after this returns.
         {
             let mut lc = lifecycle.write().await;
-            let next_sync = Some(Self::calculate_next_sync(config.interval_minutes));
+            let next_sync: Option<String> = None;
             if let Ok(new_state) = lc.clone().complete_sync(next_sync) {
                 *lc = new_state;
             }
@@ -1416,6 +1543,80 @@ impl BackgroundSyncService {
 
         log::info!("Background sync completed: {} sources processed", results.len());
         results
+    }
+
+    /// Query the scheduler for real next fire times and update state.
+    ///
+    /// Called from `get_status()` to ensure the frontend sees accurate times.
+    async fn refresh_next_times(&self) {
+        // Clone scheduler out of the Mutex to avoid holding it across awaits on other locks
+        let sched = {
+            let guard = self.scheduler.lock().await;
+            guard.clone()
+        };
+        let Some(mut sched) = sched else { return };
+
+        // Refresh sync job next time
+        if let Some(job_id) = *self.sync_job_id.read().await {
+            if let Ok(Some(next_time)) = sched.next_tick_for_job(job_id).await {
+                let mut lc = self.lifecycle.write().await;
+                *lc = lc.clone().update_next_sync_at(Some(next_time.to_rfc3339()));
+            }
+        }
+
+        // Refresh compaction job next time
+        if let Some(job_id) = *self.compaction_job_id.read().await {
+            if let Ok(Some(next_time)) = sched.next_tick_for_job(job_id).await {
+                let mut nca = self.next_compaction_at.write().await;
+                *nca = Some(next_time.to_rfc3339());
+            }
+        }
+    }
+
+    /// Static helper: update next_sync_at from scheduler inside a job closure.
+    ///
+    /// Called after data sync completes to set the real next fire time.
+    async fn update_next_sync_from_scheduler(
+        scheduler: &mut JobScheduler,
+        sync_job_id: uuid::Uuid,
+        lifecycle: &Arc<RwLock<ServiceLifecycle>>,
+    ) {
+        match scheduler.next_tick_for_job(sync_job_id).await {
+            Ok(Some(next_time)) => {
+                let mut lc = lifecycle.write().await;
+                *lc = lc.clone().update_next_sync_at(Some(next_time.to_rfc3339()));
+                log::debug!("Updated next_sync_at from scheduler: {}", next_time.to_rfc3339());
+            }
+            Ok(None) => {
+                log::debug!("No next tick for sync job (scheduler may be shutting down)");
+            }
+            Err(e) => {
+                log::warn!("Failed to query next tick for sync job: {:?}", e);
+            }
+        }
+    }
+
+    /// Static helper: update next_compaction_at from scheduler inside a job closure.
+    ///
+    /// Called after compaction completes to set the real next fire time.
+    async fn update_next_compaction_from_scheduler(
+        scheduler: &mut JobScheduler,
+        compaction_job_id: uuid::Uuid,
+        next_compaction_at: &Arc<RwLock<Option<String>>>,
+    ) {
+        match scheduler.next_tick_for_job(compaction_job_id).await {
+            Ok(Some(next_time)) => {
+                let mut nca = next_compaction_at.write().await;
+                *nca = Some(next_time.to_rfc3339());
+                log::debug!("Updated next_compaction_at from scheduler: {}", next_time.to_rfc3339());
+            }
+            Ok(None) => {
+                log::debug!("No next tick for compaction job (scheduler may be shutting down)");
+            }
+            Err(e) => {
+                log::warn!("Failed to query next tick for compaction job: {:?}", e);
+            }
+        }
     }
 
     /// Calculate the next sync timestamp

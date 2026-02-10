@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0-alpha.11] - 2026-02-10
+
+### Changed
+
+- **背景同步排程引擎重寫** - 用 `tokio-cron-scheduler` 取代手刻 `tokio::time::interval` loop，解決「下次同步」時間不準確的長期問題
+  - Scheduler 獨立管理計時，不受同步操作阻塞影響
+  - 新增 overlap prevention：前一次同步/壓縮未完成時自動跳過
+  - `get_status()` 呼叫 `refresh_next_times()` 從 scheduler 取得真實下次觸發時間
+
 ## [2.1.0-rc.1] - 2026-02-06
 
 ### Added
