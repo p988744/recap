@@ -31,7 +31,7 @@ jobs:
               name: `Recap ${context.ref.replace('refs/tags/v', '')}`,
               body: 'See the changelog for details.',
               draft: true,
-              prerelease: context.ref.includes('beta') || context.ref.includes('alpha')
+              prerelease: false
             })
             return data.id
 
@@ -215,7 +215,7 @@ jobs:
             const releaseId = Number(process.env.release_id);
             const { owner, repo } = context.repo;
             const tag = context.ref.replace('refs/tags/', '');
-            const version = tag.replace('v', '');
+            const version = tag.replace(/^v/, '');
 
             // Get release assets
             const { data: release } = await github.rest.repos.getRelease({
@@ -223,16 +223,33 @@ jobs:
             });
 
             const assets = release.assets;
-            const getAssetUrl = (name) => {
-              const asset = assets.find(a => a.name === name);
-              return asset ? asset.browser_download_url : null;
-            };
+
+            // Use tag-based URL (draft releases use untagged-* paths which break after publish)
+            const downloadUrl = (name) =>
+              `https://github.com/${owner}/${repo}/releases/download/${tag}/${name}`;
+
+            // Download sig content via authenticated GitHub API (draft assets are private)
             const getAssetSig = async (name) => {
               const asset = assets.find(a => a.name === name);
-              if (!asset) return null;
-              const resp = await fetch(asset.browser_download_url);
-              return await resp.text();
+              if (!asset) {
+                core.warning(`Sig asset not found: ${name}`);
+                return null;
+              }
+              try {
+                const { data } = await github.request('GET /repos/{owner}/{repo}/releases/assets/{asset_id}', {
+                  owner, repo,
+                  asset_id: asset.id,
+                  headers: { accept: 'application/octet-stream' }
+                });
+                if (typeof data === 'string') return data;
+                return Buffer.from(data).toString('utf-8');
+              } catch (e) {
+                core.warning(`Failed to download sig ${name}: ${e.message}`);
+                return null;
+              }
             };
+
+            const hasAsset = (name) => assets.some(a => a.name === name);
 
             core.info(`Found ${assets.length} assets: ${assets.map(a => a.name).join(', ')}`);
 
@@ -240,43 +257,49 @@ jobs:
             const platforms = {};
 
             // macOS aarch64 - updater uses .app.tar.gz
-            const macArmUrl = getAssetUrl('Recap_aarch64.app.tar.gz');
-            const macArmSig = await getAssetSig('Recap_aarch64.app.tar.gz.sig');
-            if (macArmUrl && macArmSig) {
-              platforms['darwin-aarch64'] = {
-                signature: macArmSig,
-                url: macArmUrl
-              };
+            if (hasAsset('Recap_aarch64.app.tar.gz')) {
+              const sig = await getAssetSig('Recap_aarch64.app.tar.gz.sig');
+              if (sig) {
+                platforms['darwin-aarch64'] = {
+                  signature: sig,
+                  url: downloadUrl('Recap_aarch64.app.tar.gz')
+                };
+              }
             }
 
             // macOS x86_64 - updater uses .app.tar.gz
-            const macX64Url = getAssetUrl('Recap_x64.app.tar.gz');
-            const macX64Sig = await getAssetSig('Recap_x64.app.tar.gz.sig');
-            if (macX64Url && macX64Sig) {
-              platforms['darwin-x86_64'] = {
-                signature: macX64Sig,
-                url: macX64Url
-              };
+            if (hasAsset('Recap_x64.app.tar.gz')) {
+              const sig = await getAssetSig('Recap_x64.app.tar.gz.sig');
+              if (sig) {
+                platforms['darwin-x86_64'] = {
+                  signature: sig,
+                  url: downloadUrl('Recap_x64.app.tar.gz')
+                };
+              }
             }
 
             // Linux - updater uses .AppImage.tar.gz
-            const linuxUrl = getAssetUrl(`Recap_${version}_amd64.AppImage.tar.gz`);
-            const linuxSig = await getAssetSig(`Recap_${version}_amd64.AppImage.tar.gz.sig`);
-            if (linuxUrl && linuxSig) {
-              platforms['linux-x86_64'] = {
-                signature: linuxSig,
-                url: linuxUrl
-              };
+            const linuxName = `Recap_${version}_amd64.AppImage.tar.gz`;
+            if (hasAsset(linuxName)) {
+              const sig = await getAssetSig(`${linuxName}.sig`);
+              if (sig) {
+                platforms['linux-x86_64'] = {
+                  signature: sig,
+                  url: downloadUrl(linuxName)
+                };
+              }
             }
 
             // Windows - updater uses .nsis.zip
-            const winUrl = getAssetUrl(`Recap_${version}_x64-setup.nsis.zip`);
-            const winSig = await getAssetSig(`Recap_${version}_x64-setup.nsis.zip.sig`);
-            if (winUrl && winSig) {
-              platforms['windows-x86_64'] = {
-                signature: winSig,
-                url: winUrl
-              };
+            const winName = `Recap_${version}_x64-setup.nsis.zip`;
+            if (hasAsset(winName)) {
+              const sig = await getAssetSig(`${winName}.sig`);
+              if (sig) {
+                platforms['windows-x86_64'] = {
+                  signature: sig,
+                  url: downloadUrl(winName)
+                };
+              }
             }
 
             const latestJson = JSON.stringify({
