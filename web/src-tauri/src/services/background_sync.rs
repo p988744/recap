@@ -390,11 +390,10 @@ impl BackgroundSyncService {
 
     /// Record compaction completion
     ///
-    /// Updates both `last_compaction_at` and calculates `next_compaction_at`.
-    /// Call this after compaction runs (e.g., in trigger_sync_with_progress).
+    /// Updates `last_compaction_at`. The `next_compaction_at` is managed by
+    /// the scheduler — `refresh_next_times()` will query the real next fire time.
     pub async fn record_compaction_completed(&self) {
         let now = chrono::Utc::now().to_rfc3339();
-        let interval = self.config.read().await.compaction_interval_minutes;
 
         // Update last_compaction_at
         {
@@ -402,11 +401,18 @@ impl BackgroundSyncService {
             *last = Some(now);
         }
 
-        // Update next_compaction_at
-        {
-            let next = Self::calculate_next_compaction(interval);
-            let mut next_time = self.next_compaction_at.write().await;
-            *next_time = Some(next);
+        // Refresh next_compaction_at from scheduler (if running)
+        // Clone scheduler out of Mutex to avoid holding it across awaits
+        let sched = {
+            let guard = self.scheduler.lock().await;
+            guard.clone()
+        };
+        if let Some(mut sched) = sched {
+            if let Some(job_id) = *self.compaction_job_id.read().await {
+                Self::update_next_compaction_from_scheduler(
+                    &mut sched, job_id, &self.next_compaction_at
+                ).await;
+            }
         }
     }
 
@@ -417,7 +423,7 @@ impl BackgroundSyncService {
     ///
     /// - `last_sync_at`: Read from sync_status table (MAX of all sources)
     /// - `last_compaction_at`: Read from work_summaries table (MAX created_at)
-    /// - `next_compaction_at`: Calculated from last_compaction_at + interval
+    /// - `next_compaction_at`: Estimated from last_compaction_at + interval (scheduler overwrites once started)
     pub async fn initialize_timestamps_from_db(&self, user_id: &str) {
         let pool = {
             let db = self.db.lock().await;
