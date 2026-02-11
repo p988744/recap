@@ -1,3 +1,4 @@
+import { Clock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -10,6 +11,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import type { WorkItemFormData } from '../../hooks/useWorkItems'
+import type { QuickPickItem } from '../../hooks/useRecentManualItems'
 import { ProjectSelector } from '../ProjectSelector'
 
 interface CreateModalProps {
@@ -19,6 +21,8 @@ interface CreateModalProps {
   setFormData: (data: WorkItemFormData) => void
   onSubmit: (e: React.FormEvent) => void
   onCancel: () => void
+  recentItems?: QuickPickItem[]
+  onQuickPick?: (item: QuickPickItem) => void
 }
 
 export function CreateModal({
@@ -28,6 +32,8 @@ export function CreateModal({
   setFormData,
   onSubmit,
   onCancel,
+  recentItems,
+  onQuickPick,
 }: CreateModalProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -35,6 +41,30 @@ export function CreateModal({
         <DialogHeader>
           <DialogTitle className="font-display text-xl">新增工作項目</DialogTitle>
         </DialogHeader>
+        {recentItems && recentItems.length > 0 && (
+          <div className="space-y-2 pb-3 border-b">
+            <p className="text-xs text-muted-foreground">
+              <Clock className="w-3 h-3 inline mr-1" />最近使用
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {recentItems.map((item, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs
+                             rounded-full bg-muted/50 hover:bg-muted border
+                             border-border hover:border-foreground/20 transition-colors"
+                  onClick={() => onQuickPick?.(item)}
+                >
+                  <span className="truncate max-w-[160px]">{item.title}</span>
+                  {item.hours > 0 && (
+                    <span className="text-muted-foreground tabular-nums">{item.hours}h</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <form onSubmit={onSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label>標題</Label>

@@ -9,6 +9,7 @@ import type {
 } from '@/types'
 import type { ViewMode } from '@/components/ViewModeSwitcher'
 import type { TimelineSession, ProjectGroup } from './types'
+import type { QuickPickItem } from './useRecentManualItems'
 
 // =============================================================================
 // Types
@@ -27,6 +28,22 @@ export interface WorkItemFormData {
 export interface SettingsMessage {
   type: 'success' | 'error'
   text: string
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+export function deriveProjectName(item: { project_path?: string | null; title: string }): string {
+  if (item.project_path) {
+    const segments = item.project_path.split(/[/\\]/)
+    return segments[segments.length - 1] || ''
+  }
+  // Legacy: [ProjectName] Title 格式
+  if (item.title.startsWith('[') && item.title.includes('] ')) {
+    return item.title.substring(1, item.title.indexOf('] '))
+  }
+  return ''
 }
 
 // =============================================================================
@@ -425,25 +442,6 @@ export function useWorkItemCrud(
 
   const openEditModal = useCallback((item: WorkItem) => {
     setSelectedItem(item)
-
-    // Derive project_name from project_path for manual items
-    // Manual project path format: ~/.recap/manual-projects/{project_name}
-    let project_name = ''
-    if (item.project_path?.includes('manual-projects')) {
-      const segments = item.project_path.split(/[/\\]/)
-      project_name = segments[segments.length - 1] || ''
-    } else if (item.project_path) {
-      // For non-manual items, use the last segment of project_path
-      const segments = item.project_path.split(/[/\\]/)
-      project_name = segments[segments.length - 1] || ''
-    }
-
-    // Legacy: also check title prefix for backward compatibility
-    if (!project_name && item.title.startsWith('[') && item.title.includes('] ')) {
-      const endIndex = item.title.indexOf('] ')
-      project_name = item.title.substring(1, endIndex)
-    }
-
     setFormData({
       title: item.title,
       description: item.description || '',
@@ -451,9 +449,34 @@ export function useWorkItemCrud(
       date: item.date,
       jira_issue_key: item.jira_issue_key || '',
       category: item.category || '',
-      project_name,
+      project_name: deriveProjectName(item),
     })
     setShowEditModal(true)
+  }, [])
+
+  const duplicateItem = useCallback((item: WorkItem) => {
+    setFormData({
+      title: item.title,
+      description: item.description || '',
+      hours: item.hours,
+      date: new Date().toISOString().split('T')[0],
+      jira_issue_key: item.jira_issue_key || '',
+      category: item.category || '',
+      project_name: deriveProjectName(item),
+    })
+    setShowCreateModal(true)
+  }, [])
+
+  const handleQuickPick = useCallback((item: QuickPickItem) => {
+    setFormData({
+      title: item.title,
+      description: item.description,
+      hours: item.hours,
+      date: new Date().toISOString().split('T')[0],
+      jira_issue_key: item.jira_issue_key,
+      category: '',
+      project_name: item.project_name,
+    })
   }, [])
 
   const openJiraModal = useCallback((item: WorkItem) => {
@@ -513,6 +536,8 @@ export function useWorkItemCrud(
     handleDelete,
     handleMapJira,
     openEditModal,
+    duplicateItem,
+    handleQuickPick,
     openJiraModal,
     confirmDelete,
     closeCreateModal,

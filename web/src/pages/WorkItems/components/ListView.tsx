@@ -7,6 +7,7 @@ import {
   XCircle,
   Edit2,
   Trash2,
+  Copy,
   ExternalLink,
   ChevronLeft,
   ChevronRight,
@@ -49,6 +50,7 @@ interface ListViewProps {
   onClearAggregateResult: () => void
   onToggleExpand: (itemId: string) => void
   onEdit: (item: WorkItem) => void
+  onDuplicate: (item: WorkItem) => void
   onDelete: (item: WorkItem) => void
   onJiraMap: (item: WorkItem) => void
   onCreateNew: () => void
@@ -69,6 +71,7 @@ export function ListView({
   onClearAggregateResult,
   onToggleExpand,
   onEdit,
+  onDuplicate,
   onDelete,
   onJiraMap,
   onCreateNew,
@@ -254,6 +257,21 @@ export function ListView({
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1">
+                      {item.source === 'manual' && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => onDuplicate(item)}
+                            >
+                              <Copy className="w-4 h-4" strokeWidth={1.5} />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>複製</TooltipContent>
+                        </Tooltip>
+                      )}
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <Button

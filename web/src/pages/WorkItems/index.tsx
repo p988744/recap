@@ -1,10 +1,10 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useAuth } from '@/lib/auth'
 import { ViewModeSwitcher } from '@/components/ViewModeSwitcher'
-import { useWorkItems, useWorkItemCrud } from './hooks'
+import { useWorkItems, useWorkItemCrud, useRecentManualItems } from './hooks'
 import {
   StatsCards,
   SearchAndFilters,
@@ -27,6 +27,13 @@ export function WorkItemsPage() {
 
   // CRUD operations
   const crud = useWorkItemCrud(workItemsState.fetchWorkItems, workItemsState.fetchStats)
+
+  // Recent manual items for quick pick
+  const { recentItems, refreshRecent } = useRecentManualItems()
+
+  useEffect(() => {
+    if (isAuthenticated) refreshRecent()
+  }, [isAuthenticated, refreshRecent])
 
   // Project detail panel
   const [detailProjectName, setDetailProjectName] = useState<string | null>(null)
@@ -115,6 +122,7 @@ export function WorkItemsPage() {
               onClearAggregateResult={workItemsState.clearAggregateResult}
               onToggleExpand={workItemsState.toggleExpand}
               onEdit={crud.openEditModal}
+              onDuplicate={crud.duplicateItem}
               onDelete={crud.confirmDelete}
               onJiraMap={crud.openJiraModal}
               onCreateNew={() => crud.setShowCreateModal(true)}
@@ -155,8 +163,13 @@ export function WorkItemsPage() {
           onOpenChange={crud.setShowCreateModal}
           formData={crud.formData}
           setFormData={crud.setFormData}
-          onSubmit={crud.handleCreate}
+          onSubmit={async (e) => {
+            await crud.handleCreate(e)
+            refreshRecent()
+          }}
           onCancel={crud.closeCreateModal}
+          recentItems={recentItems}
+          onQuickPick={crud.handleQuickPick}
         />
 
         <EditModal
