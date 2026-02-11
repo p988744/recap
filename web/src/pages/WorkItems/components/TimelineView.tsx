@@ -1,4 +1,4 @@
-import { Calendar, Filter, Sparkles, Bot } from 'lucide-react'
+import { Calendar, Filter, Bot } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -10,7 +10,6 @@ import type { TimelineSession } from '../hooks/types'
 // Source configuration
 const TIMELINE_SOURCES = [
   { id: 'claude_code', label: 'Claude Code', icon: Bot },
-  { id: 'antigravity', label: 'Antigravity', icon: Sparkles },
 ] as const
 
 interface TimelineViewProps {

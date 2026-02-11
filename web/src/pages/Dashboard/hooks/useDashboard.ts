@@ -59,7 +59,7 @@ export function useDashboard(isAuthenticated: boolean) {
   const [ganttDate, setGanttDate] = useState(() => new Date().toISOString().split('T')[0])
   const [ganttSessions, setGanttSessions] = useState<TimelineSession[]>([])
   const [ganttLoading, setGanttLoading] = useState(false)
-  const [ganttSources, setGanttSources] = useState<string[]>(['claude_code', 'antigravity'])
+  const [ganttSources, setGanttSources] = useState<string[]>(['claude_code'])
 
   // Consume app-level sync state to know when to refetch data
   const { dataSyncState } = useSyncContext()
@@ -95,7 +95,7 @@ export function useDashboard(isAuthenticated: boolean) {
       setGanttLoading(true)
       try {
         // Pass sources filter (undefined if all sources selected to use backend defaults)
-        const sourcesToPass = ganttSources.length === 2 ? undefined : ganttSources
+        const sourcesToPass = ganttSources.length === 1 && ganttSources[0] === 'claude_code' ? undefined : ganttSources
         const result = await workItems.getTimeline(ganttDate, sourcesToPass)
         const sessions: TimelineSession[] = result.sessions.map(s => ({
           id: s.id,

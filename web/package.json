@@ -1,7 +1,7 @@
 {
   "name": "recap-web",
   "private": true,
-  "version": "2.2.0-alpha.12",
+  "version": "2.2.0-alpha.13",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -47,6 +47,7 @@
     "react-markdown": "^10.1.0",
     "react-router-dom": "^6.28.0",
     "recharts": "^2.13.3",
+    "rehype-raw": "^7.0.0",
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^2.6.0",
     "tailwindcss-animate": "^1.0.7",

@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Plus } from 'lucide-react'
 import { projects as projectsService, worklog } from '@/services'
-import { antigravity } from '@/services/integrations'
-import type { ProjectInfo, AntigravityApiStatus } from '@/types'
+import type { ProjectInfo } from '@/types'
 import type { CompactionResult } from '@/services/worklog'
 import type { BackgroundSyncStatus, SyncProgress } from '@/services/background-sync'
 import { ProjectList } from './ProjectList'
 import { ProjectSourcePanel } from './ProjectSourcePanel'
 import { ClaudePathSetting } from './ClaudePathSetting'
-import { AntigravityPathSetting } from './AntigravityPathSetting'
 import { AddProjectDialog } from './AddProjectDialog'
 import { DataSyncStatus, DataCompactionStatus } from './DataSyncStatus'
 
@@ -42,7 +40,6 @@ export function ProjectsSection({
   const [showAddDialog, setShowAddDialog] = useState(false)
   const [compactionPhase, setCompactionPhase] = useState<CompactionPhase>('idle')
   const [compactionResult, setCompactionResult] = useState<CompactionResult | null>(null)
-  const [antigravityStatus, setAntigravityStatus] = useState<AntigravityApiStatus | null>(null)
 
   const fetchProjects = useCallback(async () => {
     try {
@@ -58,19 +55,6 @@ export function ProjectsSection({
   useEffect(() => {
     fetchProjects()
   }, [fetchProjects])
-
-  // Check Antigravity API status
-  useEffect(() => {
-    const checkAntigravity = async () => {
-      try {
-        const status = await antigravity.checkApiStatus()
-        setAntigravityStatus(status)
-      } catch {
-        setAntigravityStatus({ running: false, healthy: false })
-      }
-    }
-    checkAntigravity()
-  }, [])
 
   const handleToggleVisibility = useCallback(async (projectName: string, hidden: boolean) => {
     try {
@@ -153,7 +137,7 @@ export function ProjectsSection({
             summaryState={summaryState}
             syncProgress={syncProgress}
             onTriggerSync={onTriggerSync}
-            antigravityConnected={antigravityStatus?.running && antigravityStatus?.healthy}
+            antigravityConnected={false}
           />
           <DataCompactionStatus
             status={syncStatus}
@@ -169,7 +153,6 @@ export function ProjectsSection({
       {/* Data source path settings */}
       <div className="mt-4 space-y-3">
         <ClaudePathSetting />
-        <AntigravityPathSetting />
       </div>
 
       {/* Project list */}

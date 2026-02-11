@@ -3,7 +3,6 @@ import { Clock, GitCommit, FileCode } from 'lucide-react'
 import type { HourlyBreakdownItem } from '@/types/worklog'
 import { MarkdownSummary } from '@/components/MarkdownSummary'
 import { ClaudeIcon } from '@/pages/Settings/components/ProjectsSection/icons/ClaudeIcon'
-import { GeminiIcon } from '@/pages/Settings/components/ProjectsSection/icons/GeminiIcon'
 
 interface HourlyBreakdownProps {
   items: HourlyBreakdownItem[]
@@ -16,19 +15,12 @@ const SOURCE_CONFIG: Record<string, { icon: React.ReactNode; label: string; head
     label: 'Claude Code',
     headerBgClass: 'bg-amber-50 dark:bg-amber-900/20',
   },
-  antigravity: {
-    icon: <GeminiIcon className="w-3.5 h-3.5" />,
-    label: 'Antigravity',
-    headerBgClass: 'bg-blue-50 dark:bg-blue-900/20',
-  },
 }
 
 export function HourlyBreakdown({ items, loading }: HourlyBreakdownProps) {
   // Group items by source
-  const { claudeItems, antigravityItems } = useMemo(() => {
-    const claudeItems = items.filter(item => item.source === 'claude_code')
-    const antigravityItems = items.filter(item => item.source === 'antigravity')
-    return { claudeItems, antigravityItems }
+  const claudeItems = useMemo(() => {
+    return items.filter(item => item.source === 'claude_code')
   }, [items])
 
   if (loading) {
@@ -52,10 +44,6 @@ export function HourlyBreakdown({ items, loading }: HourlyBreakdownProps) {
       {/* Claude Code section */}
       {claudeItems.length > 0 && (
         <SourceSection source="claude_code" items={claudeItems} />
-      )}
-      {/* Antigravity section */}
-      {antigravityItems.length > 0 && (
-        <SourceSection source="antigravity" items={antigravityItems} />
       )}
     </div>
   )

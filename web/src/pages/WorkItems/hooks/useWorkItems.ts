@@ -66,7 +66,7 @@ export function useWorkItems(isAuthenticated: boolean, token: string | null) {
   const [timelineDate, setTimelineDate] = useState(() => new Date().toISOString().split('T')[0])
   const [timelineSessions, setTimelineSessions] = useState<TimelineSession[]>([])
   const [timelineLoading, setTimelineLoading] = useState(false)
-  const [timelineSources, setTimelineSources] = useState<string[]>(['claude_code', 'antigravity'])
+  const [timelineSources, setTimelineSources] = useState<string[]>(['claude_code'])
 
   // UI state
   const [searchTerm, setSearchTerm] = useState('')
@@ -124,7 +124,7 @@ export function useWorkItems(isAuthenticated: boolean, token: string | null) {
     setTimelineLoading(true)
     try {
       // Pass sources filter (undefined if all sources selected to use backend defaults)
-      const sourcesToPass = timelineSources.length === 2 ? undefined : timelineSources
+      const sourcesToPass = timelineSources.length === 1 && timelineSources[0] === 'claude_code' ? undefined : timelineSources
       const response = await workItems.getTimeline(timelineDate, sourcesToPass)
       const sessions: TimelineSession[] = response.sessions.map(s => ({
         id: s.id,

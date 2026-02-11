@@ -90,7 +90,7 @@ export function TodayWorkSection({
             <div className="py-8 text-center">
               <p className="text-sm text-muted-foreground mb-4">今日尚無工作紀錄</p>
               <p className="text-xs text-muted-foreground/60">
-                開始使用 Claude Code 或 Antigravity 工作，或手動新增項目
+                開始使用 Claude Code 工作，或手動新增項目
               </p>
             </div>
           ) : (

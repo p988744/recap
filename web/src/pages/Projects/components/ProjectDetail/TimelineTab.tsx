@@ -102,7 +102,7 @@ export function TimelineTab({ projectName }: TimelineTabProps) {
           onTimeUnitChange={setTimeUnit}
           sources={sources}
           onSourcesChange={setSources}
-          availableSources={availableSources.length > 0 ? availableSources : ['claude_code', 'antigravity']}
+          availableSources={availableSources.length > 0 ? availableSources.filter(s => s !== 'antigravity') : ['claude_code']}
         />
 
         <Button

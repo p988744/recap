@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0-alpha.13] - 2026-02-11
+
+### Fixed
+
+- **README HTML 渲染** - 專案描述頁面的 README 現在正確渲染 HTML 標籤（新增 `rehype-raw` plugin）
+
+### Removed
+
+- **隱藏 Antigravity 整合** - 前端完全移除所有 Antigravity (Gemini) 相關 UI
+  - 移除專案卡片、時間軸、Worklog 等處的 Antigravity 來源標籤
+  - 移除 Dashboard 和 WorkItems 的 Antigravity 來源篩選器
+  - 移除設定頁面的 Antigravity API 狀態檢查和路徑設定
+  - 移除同步設定中的 Antigravity 開關
+  - 移除 Onboarding 流程中的 Antigravity 連線測試
+  - 後端同步設定保持不變，僅隱藏前端 UI
+
 ## [2.2.0-alpha.12] - 2026-02-11
 
 ### Added

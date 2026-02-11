@@ -4,7 +4,6 @@ import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import type { BackgroundSyncStatus, SyncProgress } from '@/services/background-sync'
 import { ClaudeIcon } from './icons/ClaudeIcon'
-import { GeminiIcon } from './icons/GeminiIcon'
 
 type PhaseState = 'idle' | 'syncing' | 'done'
 type SourceState = PhaseState | 'disconnected'
@@ -103,7 +102,7 @@ export function DataSyncStatus({
   summaryState,
   syncProgress,
   onTriggerSync,
-  antigravityConnected,
+  antigravityConnected: _antigravityConnected,
 }: DataSyncStatusProps) {
   if (!status) {
     return (
@@ -118,12 +117,7 @@ export function DataSyncStatus({
   const hasError = status.last_error
 
   // Determine per-source states based on overall dataSyncState
-  // When syncing, Claude Code syncs first, then Antigravity
   const claudeState: SourceState = dataSyncState
-  // If Antigravity API is not connected, show disconnected state
-  const antigravityState: SourceState = antigravityConnected === false
-    ? 'disconnected'
-    : dataSyncState === 'syncing' ? 'idle' : dataSyncState
 
   // Calculate progress percentage
   const progressPercent = syncProgress
@@ -177,12 +171,6 @@ export function DataSyncStatus({
           label="Claude Code"
           state={claudeState}
           colorClass="text-amber-600 dark:text-amber-400"
-        />
-        <SourceSyncRow
-          icon={<GeminiIcon className="w-4 h-4" />}
-          label="Antigravity"
-          state={antigravityState}
-          colorClass="text-blue-600 dark:text-blue-400"
         />
       </div>
 

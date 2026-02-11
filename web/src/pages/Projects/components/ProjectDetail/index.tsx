@@ -7,18 +7,12 @@ import { InfoTab } from './InfoTab'
 import { TimelineTab } from './TimelineTab'
 import { useProjectDetail } from '../../hooks/useProjectDetail'
 import { ClaudeIcon } from '@/pages/Settings/components/ProjectsSection/icons/ClaudeIcon'
-import { GeminiIcon } from '@/pages/Settings/components/ProjectsSection/icons/GeminiIcon'
 
 const SOURCE_CONFIG: Record<string, { icon: React.ReactNode; label: string; className: string }> = {
   claude_code: {
     icon: <ClaudeIcon className="w-3 h-3" />,
     label: 'Claude',
     className: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
-  },
-  antigravity: {
-    icon: <GeminiIcon className="w-3 h-3" />,
-    label: 'Antigravity',
-    className: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
   },
   git: {
     icon: <GitBranch className="w-3 h-3" />,
