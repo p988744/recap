@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0-alpha.12] - 2026-02-11
+
+### Added
+
+- **通用 HTTP 匯出功能** - 支援將工作項目透過自訂 HTTP API 匯出到任意外部服務
+  - Settings 頁面新增 HTTP Export 設定卡片，可配置多個匯出端點（URL、Auth、Payload Template、LLM Prompt）
+  - 支援 `{{title}}`、`{{hours}}`、`{{date}}` 等 placeholder 的 JSON 模板引擎
+  - 支援 Bearer / Basic / Custom Header 認證方式
+  - 支援批次模式（一次 POST 陣列）與逐筆模式
+  - 選用 LLM 自訂 prompt 摘要（`{{llm_summary}}` placeholder）
+  - 匯出前可預覽 Payload（Dry Run）
+  - 匯出歷史追蹤，避免重複匯出到相同目標
+- **統一匯出下拉選單** - ThisWeek、Worklog、WorkItems 頁面的 Tempo 匯出與 HTTP 匯出合併為單一下拉選單
+
 ## [2.2.0-alpha.11] - 2026-02-10
 
 ### Changed

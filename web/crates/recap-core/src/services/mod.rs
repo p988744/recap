@@ -2,6 +2,7 @@
 
 pub mod compaction;
 pub mod excel;
+pub mod http_export;
 pub mod llm;
 pub mod llm_batch;
 pub mod llm_pricing;

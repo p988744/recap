@@ -1,6 +1,14 @@
 import { useMemo } from 'react'
 import { Plus, Upload, CalendarDays, Filter, Bot, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Card, CardContent } from '@/components/ui/card'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -8,18 +16,63 @@ import { Label } from '@/components/ui/label'
 import { WorkGanttChart } from '@/components/WorkGanttChart'
 import { useAuth } from '@/lib/auth'
 import { useWorklog, useTempoSync } from './hooks'
+import { useHttpExport } from '../WorkItems/hooks/useHttpExport'
 import { DateRangeBar, DaySection, TempoSyncModal, TempoBatchSyncModal, TempoWeekSyncModal } from './components'
+import { HttpExportModal } from '../WorkItems/components/HttpExportModal'
 import {
   CreateModal,
   EditModal,
   DeleteModal,
 } from '../WorkItems/components/Modals'
-import type { BatchSyncRow } from '@/types'
+import type { BatchSyncRow, WorkItem } from '@/types'
 
 export function WorklogPage() {
   const { isAuthenticated } = useAuth()
 
   const wl = useWorklog(isAuthenticated)
+
+  // HTTP Export
+  const httpExp = useHttpExport(isAuthenticated)
+
+  // Convert worklog days (projects + manual items) to WorkItem-compatible format for export
+  const worklogExportItems: WorkItem[] = useMemo(() => {
+    const items: WorkItem[] = []
+    for (const day of wl.days) {
+      for (const p of day.projects) {
+        items.push({
+          id: `${day.date}:${p.project_path}`,
+          title: p.project_name,
+          description: p.daily_summary ?? '',
+          hours: p.total_hours,
+          date: day.date,
+          source: 'auto',
+          jira_issue_key: '',
+          category: '',
+          user_id: '',
+          created_at: '',
+          updated_at: '',
+          synced_to_tempo: false,
+        } as WorkItem)
+      }
+      for (const m of day.manual_items) {
+        items.push({
+          id: m.id,
+          title: m.title,
+          description: m.description ?? '',
+          hours: m.hours,
+          date: m.date,
+          source: 'manual',
+          jira_issue_key: m.jira_issue_key ?? '',
+          category: '',
+          user_id: '',
+          created_at: '',
+          updated_at: '',
+          synced_to_tempo: false,
+        } as WorkItem)
+      }
+    }
+    return items
+  }, [wl.days])
 
   const ts = useTempoSync(
     isAuthenticated,
@@ -141,11 +194,44 @@ export function WorklogPage() {
             <h1 className="font-display text-4xl text-foreground tracking-tight">工作日誌</h1>
           </div>
           <div className="flex items-center gap-2">
-            {wl.jiraConfigured && (
-              <Button variant="outline" onClick={ts.openWeekSyncModal}>
-                <Upload className="w-4 h-4 mr-2" strokeWidth={1.5} />
-                Export Week
-              </Button>
+            {(wl.jiraConfigured || (httpExp.hasConfigs && worklogExportItems.length > 0)) && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline">
+                    <Upload className="w-4 h-4 mr-2" strokeWidth={1.5} />
+                    匯出
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {wl.jiraConfigured && (
+                    <>
+                      <DropdownMenuLabel>Tempo</DropdownMenuLabel>
+                      <DropdownMenuItem onClick={ts.openWeekSyncModal}>
+                        匯出本週到 Tempo
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                  {wl.jiraConfigured && httpExp.hasConfigs && worklogExportItems.length > 0 && (
+                    <DropdownMenuSeparator />
+                  )}
+                  {httpExp.hasConfigs && worklogExportItems.length > 0 && (
+                    <>
+                      <DropdownMenuLabel>HTTP Export</DropdownMenuLabel>
+                      {httpExp.configs.map((c) => (
+                        <DropdownMenuItem
+                          key={c.id}
+                          onClick={() => {
+                            httpExp.setSelectedConfigId(c.id)
+                            httpExp.openExport(worklogExportItems)
+                          }}
+                        >
+                          {c.name}
+                        </DropdownMenuItem>
+                      ))}
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
             <Button onClick={() => wl.openCreateModal()}>
               <Plus className="w-4 h-4 mr-2" strokeWidth={1.5} />
@@ -305,6 +391,21 @@ export function WorklogPage() {
         itemToDelete={wl.itemToDelete}
         onConfirm={wl.handleDelete}
         onCancel={wl.closeDeleteConfirm}
+      />
+
+      {/* HTTP Export Modal */}
+      <HttpExportModal
+        open={httpExp.showModal}
+        onOpenChange={(open) => { if (!open) httpExp.closeModal() }}
+        configs={httpExp.configs}
+        selectedConfigId={httpExp.selectedConfigId}
+        onConfigChange={httpExp.setSelectedConfigId}
+        items={httpExp.itemsToExport}
+        result={httpExp.result}
+        exporting={httpExp.exporting}
+        exportedIds={httpExp.exportedIds}
+        onExport={httpExp.executeExport}
+        onClose={httpExp.closeModal}
       />
 
       {/* Tempo Sync Modals (only when Jira configured) */}

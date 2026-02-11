@@ -11,6 +11,7 @@ pub mod claude;
 pub mod config;
 pub mod danger_zone;
 pub mod gitlab;
+pub mod http_export;
 pub mod llm_usage;
 pub mod notification;
 pub mod projects;

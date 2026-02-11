@@ -158,6 +158,19 @@ export type {
   BatchSyncRow,
 } from './worklog-sync'
 
+// HTTP Export types
+export type {
+  HttpExportConfig,
+  SaveHttpExportConfigRequest,
+  InlineExportItem,
+  HttpExportRequest,
+  HttpExportItemResult,
+  HttpExportResponse,
+  ValidateTemplateResponse,
+  TestConnectionResponse,
+  ExportHistoryRecord,
+} from './http-export'
+
 // LLM Usage types
 export type {
   LlmUsageStats,

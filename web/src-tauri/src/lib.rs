@@ -179,6 +179,14 @@ pub fn run() {
             commands::batch_compaction::submit_batch_compaction,
             commands::batch_compaction::refresh_batch_status,
             commands::batch_compaction::process_completed_batch_job,
+            // HTTP Export
+            commands::http_export::list_http_export_configs,
+            commands::http_export::save_http_export_config,
+            commands::http_export::delete_http_export_config,
+            commands::http_export::execute_http_export,
+            commands::http_export::test_http_export_connection,
+            commands::http_export::validate_http_export_template,
+            commands::http_export::get_http_export_history,
         ])
         .setup(|app| {
             // Setup Tauri logging plugin (for frontend) - must be first

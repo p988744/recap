@@ -442,7 +442,7 @@ Git Commits:
     }
 
     /// Send completion request to LLM and return usage record
-    async fn complete_with_usage(&self, prompt: &str, purpose: &str) -> Result<(String, LlmUsageRecord), String> {
+    pub async fn complete_with_usage(&self, prompt: &str, purpose: &str) -> Result<(String, LlmUsageRecord), String> {
         let start = Instant::now();
         let result = self.complete_raw(prompt).await;
         let duration_ms = start.elapsed().as_millis() as i64;

@@ -38,6 +38,7 @@ export * as tempo from './integrations/tempo'
 export * as claude from './integrations/claude'
 export * as sources from './integrations/sources'
 export * as teams from './integrations/teams'
+export * as httpExport from './integrations/http-export'
 
 // Namespace exports for grouping
 export * as integrations from './integrations'

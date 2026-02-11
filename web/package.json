@@ -1,7 +1,7 @@
 {
   "name": "recap-web",
   "private": true,
-  "version": "2.2.0-alpha.11",
+  "version": "2.2.0-alpha.12",
   "type": "module",
   "scripts": {
     "dev": "vite",

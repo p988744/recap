@@ -1,6 +1,7 @@
 import type { ConfigResponse } from '@/types'
 import type { SettingsMessage } from '../hooks/types'
 import { JiraTempoCard } from './JiraTempoCard'
+import { HttpExportCard } from './HttpExportCard'
 
 interface ExportSectionProps {
   config: ConfigResponse | null
@@ -80,6 +81,8 @@ export function ExportSection({
         setMessage={setMessage}
         refreshConfig={refreshConfig}
       />
+
+      <HttpExportCard />
     </div>
   )
 }

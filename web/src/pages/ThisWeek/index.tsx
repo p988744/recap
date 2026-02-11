@@ -1,6 +1,14 @@
 import { useMemo } from 'react'
 import { Plus, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { useAuth } from '@/lib/auth'
 import { useThisWeek } from './hooks'
 import { WeekHeader, WeekOverview, TodayWorkSection, WeekTimelineSection } from './components'
@@ -9,17 +17,61 @@ import {
   EditModal,
   DeleteModal,
 } from '../WorkItems/components/Modals'
+import { HttpExportModal } from '../WorkItems/components/HttpExportModal'
 import {
   TempoSyncModal,
   TempoBatchSyncModal,
   TempoWeekSyncModal,
 } from '../Worklog/components'
 import { useTempoSync } from '../Worklog/hooks'
-import type { BatchSyncRow } from '@/types'
+import { useHttpExport } from '../WorkItems/hooks/useHttpExport'
+import type { BatchSyncRow, WorkItem } from '@/types'
 
 export function ThisWeekPage() {
   const { isAuthenticated } = useAuth()
   const tw = useThisWeek(isAuthenticated)
+
+  // HTTP Export
+  const httpExp = useHttpExport(isAuthenticated)
+
+  const exportItems: WorkItem[] = useMemo(() => {
+    const items: WorkItem[] = []
+    for (const day of tw.days) {
+      for (const p of day.projects) {
+        items.push({
+          id: `${day.date}:${p.project_path}`,
+          title: p.project_name,
+          description: p.daily_summary ?? '',
+          hours: p.total_hours,
+          date: day.date,
+          source: 'auto',
+          jira_issue_key: '',
+          category: '',
+          user_id: '',
+          created_at: '',
+          updated_at: '',
+          synced_to_tempo: false,
+        } as WorkItem)
+      }
+      for (const m of day.manual_items) {
+        items.push({
+          id: m.id,
+          title: m.title,
+          description: m.description ?? '',
+          hours: m.hours,
+          date: m.date,
+          source: 'manual',
+          jira_issue_key: m.jira_issue_key ?? '',
+          category: '',
+          user_id: '',
+          created_at: '',
+          updated_at: '',
+          synced_to_tempo: false,
+        } as WorkItem)
+      }
+    }
+    return items
+  }, [tw.days])
 
   const ts = useTempoSync(
     isAuthenticated,
@@ -136,10 +188,43 @@ export function ThisWeekPage() {
             onToday={tw.goToThisWeek}
           />
           <div className="flex items-center gap-1.5">
-            {tw.jiraConfigured && (
-              <Button variant="ghost" size="icon" onClick={ts.openWeekSyncModal} title="Export Week">
-                <Upload className="w-4 h-4" strokeWidth={1.5} />
-              </Button>
+            {(tw.jiraConfigured || (httpExp.hasConfigs && exportItems.length > 0)) && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" title="匯出">
+                    <Upload className="w-4 h-4" strokeWidth={1.5} />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {tw.jiraConfigured && (
+                    <>
+                      <DropdownMenuLabel>Tempo</DropdownMenuLabel>
+                      <DropdownMenuItem onClick={ts.openWeekSyncModal}>
+                        匯出本週到 Tempo
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                  {tw.jiraConfigured && httpExp.hasConfigs && exportItems.length > 0 && (
+                    <DropdownMenuSeparator />
+                  )}
+                  {httpExp.hasConfigs && exportItems.length > 0 && (
+                    <>
+                      <DropdownMenuLabel>HTTP Export</DropdownMenuLabel>
+                      {httpExp.configs.map((c) => (
+                        <DropdownMenuItem
+                          key={c.id}
+                          onClick={() => {
+                            httpExp.setSelectedConfigId(c.id)
+                            httpExp.openExport(exportItems)
+                          }}
+                        >
+                          {c.name}
+                        </DropdownMenuItem>
+                      ))}
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
             <Button variant="ghost" size="icon" onClick={() => tw.openCreateModal()} title="新增項目">
               <Plus className="w-4 h-4" strokeWidth={1.5} />
@@ -204,6 +289,21 @@ export function ThisWeekPage() {
         itemToDelete={tw.itemToDelete}
         onConfirm={tw.handleDelete}
         onCancel={tw.closeDeleteConfirm}
+      />
+
+      {/* HTTP Export Modal */}
+      <HttpExportModal
+        open={httpExp.showModal}
+        onOpenChange={(open) => { if (!open) httpExp.closeModal() }}
+        configs={httpExp.configs}
+        selectedConfigId={httpExp.selectedConfigId}
+        onConfigChange={httpExp.setSelectedConfigId}
+        items={httpExp.itemsToExport}
+        result={httpExp.result}
+        exporting={httpExp.exporting}
+        exportedIds={httpExp.exportedIds}
+        onExport={httpExp.executeExport}
+        onClose={httpExp.closeModal}
       />
 
       {/* Tempo Sync Modals (only when Jira configured) */}

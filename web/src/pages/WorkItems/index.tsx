@@ -1,10 +1,17 @@
 import { useState, useEffect } from 'react'
-import { Plus } from 'lucide-react'
+import { Plus, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useAuth } from '@/lib/auth'
 import { ViewModeSwitcher } from '@/components/ViewModeSwitcher'
 import { useWorkItems, useWorkItemCrud, useRecentManualItems } from './hooks'
+import { useHttpExport } from './hooks/useHttpExport'
 import {
   StatsCards,
   SearchAndFilters,
@@ -13,6 +20,7 @@ import {
   TaskView,
   TimelineView,
   ProjectDetailPanel,
+  HttpExportModal,
   CreateModal,
   EditModal,
   JiraModal,
@@ -34,6 +42,9 @@ export function WorkItemsPage() {
   useEffect(() => {
     if (isAuthenticated) refreshRecent()
   }, [isAuthenticated, refreshRecent])
+
+  // HTTP Export
+  const httpExp = useHttpExport(isAuthenticated)
 
   // Project detail panel
   const [detailProjectName, setDetailProjectName] = useState<string | null>(null)
@@ -81,10 +92,35 @@ export function WorkItemsPage() {
               </p>
               <h1 className="font-display text-4xl text-foreground tracking-tight">工作項目</h1>
             </div>
-            <Button onClick={() => crud.setShowCreateModal(true)}>
-              <Plus className="w-4 h-4 mr-2" strokeWidth={1.5} />
-              新增項目
-            </Button>
+            <div className="flex items-center gap-2">
+              {httpExp.hasConfigs && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline">
+                      <Upload className="w-4 h-4 mr-2" strokeWidth={1.5} />
+                      匯出
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {httpExp.configs.map((c) => (
+                      <DropdownMenuItem
+                        key={c.id}
+                        onClick={() => {
+                          httpExp.setSelectedConfigId(c.id)
+                          httpExp.openExport(workItemsState.items)
+                        }}
+                      >
+                        {c.name}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+              <Button onClick={() => crud.setShowCreateModal(true)}>
+                <Plus className="w-4 h-4 mr-2" strokeWidth={1.5} />
+                新增項目
+              </Button>
+            </div>
           </div>
           <ViewModeSwitcher value={workItemsState.viewMode} onChange={workItemsState.setViewMode} />
         </header>
@@ -205,6 +241,21 @@ export function WorkItemsPage() {
           itemToDelete={crud.itemToDelete}
           onConfirm={crud.handleDelete}
           onCancel={crud.closeDeleteConfirm}
+        />
+
+        {/* HTTP Export Modal */}
+        <HttpExportModal
+          open={httpExp.showModal}
+          onOpenChange={(open) => { if (!open) httpExp.closeModal() }}
+          configs={httpExp.configs}
+          selectedConfigId={httpExp.selectedConfigId}
+          onConfigChange={httpExp.setSelectedConfigId}
+          items={httpExp.itemsToExport}
+          result={httpExp.result}
+          exporting={httpExp.exporting}
+          exportedIds={httpExp.exportedIds}
+          onExport={httpExp.executeExport}
+          onClose={httpExp.closeModal}
         />
 
         {/* Project Detail Side Panel */}

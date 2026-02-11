@@ -705,6 +705,64 @@ impl Database {
             .execute(&self.pool)
             .await?;
 
+        // Create http_export_configs table for generic HTTP export endpoints
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS http_export_configs (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                url TEXT NOT NULL,
+                method TEXT NOT NULL DEFAULT 'POST',
+                auth_type TEXT NOT NULL DEFAULT 'none',
+                auth_token TEXT,
+                auth_header_name TEXT,
+                custom_headers TEXT,
+                payload_template TEXT NOT NULL,
+                llm_prompt TEXT,
+                batch_mode BOOLEAN NOT NULL DEFAULT 0,
+                batch_wrapper_key TEXT DEFAULT 'items',
+                enabled BOOLEAN NOT NULL DEFAULT 1,
+                timeout_seconds INTEGER NOT NULL DEFAULT 30,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_http_export_configs_user ON http_export_configs(user_id)")
+            .execute(&self.pool)
+            .await?;
+
+        // Create http_export_logs table for audit trail
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS http_export_logs (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                config_id TEXT NOT NULL,
+                config_name TEXT NOT NULL,
+                work_item_id TEXT,
+                status TEXT NOT NULL,
+                http_status INTEGER,
+                response_body TEXT,
+                error_message TEXT,
+                payload_sent TEXT,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (config_id) REFERENCES http_export_configs(id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_http_export_logs_config ON http_export_logs(config_id, created_at)")
+            .execute(&self.pool)
+            .await?;
+
         log::info!("Database migrations completed");
         Ok(())
     }
