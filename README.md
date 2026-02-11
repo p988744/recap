@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  Recap silently tracks your actual work — Git commits, Claude Code sessions, GitLab activity, Antigravity — then turns it into clean daily reports, Tempo worklogs, or custom API payloads. One click, zero busywork.
+  Recap silently tracks your actual work from Claude Code sessions, then turns it into clean daily reports, Tempo worklogs, or custom API payloads. One click, zero busywork.
 </p>
 
 ---
@@ -31,10 +31,7 @@ It watches your dev tools in the background, compacts raw activity into meaningf
 ## Features
 
 ### Auto-Tracking
-- **Git** — Commits, branches, diffs across all your repos
-- **Claude Code** — Session tracking with tool usage breakdown
-- **Antigravity (Gemini Code)** — AI-assisted development sessions
-- **GitLab** — Merge requests, issues, pipeline activity
+- **Claude Code** — Session tracking with tool usage breakdown, Git commits, and project-level activity
 
 ### Smart Summaries
 - **LLM-powered compaction** — Raw activity becomes concise work descriptions
@@ -73,7 +70,7 @@ Grab the latest release from [**Releases**](https://github.com/p988744/recap/rel
 
 ### Setup (2 minutes)
 
-1. **Add sources** — Point Recap at your Git repos, Claude Code projects, or GitLab instance
+1. **Add sources** — Point Recap at your Claude Code projects
 2. **Configure export** — Connect Jira Tempo, set up HTTP endpoints, or both
 3. **Sync** — Hit sync once, then let background scheduling handle the rest
 
