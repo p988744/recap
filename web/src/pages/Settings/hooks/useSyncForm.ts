@@ -14,6 +14,8 @@ export interface SyncFormState {
   intervalMinutes: number
   compactionIntervalMinutes: number
   autoGenerateSummaries: boolean
+  summaryMaxChars: number
+  summaryReasoningEffort: string
   // Source toggles
   syncGit: boolean
   syncClaude: boolean
@@ -35,6 +37,8 @@ export function useSyncForm() {
     intervalMinutes: 15,
     compactionIntervalMinutes: 30,
     autoGenerateSummaries: true,
+    summaryMaxChars: 2000,
+    summaryReasoningEffort: 'medium',
     syncGit: true,
     syncClaude: true,
     syncAntigravity: true,
@@ -90,6 +94,8 @@ export function useSyncForm() {
           intervalMinutes: config.interval_minutes,
           compactionIntervalMinutes: config.compaction_interval_minutes,
           autoGenerateSummaries: config.auto_generate_summaries,
+          summaryMaxChars: config.summary_max_chars,
+          summaryReasoningEffort: config.summary_reasoning_effort,
           syncGit: config.sync_git,
           syncClaude: config.sync_claude,
           syncAntigravity: config.sync_antigravity,
@@ -142,6 +148,14 @@ export function useSyncForm() {
     setState((prev) => ({ ...prev, syncJira }))
   }, [])
 
+  const setSummaryMaxChars = useCallback((summaryMaxChars: number) => {
+    setState((prev) => ({ ...prev, summaryMaxChars }))
+  }, [])
+
+  const setSummaryReasoningEffort = useCallback((summaryReasoningEffort: string) => {
+    setState((prev) => ({ ...prev, summaryReasoningEffort }))
+  }, [])
+
   // Save config (backend handles restart/stop internally via update_config)
   const handleSave = useCallback(
     async (setMessage: (msg: SettingsMessage | null) => void) => {
@@ -157,6 +171,8 @@ export function useSyncForm() {
           sync_gitlab: state.syncGitlab,
           sync_jira: state.syncJira,
           auto_generate_summaries: state.autoGenerateSummaries,
+          summary_max_chars: state.summaryMaxChars,
+          summary_reasoning_effort: state.summaryReasoningEffort,
         })
 
         // Refresh config from backend to confirm saved values
@@ -167,6 +183,8 @@ export function useSyncForm() {
           intervalMinutes: savedConfig.interval_minutes,
           compactionIntervalMinutes: savedConfig.compaction_interval_minutes,
           autoGenerateSummaries: savedConfig.auto_generate_summaries,
+          summaryMaxChars: savedConfig.summary_max_chars,
+          summaryReasoningEffort: savedConfig.summary_reasoning_effort,
           syncGit: savedConfig.sync_git,
           syncClaude: savedConfig.sync_claude,
           syncAntigravity: savedConfig.sync_antigravity,
@@ -217,6 +235,10 @@ export function useSyncForm() {
     setCompactionIntervalMinutes,
     autoGenerateSummaries: state.autoGenerateSummaries,
     setAutoGenerateSummaries,
+    summaryMaxChars: state.summaryMaxChars,
+    setSummaryMaxChars,
+    summaryReasoningEffort: state.summaryReasoningEffort,
+    setSummaryReasoningEffort,
     // Source toggles
     syncGit: state.syncGit,
     setSyncGit,

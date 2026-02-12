@@ -613,6 +613,8 @@ pub async fn test_llm_connection(
         model: row.1.unwrap_or_else(|| "gpt-5-nano".to_string()),
         api_key: row.2,
         base_url: row.3,
+        summary_max_chars: 2000,
+        reasoning_effort: None,
     };
 
     // Check if configured

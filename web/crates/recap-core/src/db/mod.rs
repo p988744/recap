@@ -431,6 +431,16 @@ impl Database {
             .await
             .ok();
 
+        // Add summary configuration columns
+        sqlx::query("ALTER TABLE users ADD COLUMN summary_max_chars INTEGER DEFAULT 2000")
+            .execute(&self.pool)
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE users ADD COLUMN summary_reasoning_effort TEXT DEFAULT 'medium'")
+            .execute(&self.pool)
+            .await
+            .ok();
+
         // Create snapshot_raw_data table for hourly session snapshots
         sqlx::query(
             r#"

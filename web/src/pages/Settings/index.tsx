@@ -118,6 +118,10 @@ export function SettingsPage() {
             setCompactionIntervalMinutes={syncForm.setCompactionIntervalMinutes}
             autoGenerateSummaries={syncForm.autoGenerateSummaries}
             setAutoGenerateSummaries={syncForm.setAutoGenerateSummaries}
+            summaryMaxChars={syncForm.summaryMaxChars}
+            setSummaryMaxChars={syncForm.setSummaryMaxChars}
+            summaryReasoningEffort={syncForm.summaryReasoningEffort}
+            setSummaryReasoningEffort={syncForm.setSummaryReasoningEffort}
             syncGit={syncForm.syncGit}
             setSyncGit={syncForm.setSyncGit}
             syncClaude={syncForm.syncClaude}

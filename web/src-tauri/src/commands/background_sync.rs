@@ -34,6 +34,8 @@ pub struct UpdateBackgroundSyncConfigRequest {
     pub sync_gitlab: Option<bool>,
     pub sync_jira: Option<bool>,
     pub auto_generate_summaries: Option<bool>,
+    pub summary_max_chars: Option<u32>,
+    pub summary_reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -47,6 +49,8 @@ pub struct BackgroundSyncConfigResponse {
     pub sync_gitlab: bool,
     pub sync_jira: bool,
     pub auto_generate_summaries: bool,
+    pub summary_max_chars: u32,
+    pub summary_reasoning_effort: String,
 }
 
 impl From<BackgroundSyncConfig> for BackgroundSyncConfigResponse {
@@ -61,6 +65,8 @@ impl From<BackgroundSyncConfig> for BackgroundSyncConfigResponse {
             sync_gitlab: config.sync_gitlab,
             sync_jira: config.sync_jira,
             auto_generate_summaries: config.auto_generate_summaries,
+            summary_max_chars: config.summary_max_chars,
+            summary_reasoning_effort: config.summary_reasoning_effort,
         }
     }
 }
@@ -157,6 +163,8 @@ pub async fn update_background_sync_config(
         sync_gitlab: config.sync_gitlab.unwrap_or(current.sync_gitlab),
         sync_jira: config.sync_jira.unwrap_or(current.sync_jira),
         auto_generate_summaries: config.auto_generate_summaries.unwrap_or(current.auto_generate_summaries),
+        summary_max_chars: config.summary_max_chars.unwrap_or(current.summary_max_chars),
+        summary_reasoning_effort: config.summary_reasoning_effort.unwrap_or(current.summary_reasoning_effort.clone()),
     };
 
     // Validate data sync interval
@@ -167,6 +175,16 @@ pub async fn update_background_sync_config(
     // Validate compaction interval (30min, 1h, 3h, 6h, 12h, 24h)
     if ![30, 60, 180, 360, 720, 1440].contains(&new_config.compaction_interval_minutes) {
         return Err("壓縮間隔必須是 30 分鐘、1、3、6、12 或 24 小時".to_string());
+    }
+
+    // Validate summary_max_chars (200..=5000)
+    if !(200..=5000).contains(&new_config.summary_max_chars) {
+        return Err("摘要最大字數必須在 200 到 5000 之間".to_string());
+    }
+
+    // Validate summary_reasoning_effort
+    if !["low", "medium", "high"].contains(&new_config.summary_reasoning_effort.as_str()) {
+        return Err("推理強度必須是 low、medium 或 high".to_string());
     }
 
     // Update in-memory config
@@ -187,7 +205,9 @@ pub async fn update_background_sync_config(
             auto_generate_summaries = ?,
             sync_git = ?,
             sync_claude = ?,
-            sync_antigravity = ?
+            sync_antigravity = ?,
+            summary_max_chars = ?,
+            summary_reasoning_effort = ?
         WHERE id = ?
         "#
     )
@@ -198,6 +218,8 @@ pub async fn update_background_sync_config(
     .bind(new_config.sync_git)
     .bind(new_config.sync_claude)
     .bind(new_config.sync_antigravity)
+    .bind(new_config.summary_max_chars)
+    .bind(&new_config.summary_reasoning_effort)
     .execute(&pool)
     .await
     .map_err(|e| format!("Failed to persist sync config: {}", e))?;
@@ -245,6 +267,8 @@ pub async fn start_background_sync(
         Option<bool>,
         Option<bool>,
         Option<bool>,
+        Option<i32>,
+        Option<String>,
     )> = sqlx::query_as(
         r#"
         SELECT
@@ -254,7 +278,9 @@ pub async fn start_background_sync(
             auto_generate_summaries,
             sync_git,
             sync_claude,
-            sync_antigravity
+            sync_antigravity,
+            summary_max_chars,
+            summary_reasoning_effort
         FROM users WHERE id = ?
         "#
     )
@@ -264,7 +290,7 @@ pub async fn start_background_sync(
     .ok()
     .flatten();
 
-    if let Some((enabled, interval, compaction, auto_summaries, git, claude, antigravity)) = config_row {
+    if let Some((enabled, interval, compaction, auto_summaries, git, claude, antigravity, max_chars, reasoning_effort)) = config_row {
         let config = BackgroundSyncConfig {
             enabled: enabled.unwrap_or(true),
             interval_minutes: interval.unwrap_or(15) as u32,
@@ -275,6 +301,8 @@ pub async fn start_background_sync(
             sync_antigravity: antigravity.unwrap_or(true),
             sync_gitlab: false,
             sync_jira: false,
+            summary_max_chars: max_chars.unwrap_or(2000) as u32,
+            summary_reasoning_effort: reasoning_effort.unwrap_or_else(|| "medium".to_string()),
         };
         state.background_sync.update_config(config).await;
         log::info!("Loaded sync config from database");
@@ -649,6 +677,8 @@ mod tests {
             sync_gitlab: false,
             sync_jira: false,
             auto_generate_summaries: true,
+            summary_max_chars: 2000,
+            summary_reasoning_effort: "medium".to_string(),
         };
 
         let response: BackgroundSyncConfigResponse = config.into();
@@ -660,6 +690,8 @@ mod tests {
         assert!(!response.sync_gitlab);
         assert!(!response.sync_jira);
         assert!(response.auto_generate_summaries);
+        assert_eq!(response.summary_max_chars, 2000);
+        assert_eq!(response.summary_reasoning_effort, "medium");
     }
 
     #[test]

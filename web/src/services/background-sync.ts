@@ -21,6 +21,8 @@ export interface BackgroundSyncConfig {
   sync_gitlab: boolean
   sync_jira: boolean
   auto_generate_summaries: boolean
+  summary_max_chars: number
+  summary_reasoning_effort: string
 }
 
 export interface BackgroundSyncStatus {

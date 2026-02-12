@@ -47,6 +47,10 @@ pub struct BackgroundSyncConfig {
     pub sync_jira: bool,
     /// Auto-generate timeline summaries for completed periods
     pub auto_generate_summaries: bool,
+    /// Maximum character count for LLM summary output (default: 2000)
+    pub summary_max_chars: u32,
+    /// Reasoning effort for o-series/gpt-5 models: "low", "medium", "high"
+    pub summary_reasoning_effort: String,
 }
 
 impl Default for BackgroundSyncConfig {
@@ -61,6 +65,8 @@ impl Default for BackgroundSyncConfig {
             sync_gitlab: false,
             sync_jira: false,
             auto_generate_summaries: true,
+            summary_max_chars: 2000,
+            summary_reasoning_effort: "medium".to_string(),
         }
     }
 }
@@ -1655,6 +1661,8 @@ mod tests {
         assert!(config.sync_claude);
         assert!(!config.sync_gitlab);
         assert!(!config.sync_jira);
+        assert_eq!(config.summary_max_chars, 2000);
+        assert_eq!(config.summary_reasoning_effort, "medium");
     }
 
     #[test]
