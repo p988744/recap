@@ -645,6 +645,7 @@ pub async fn test_llm_connection(
         base_url,
         summary_max_chars: 2000,
         reasoning_effort: None,
+        summary_prompt: None,
     };
 
     // Check if configured

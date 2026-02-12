@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import {
-  AlertTriangle, RefreshCw, Trash2, RotateCcw, Loader2,
+  AlertTriangle, RefreshCw, Trash2, RotateCcw, Loader2, Save,
 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
 import {
   Dialog,
@@ -16,8 +18,41 @@ import {
 import { dangerZone } from '@/services'
 import type { RecompactProgress } from '@/services/danger-zone'
 import { useBackgroundTask, phaseLabels } from '@/hooks/useBackgroundTask'
+import type { SettingsMessage } from '../hooks/useSettings'
 
-interface DangerZoneSectionProps {
+const DEFAULT_SUMMARY_PROMPT = `你是工作報告助手。請根據以下工作資料，產生專業的工作摘要（{length_hint}）。
+{context_section}
+本時段的工作資料：
+{data}
+
+安全規則（最高優先，務必遵守）：
+- 絕對不要在摘要中出現任何機密資訊，包括：IP 位址、密碼、API Key、Token、Secret、帳號密碼組合、伺服器位址、內部 URL、資料庫連線字串
+- 如果原始資料包含這些機密資訊，請完全省略或用泛稱替代（如「更新伺服器認證設定」而非列出實際 IP 或密碼）
+
+撰寫風格：
+- 以「成果導向」撰寫，描述完成了什麼、推進了什麼、解決了什麼問題
+- 避免「流水帳」式的步驟列舉（不要寫「使用 grep 搜尋」、「透過 bash 登入」這類操作細節）
+- 每個要點應能讓主管或同事理解你的工作貢獻和價值
+- 若有 git commit，以 commit 訊息作為成果總結的依據
+- 程式碼中的檔名、函式名、變數名請用 \`backtick\` 包裹
+
+請用繁體中文回答，格式如下：
+1. 第一行是一句話的總結摘要，點出核心成果或貢獻（不要加前綴）
+2. 空一行後，用條列式列出關鍵成果，每個要點以「- 」開頭
+
+重要：請直接輸出完整的工作摘要內容，不要只回覆「OK」或「好的」。`
+
+interface AdvancedSectionProps {
+  // LLM params
+  summaryMaxChars: number
+  setSummaryMaxChars: (v: number) => void
+  summaryReasoningEffort: string
+  setSummaryReasoningEffort: (v: string) => void
+  summaryPrompt: string
+  setSummaryPrompt: (v: string) => void
+  savingSync: boolean
+  onSaveSync: (setMessage: (msg: SettingsMessage | null) => void) => Promise<void>
+  // Shared
   setMessage: (msg: { type: 'success' | 'error'; text: string } | null) => void
 }
 
@@ -63,7 +98,17 @@ const operationConfigs: Record<Exclude<OperationType, null>, OperationConfig> = 
   },
 }
 
-export function DangerZoneSection({ setMessage }: DangerZoneSectionProps) {
+export function AdvancedSection({
+  summaryMaxChars,
+  setSummaryMaxChars,
+  summaryReasoningEffort,
+  setSummaryReasoningEffort,
+  summaryPrompt,
+  setSummaryPrompt,
+  savingSync,
+  onSaveSync,
+  setMessage,
+}: AdvancedSectionProps) {
   const [activeOperation, setActiveOperation] = useState<OperationType>(null)
   const [confirmInput, setConfirmInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -179,8 +224,91 @@ export function DangerZoneSection({ setMessage }: DangerZoneSectionProps) {
 
   return (
     <section className="animate-fade-up opacity-0 delay-1">
-      <h2 className="font-display text-2xl text-foreground mb-6">進階選項</h2>
+      <h2 className="font-display text-2xl text-foreground mb-6">進階設定</h2>
 
+      {/* LLM Parameters Card */}
+      <Card className="p-6 mb-6">
+        <h3 className="font-medium mb-4">LLM 參數</h3>
+
+        <div className="space-y-6">
+          {/* Summary Max Chars */}
+          <div>
+            <Label className="mb-2 block">摘要最大字數</Label>
+            <p className="text-xs text-muted-foreground mb-2">
+              控制 LLM 生成摘要的長度上限
+            </p>
+            <select
+              value={summaryMaxChars}
+              onChange={(e) => setSummaryMaxChars(Number(e.target.value))}
+              className="px-3 py-2 bg-background border border-border text-sm focus:outline-none focus:ring-1 focus:ring-foreground"
+            >
+              <option value={500}>500 字</option>
+              <option value={1000}>1000 字</option>
+              <option value={1500}>1500 字</option>
+              <option value={2000}>2000 字（預設）</option>
+              <option value={3000}>3000 字</option>
+              <option value={5000}>5000 字</option>
+            </select>
+          </div>
+
+          {/* Reasoning Effort */}
+          <div>
+            <Label className="mb-2 block">推理強度</Label>
+            <p className="text-xs text-muted-foreground mb-2">
+              控制 LLM 的推理深度（僅適用於 OpenAI o 系列及 GPT-5 模型）
+            </p>
+            <select
+              value={summaryReasoningEffort}
+              onChange={(e) => setSummaryReasoningEffort(e.target.value)}
+              className="px-3 py-2 bg-background border border-border text-sm focus:outline-none focus:ring-1 focus:ring-foreground"
+            >
+              <option value="low">低 — 較快、較省 Token</option>
+              <option value="medium">中 — 平衡（預設）</option>
+              <option value="high">高 — 較慢、較精確</option>
+            </select>
+          </div>
+
+          {/* Summary Prompt */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <Label className="block">摘要 Prompt</Label>
+              {summaryPrompt && (
+                <button
+                  onClick={() => setSummaryPrompt('')}
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  恢復預設
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground mb-2">
+              自訂 LLM 生成摘要時使用的 Prompt。可用變數：<code className="px-1 py-0.5 bg-muted rounded text-[11px]">{'{data}'}</code>（工作資料）、<code className="px-1 py-0.5 bg-muted rounded text-[11px]">{'{length_hint}'}</code>（字數提示）、<code className="px-1 py-0.5 bg-muted rounded text-[11px]">{'{context_section}'}</code>（前期摘要）。留空則使用預設 Prompt。
+            </p>
+            <textarea
+              value={summaryPrompt}
+              onChange={(e) => setSummaryPrompt(e.target.value)}
+              placeholder={DEFAULT_SUMMARY_PROMPT}
+              rows={10}
+              className="w-full px-3 py-2 bg-background border border-border text-sm font-mono focus:outline-none focus:ring-1 focus:ring-foreground resize-y leading-relaxed"
+            />
+          </div>
+
+          {/* Save Button */}
+          <div className="pt-4 border-t border-border">
+            <Button onClick={() => onSaveSync(setMessage)} disabled={savingSync}>
+              {savingSync ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Save className="w-4 h-4" />
+              )}
+              {savingSync ? '儲存中...' : '儲存 LLM 設定'}
+            </Button>
+          </div>
+        </div>
+      </Card>
+
+      {/* Danger Zone Card */}
       <Card className="border-destructive/30 bg-destructive/5">
         <div className="p-6">
           <div className="flex items-center gap-2 mb-4">

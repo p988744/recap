@@ -36,6 +36,7 @@ pub struct UpdateBackgroundSyncConfigRequest {
     pub auto_generate_summaries: Option<bool>,
     pub summary_max_chars: Option<u32>,
     pub summary_reasoning_effort: Option<String>,
+    pub summary_prompt: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -51,6 +52,7 @@ pub struct BackgroundSyncConfigResponse {
     pub auto_generate_summaries: bool,
     pub summary_max_chars: u32,
     pub summary_reasoning_effort: String,
+    pub summary_prompt: Option<String>,
 }
 
 impl From<BackgroundSyncConfig> for BackgroundSyncConfigResponse {
@@ -67,6 +69,7 @@ impl From<BackgroundSyncConfig> for BackgroundSyncConfigResponse {
             auto_generate_summaries: config.auto_generate_summaries,
             summary_max_chars: config.summary_max_chars,
             summary_reasoning_effort: config.summary_reasoning_effort,
+            summary_prompt: config.summary_prompt,
         }
     }
 }
@@ -165,6 +168,7 @@ pub async fn update_background_sync_config(
         auto_generate_summaries: config.auto_generate_summaries.unwrap_or(current.auto_generate_summaries),
         summary_max_chars: config.summary_max_chars.unwrap_or(current.summary_max_chars),
         summary_reasoning_effort: config.summary_reasoning_effort.unwrap_or(current.summary_reasoning_effort.clone()),
+        summary_prompt: if config.summary_prompt.is_some() { config.summary_prompt } else { current.summary_prompt.clone() },
     };
 
     // Validate data sync interval
@@ -207,7 +211,8 @@ pub async fn update_background_sync_config(
             sync_claude = ?,
             sync_antigravity = ?,
             summary_max_chars = ?,
-            summary_reasoning_effort = ?
+            summary_reasoning_effort = ?,
+            summary_prompt = ?
         WHERE id = ?
         "#
     )
@@ -220,6 +225,7 @@ pub async fn update_background_sync_config(
     .bind(new_config.sync_antigravity)
     .bind(new_config.summary_max_chars)
     .bind(&new_config.summary_reasoning_effort)
+    .bind(&new_config.summary_prompt)
     .execute(&pool)
     .await
     .map_err(|e| format!("Failed to persist sync config: {}", e))?;
@@ -269,6 +275,7 @@ pub async fn start_background_sync(
         Option<bool>,
         Option<i32>,
         Option<String>,
+        Option<String>,
     )> = sqlx::query_as(
         r#"
         SELECT
@@ -280,7 +287,8 @@ pub async fn start_background_sync(
             sync_claude,
             sync_antigravity,
             summary_max_chars,
-            summary_reasoning_effort
+            summary_reasoning_effort,
+            summary_prompt
         FROM users WHERE id = ?
         "#
     )
@@ -290,7 +298,7 @@ pub async fn start_background_sync(
     .ok()
     .flatten();
 
-    if let Some((enabled, interval, compaction, auto_summaries, git, claude, antigravity, max_chars, reasoning_effort)) = config_row {
+    if let Some((enabled, interval, compaction, auto_summaries, git, claude, antigravity, max_chars, reasoning_effort, summary_prompt)) = config_row {
         let config = BackgroundSyncConfig {
             enabled: enabled.unwrap_or(true),
             interval_minutes: interval.unwrap_or(15) as u32,
@@ -303,6 +311,7 @@ pub async fn start_background_sync(
             sync_jira: false,
             summary_max_chars: max_chars.unwrap_or(2000) as u32,
             summary_reasoning_effort: reasoning_effort.unwrap_or_else(|| "medium".to_string()),
+            summary_prompt: summary_prompt.filter(|s| !s.is_empty()),
         };
         state.background_sync.update_config(config).await;
         log::info!("Loaded sync config from database");
@@ -679,6 +688,7 @@ mod tests {
             auto_generate_summaries: true,
             summary_max_chars: 2000,
             summary_reasoning_effort: "medium".to_string(),
+            summary_prompt: None,
         };
 
         let response: BackgroundSyncConfigResponse = config.into();

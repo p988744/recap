@@ -14,6 +14,8 @@ pub struct LlmConfig {
     pub summary_max_chars: u32,
     /// Reasoning effort for o-series/gpt-5 models: "low", "medium", "high"
     pub reasoning_effort: Option<String>,
+    /// Custom summary prompt template (None = use default)
+    pub summary_prompt: Option<String>,
 }
 
 /// Result of testing LLM connection
@@ -424,8 +426,17 @@ Git Commits:
             )
         };
 
-        let prompt = format!(
-            r#"你是工作報告助手。請根據以下工作資料，產生專業的工作摘要（{length_hint}）。
+        let data = current_data.chars().take(input_max_chars).collect::<String>();
+
+        let prompt = if let Some(ref custom_prompt) = self.config.summary_prompt {
+            // User-provided custom prompt with placeholder substitution
+            custom_prompt
+                .replace("{length_hint}", &length_hint)
+                .replace("{context_section}", &context_section)
+                .replace("{data}", &data)
+        } else {
+            format!(
+                r#"你是工作報告助手。請根據以下工作資料，產生專業的工作摘要（{length_hint}）。
 {context_section}
 本時段的工作資料：
 {data}
@@ -446,10 +457,11 @@ Git Commits:
 2. 空一行後，用條列式列出關鍵成果，每個要點以「- 」開頭
 
 重要：請直接輸出完整的工作摘要內容，不要只回覆「OK」或「好的」。"#,
-            length_hint = length_hint,
-            context_section = context_section,
-            data = current_data.chars().take(input_max_chars).collect::<String>()
-        );
+                length_hint = length_hint,
+                context_section = context_section,
+                data = data
+            )
+        };
 
         let purpose = format!("{}_compaction", scale);
         self.complete_with_usage(&prompt, &purpose, output_max_tokens).await
@@ -862,8 +874,8 @@ pub fn parse_error_usage(err: &str) -> Option<LlmUsageRecord> {
 
 /// Create LLM service from database config
 pub async fn create_llm_service(pool: &sqlx::SqlitePool, user_id: &str) -> Result<LlmService, String> {
-    let row: (Option<String>, Option<String>, Option<String>, Option<String>, Option<i32>, Option<String>) = sqlx::query_as(
-        "SELECT llm_provider, llm_model, llm_api_key, llm_base_url, summary_max_chars, summary_reasoning_effort FROM users WHERE id = ?"
+    let row: (Option<String>, Option<String>, Option<String>, Option<String>, Option<i32>, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT llm_provider, llm_model, llm_api_key, llm_base_url, summary_max_chars, summary_reasoning_effort, summary_prompt FROM users WHERE id = ?"
     )
     .bind(user_id)
     .fetch_optional(pool)
@@ -878,6 +890,7 @@ pub async fn create_llm_service(pool: &sqlx::SqlitePool, user_id: &str) -> Resul
         base_url: row.3,
         summary_max_chars: row.4.unwrap_or(2000) as u32,
         reasoning_effort: row.5,
+        summary_prompt: row.6.filter(|s| !s.is_empty()),
     };
 
     Ok(LlmService::new(config))

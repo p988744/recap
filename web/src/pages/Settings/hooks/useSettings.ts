@@ -5,7 +5,7 @@ import type { ConfigResponse, SourcesResponse } from '@/types'
 import { useAuth } from '@/lib/auth'
 import type { SettingsSection, SettingsMessage } from './types'
 
-const validSections: SettingsSection[] = ['profile', 'projects', 'sync', 'export', 'ai', 'about', 'danger']
+const validSections: SettingsSection[] = ['profile', 'projects', 'sync', 'export', 'ai', 'about', 'advanced']
 
 export function useSettings() {
   const { user, logout, appStatus, token, isAuthenticated } = useAuth()

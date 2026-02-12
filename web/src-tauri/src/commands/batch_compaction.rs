@@ -89,6 +89,7 @@ async fn get_llm_config(pool: &sqlx::SqlitePool, user_id: &str) -> Result<LlmCon
         base_url: row.3,
         summary_max_chars: 2000,
         reasoning_effort: None,
+        summary_prompt: None,
     })
 }
 

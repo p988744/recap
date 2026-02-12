@@ -23,6 +23,7 @@ export interface BackgroundSyncConfig {
   auto_generate_summaries: boolean
   summary_max_chars: number
   summary_reasoning_effort: string
+  summary_prompt: string | null
 }
 
 export interface BackgroundSyncStatus {

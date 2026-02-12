@@ -53,10 +53,6 @@ interface SyncSectionProps {
   setCompactionIntervalMinutes: (v: number) => void
   autoGenerateSummaries: boolean
   setAutoGenerateSummaries: (v: boolean) => void
-  summaryMaxChars: number
-  setSummaryMaxChars: (v: number) => void
-  summaryReasoningEffort: string
-  setSummaryReasoningEffort: (v: string) => void
   // Source toggles
   syncGit: boolean
   setSyncGit: (v: boolean) => void
@@ -135,10 +131,6 @@ export function SyncSection({
   setCompactionIntervalMinutes,
   autoGenerateSummaries,
   setAutoGenerateSummaries,
-  summaryMaxChars,
-  setSummaryMaxChars,
-  summaryReasoningEffort,
-  setSummaryReasoningEffort,
   syncGit,
   setSyncGit,
   syncClaude,
@@ -274,45 +266,6 @@ export function SyncSection({
               description="同步完成後自動生成已完成週期的摘要（每週、每月、每季、每年）"
               disabled={!enabled}
             />
-          </div>
-
-          {/* Summary Max Chars */}
-          <div className={enabled && autoGenerateSummaries ? '' : 'opacity-50 pointer-events-none'}>
-            <Label className="mb-2 block">摘要最大字數</Label>
-            <p className="text-xs text-muted-foreground mb-2">
-              控制 LLM 生成摘要的長度上限
-            </p>
-            <select
-              value={summaryMaxChars}
-              onChange={(e) => setSummaryMaxChars(Number(e.target.value))}
-              className="px-3 py-2 bg-background border border-border text-sm focus:outline-none focus:ring-1 focus:ring-foreground"
-              disabled={!enabled || !autoGenerateSummaries}
-            >
-              <option value={500}>500 字</option>
-              <option value={1000}>1000 字</option>
-              <option value={1500}>1500 字</option>
-              <option value={2000}>2000 字（預設）</option>
-              <option value={3000}>3000 字</option>
-              <option value={5000}>5000 字</option>
-            </select>
-          </div>
-
-          {/* Reasoning Effort */}
-          <div className={enabled && autoGenerateSummaries ? '' : 'opacity-50 pointer-events-none'}>
-            <Label className="mb-2 block">推理強度</Label>
-            <p className="text-xs text-muted-foreground mb-2">
-              控制 LLM 的推理深度（僅適用於 OpenAI o 系列及 GPT-5 模型）
-            </p>
-            <select
-              value={summaryReasoningEffort}
-              onChange={(e) => setSummaryReasoningEffort(e.target.value)}
-              className="px-3 py-2 bg-background border border-border text-sm focus:outline-none focus:ring-1 focus:ring-foreground"
-              disabled={!enabled || !autoGenerateSummaries}
-            >
-              <option value="low">低 — 較快、較省 Token</option>
-              <option value="medium">中 — 平衡（預設）</option>
-              <option value="high">高 — 較慢、較精確</option>
-            </select>
           </div>
 
           {/* Save Button */}

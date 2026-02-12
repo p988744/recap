@@ -440,6 +440,10 @@ impl Database {
             .execute(&self.pool)
             .await
             .ok();
+        sqlx::query("ALTER TABLE users ADD COLUMN summary_prompt TEXT")
+            .execute(&self.pool)
+            .await
+            .ok();
 
         // Create snapshot_raw_data table for hourly session snapshots
         sqlx::query(

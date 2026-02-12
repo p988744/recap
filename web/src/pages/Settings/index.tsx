@@ -1,4 +1,4 @@
-import { User, Bot, Settings, Sparkles, FolderGit2, Plug, AlertTriangle } from 'lucide-react'
+import { User, Bot, Settings, Sparkles, FolderGit2, Plug, SlidersHorizontal } from 'lucide-react'
 import {
   useSettings,
   useProfileForm,
@@ -13,7 +13,7 @@ import { SyncSection } from './components/SyncSection'
 import { ExportSection } from './components/ExportSection'
 import { AiSection } from './components/AiSection'
 import { AboutSection } from './components/AboutSection'
-import { DangerZoneSection } from './components/DangerZoneSection'
+import { AdvancedSection } from './components/AdvancedSection'
 
 const sections = [
   { id: 'profile' as const, label: '帳號', icon: User },
@@ -22,7 +22,7 @@ const sections = [
   { id: 'export' as const, label: '整合', icon: Plug },
   { id: 'ai' as const, label: 'AI 助手', icon: Sparkles },
   { id: 'about' as const, label: '關於', icon: Bot },
-  { id: 'danger' as const, label: '進階', icon: AlertTriangle },
+  { id: 'advanced' as const, label: '進階設定', icon: SlidersHorizontal },
 ]
 
 export function SettingsPage() {
@@ -118,10 +118,6 @@ export function SettingsPage() {
             setCompactionIntervalMinutes={syncForm.setCompactionIntervalMinutes}
             autoGenerateSummaries={syncForm.autoGenerateSummaries}
             setAutoGenerateSummaries={syncForm.setAutoGenerateSummaries}
-            summaryMaxChars={syncForm.summaryMaxChars}
-            setSummaryMaxChars={syncForm.setSummaryMaxChars}
-            summaryReasoningEffort={syncForm.summaryReasoningEffort}
-            setSummaryReasoningEffort={syncForm.setSummaryReasoningEffort}
             syncGit={syncForm.syncGit}
             setSyncGit={syncForm.setSyncGit}
             syncClaude={syncForm.syncClaude}
@@ -198,9 +194,19 @@ export function SettingsPage() {
         {/* About Section */}
         {settings.activeSection === 'about' && <AboutSection />}
 
-        {/* Danger Zone Section */}
-        {settings.activeSection === 'danger' && (
-          <DangerZoneSection setMessage={settings.setMessage} />
+        {/* Advanced Section */}
+        {settings.activeSection === 'advanced' && (
+          <AdvancedSection
+            summaryMaxChars={syncForm.summaryMaxChars}
+            setSummaryMaxChars={syncForm.setSummaryMaxChars}
+            summaryReasoningEffort={syncForm.summaryReasoningEffort}
+            setSummaryReasoningEffort={syncForm.setSummaryReasoningEffort}
+            summaryPrompt={syncForm.summaryPrompt}
+            setSummaryPrompt={syncForm.setSummaryPrompt}
+            savingSync={syncForm.saving}
+            onSaveSync={syncForm.handleSave}
+            setMessage={settings.setMessage}
+          />
         )}
       </main>
     </div>

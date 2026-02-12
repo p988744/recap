@@ -51,6 +51,8 @@ pub struct BackgroundSyncConfig {
     pub summary_max_chars: u32,
     /// Reasoning effort for o-series/gpt-5 models: "low", "medium", "high"
     pub summary_reasoning_effort: String,
+    /// Custom summary prompt template (None = use default)
+    pub summary_prompt: Option<String>,
 }
 
 impl Default for BackgroundSyncConfig {
@@ -67,6 +69,7 @@ impl Default for BackgroundSyncConfig {
             auto_generate_summaries: true,
             summary_max_chars: 2000,
             summary_reasoning_effort: "medium".to_string(),
+            summary_prompt: None,
         }
     }
 }
