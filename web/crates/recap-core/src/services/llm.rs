@@ -265,8 +265,8 @@ impl LlmService {
     pub async fn test_connection(&self) -> Result<LlmTestResult, String> {
         let start = std::time::Instant::now();
 
-        // Send a simple test prompt
-        let test_prompt = "Reply with exactly: OK";
+        // Send a simple test prompt — must produce >20 chars to pass Responses API trivial check
+        let test_prompt = "請用一句繁體中文描述你是什麼類型的 AI 模型。";
         let result = self.complete_raw(test_prompt, 100).await;
         let latency_ms = start.elapsed().as_millis() as i64;
 
