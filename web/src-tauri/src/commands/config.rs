@@ -586,19 +586,30 @@ pub async fn update_jira_config(
     update_jira_config_impl(&repo, &token, request).await
 }
 
+/// Request for testing LLM connection with form values
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct TestLlmConnectionRequest {
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub api_key: Option<String>,
+    pub base_url: Option<String>,
+}
+
 /// Test LLM connection
-/// Sends a simple request to verify the API key and model are working
+/// Uses form values if provided, falling back to DB values for missing fields.
+/// For api_key: uses form value if non-empty, otherwise falls back to saved DB key.
 #[tauri::command]
 pub async fn test_llm_connection(
     state: State<'_, AppState>,
     token: String,
+    request: Option<TestLlmConnectionRequest>,
 ) -> Result<recap_core::services::llm::LlmTestResult, String> {
     use recap_core::auth::verify_token;
 
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
     let db = state.db.lock().await;
 
-    // Get LLM config for the user
+    // Get saved LLM config from DB as fallback
     let row: (Option<String>, Option<String>, Option<String>, Option<String>) = sqlx::query_as(
         "SELECT llm_provider, llm_model, llm_api_key, llm_base_url FROM users WHERE id = ?"
     )
@@ -608,11 +619,30 @@ pub async fn test_llm_connection(
     .map_err(|e| format!("Database error: {}", e))?
     .ok_or_else(|| "User not found".to_string())?;
 
+    let req = request.unwrap_or_default();
+
+    // Use form values with DB fallback
+    let provider = req.provider
+        .filter(|s| !s.is_empty())
+        .or(row.0)
+        .unwrap_or_else(|| "openai".to_string());
+    let model = req.model
+        .filter(|s| !s.is_empty())
+        .or(row.1)
+        .unwrap_or_else(|| "gpt-5-nano".to_string());
+    // api_key: use form value if non-empty, otherwise fall back to saved key
+    let api_key = req.api_key
+        .filter(|s| !s.is_empty())
+        .or(row.2);
+    let base_url = req.base_url
+        .filter(|s| !s.is_empty())
+        .or(row.3);
+
     let config = recap_core::services::llm::LlmConfig {
-        provider: row.0.unwrap_or_else(|| "openai".to_string()),
-        model: row.1.unwrap_or_else(|| "gpt-5-nano".to_string()),
-        api_key: row.2,
-        base_url: row.3,
+        provider,
+        model,
+        api_key,
+        base_url,
         summary_max_chars: 2000,
         reasoning_effort: None,
     };
@@ -636,6 +666,189 @@ pub async fn test_llm_connection(
 
     let service = recap_core::services::llm::LlmService::new(config);
     service.test_connection().await
+}
+
+// ============================================================================
+// LLM Preset Types & Commands
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LlmPresetResponse {
+    pub id: String,
+    pub name: String,
+    pub provider: String,
+    pub model: String,
+    pub has_api_key: bool,
+    pub base_url: Option<String>,
+    pub created_at: String,
+    pub last_used_at: Option<String>,
+}
+
+/// List all LLM presets for the current user
+#[tauri::command]
+pub async fn list_llm_presets(
+    state: State<'_, AppState>,
+    token: String,
+) -> Result<Vec<LlmPresetResponse>, String> {
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
+
+    let rows: Vec<(String, String, String, String, Option<String>, Option<String>, String, Option<String>)> =
+        sqlx::query_as(
+            r#"SELECT id, name, provider, model, api_key, base_url, created_at, last_used_at
+               FROM llm_presets WHERE user_id = ?
+               ORDER BY last_used_at DESC NULLS LAST, created_at DESC"#,
+        )
+        .bind(&claims.sub)
+        .fetch_all(&db.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(id, name, provider, model, api_key, base_url, created_at, last_used_at)| {
+            LlmPresetResponse {
+                id,
+                name,
+                provider,
+                model,
+                has_api_key: api_key.is_some(),
+                base_url,
+                created_at,
+                last_used_at,
+            }
+        })
+        .collect())
+}
+
+/// Save current LLM config as a named preset
+#[tauri::command]
+pub async fn save_llm_preset(
+    state: State<'_, AppState>,
+    token: String,
+    name: String,
+) -> Result<LlmPresetResponse, String> {
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
+
+    // Read current LLM config from users table
+    let row: (Option<String>, Option<String>, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT llm_provider, llm_model, llm_api_key, llm_base_url FROM users WHERE id = ?",
+    )
+    .bind(&claims.sub)
+    .fetch_one(&db.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let provider = row.0.unwrap_or_else(|| "openai".to_string());
+    let model = row.1.unwrap_or_else(|| "gpt-5-nano".to_string());
+    let api_key = row.2;
+    let base_url = row.3;
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = Utc::now();
+
+    sqlx::query(
+        r#"INSERT INTO llm_presets (id, user_id, name, provider, model, api_key, base_url, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#,
+    )
+    .bind(&id)
+    .bind(&claims.sub)
+    .bind(&name)
+    .bind(&provider)
+    .bind(&model)
+    .bind(&api_key)
+    .bind(&base_url)
+    .bind(now)
+    .execute(&db.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(LlmPresetResponse {
+        id,
+        name,
+        provider,
+        model,
+        has_api_key: api_key.is_some(),
+        base_url,
+        created_at: now.to_rfc3339(),
+        last_used_at: None,
+    })
+}
+
+/// Delete an LLM preset
+#[tauri::command]
+pub async fn delete_llm_preset(
+    state: State<'_, AppState>,
+    token: String,
+    preset_id: String,
+) -> Result<(), String> {
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
+
+    sqlx::query("DELETE FROM llm_presets WHERE id = ? AND user_id = ?")
+        .bind(&preset_id)
+        .bind(&claims.sub)
+        .execute(&db.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// Apply an LLM preset — copies its config to users table
+#[tauri::command]
+pub async fn apply_llm_preset(
+    state: State<'_, AppState>,
+    token: String,
+    preset_id: String,
+) -> Result<ConfigResponse, String> {
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
+    let now = Utc::now();
+
+    // Fetch the preset
+    let preset: (String, String, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT provider, model, api_key, base_url FROM llm_presets WHERE id = ? AND user_id = ?",
+    )
+    .bind(&preset_id)
+    .bind(&claims.sub)
+    .fetch_one(&db.pool)
+    .await
+    .map_err(|e| format!("Preset not found: {}", e))?;
+
+    // Apply preset config to users table
+    sqlx::query(
+        r#"UPDATE users SET
+            llm_provider = ?,
+            llm_model = ?,
+            llm_api_key = COALESCE(?, llm_api_key),
+            llm_base_url = ?,
+            updated_at = ?
+        WHERE id = ?"#,
+    )
+    .bind(&preset.0)
+    .bind(&preset.1)
+    .bind(&preset.2)
+    .bind(&preset.3)
+    .bind(now)
+    .bind(&claims.sub)
+    .execute(&db.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // Update preset's last_used_at
+    sqlx::query("UPDATE llm_presets SET last_used_at = ? WHERE id = ?")
+        .bind(now)
+        .bind(&preset_id)
+        .execute(&db.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Return updated config
+    let repo = SqliteConfigRepository::new(&db.pool);
+    let user = repo.get_user_config(&claims.sub).await?;
+    Ok(build_config_response(&user))
 }
 
 /// Response for onboarding status

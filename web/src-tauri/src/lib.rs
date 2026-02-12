@@ -38,6 +38,10 @@ pub fn run() {
             commands::config::test_llm_connection,
             commands::config::get_onboarding_status,
             commands::config::complete_onboarding,
+            commands::config::list_llm_presets,
+            commands::config::save_llm_preset,
+            commands::config::delete_llm_preset,
+            commands::config::apply_llm_preset,
             // Work Items - queries
             commands::work_items::queries::list_work_items,
             commands::work_items::queries::get_stats_summary,

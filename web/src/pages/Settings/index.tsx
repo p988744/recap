@@ -188,6 +188,10 @@ export function SettingsPage() {
             onSaveLlm={llmForm.handleSave}
             setMessage={settings.setMessage}
             refreshConfig={settings.refreshConfig}
+            presets={llmForm.presets}
+            onSavePreset={llmForm.handleSavePreset}
+            onDeletePreset={llmForm.handleDeletePreset}
+            onApplyPreset={llmForm.handleApplyPreset}
           />
         )}
 

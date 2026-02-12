@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0-alpha.14] - 2026-02-12
+
+### Added
+
+- **LLM 預設快速切換** - 儲存多組 LLM 設定，一鍵切換不同模型/API
+  - 「已儲存的設定」區塊：顯示預設名稱、provider/model、使用中標記
+  - 點擊預設即套用（自動更新 provider、model、API key、base URL）
+  - 支援新增/刪除預設，預設按最近使用排序
+  - 新增 `llm_presets` 資料表與 4 個 Tauri commands
+
+### Fixed
+
+- **LLM 設定表單空白** - 修正點擊已選中的 provider 按鈕會清空模型名稱和 API URL 的問題
+- **測試連線使用表單值** - 「測試連線」按鈕現在測試表單當前輸入的值（而非 DB 已存值），可先測試再儲存
+- **LLM max_tokens 參數** - 各 LLM 呼叫點加入明確的 max_tokens 參數
+
 ## [2.2.0-alpha.13] - 2026-02-11
 
 ### Fixed

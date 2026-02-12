@@ -773,6 +773,30 @@ impl Database {
             .execute(&self.pool)
             .await?;
 
+        // Create llm_presets table for saving/switching LLM configurations
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS llm_presets (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                api_key TEXT,
+                base_url TEXT,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_used_at DATETIME,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_llm_presets_user ON llm_presets(user_id)")
+            .execute(&self.pool)
+            .await?;
+
         log::info!("Database migrations completed");
         Ok(())
     }

@@ -48,3 +48,14 @@ export interface UpdateJiraConfigRequest {
 export interface MessageResponse {
   message: string
 }
+
+export interface LlmPreset {
+  id: string
+  name: string
+  provider: string
+  model: string
+  has_api_key: boolean
+  base_url: string | null
+  created_at: string
+  last_used_at: string | null
+}

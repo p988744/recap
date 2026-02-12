@@ -265,7 +265,7 @@ impl LlmService {
 
         // Send a simple test prompt
         let test_prompt = "Reply with exactly: OK";
-        let result = self.complete_raw(test_prompt).await;
+        let result = self.complete_raw(test_prompt, 100).await;
         let latency_ms = start.elapsed().as_millis() as i64;
 
         match result {
@@ -325,7 +325,7 @@ Session 內容：
             content.chars().take(4000).collect::<String>()
         );
 
-        self.complete_with_usage(&prompt, "session_summary").await
+        self.complete_with_usage(&prompt, "session_summary", 500).await
     }
 
     /// Generate a project work summary for Tempo reporting
@@ -352,7 +352,7 @@ Session 內容：
             work_items = work_items.chars().take(3000).collect::<String>()
         );
 
-        let (response, usage) = self.complete_with_usage(&prompt, "project_summary").await?;
+        let (response, usage) = self.complete_with_usage(&prompt, "project_summary", 500).await?;
 
         let summaries: Vec<String> = response
             .lines()
@@ -391,7 +391,7 @@ Git Commits:
             commits_info.chars().take(1000).collect::<String>()
         );
 
-        self.complete_with_usage(&prompt, "daily_summary").await
+        self.complete_with_usage(&prompt, "daily_summary", 1000).await
     }
 
     /// Summarize a work period at a given time scale.
@@ -405,12 +405,14 @@ Git Commits:
         scale: &str,
     ) -> Result<(String, LlmUsageRecord), String> {
         let base = self.config.summary_max_chars;
-        let (length_hint, max_chars) = match scale {
-            "hourly" => (format!("{}-{}字", base / 4, base / 2), 4000),
-            "daily" => (format!("{}-{}字", base / 2, base), 6000),
-            "weekly" => (format!("{}-{}字", base, base * 2), 8000),
-            "monthly" => (format!("{}-{}字", base * 3 / 2, base * 5 / 2), 10000),
-            _ => (format!("{}-{}字", base / 2, base), 6000),
+        // (prompt length hint, input data truncation, API max output tokens)
+        // Chinese text ≈ 1-2 tokens/char; use ~2x char count for safe token budget
+        let (length_hint, input_max_chars, output_max_tokens) = match scale {
+            "hourly" => (format!("{}-{}字", base / 4, base / 2), 4000, std::cmp::max(500, base)),
+            "daily" => (format!("{}-{}字", base / 2, base), 6000, std::cmp::max(1000, base * 2)),
+            "weekly" => (format!("{}-{}字", base, base * 2), 8000, std::cmp::max(2000, base * 3)),
+            "monthly" => (format!("{}-{}字", base * 3 / 2, base * 5 / 2), 10000, std::cmp::max(3000, base * 4)),
+            _ => (format!("{}-{}字", base / 2, base), 6000, std::cmp::max(1000, base * 2)),
         };
 
         let context_section = if context.is_empty() {
@@ -446,11 +448,11 @@ Git Commits:
 重要：請直接輸出完整的工作摘要內容，不要只回覆「OK」或「好的」。"#,
             length_hint = length_hint,
             context_section = context_section,
-            data = current_data.chars().take(max_chars).collect::<String>()
+            data = current_data.chars().take(input_max_chars).collect::<String>()
         );
 
         let purpose = format!("{}_compaction", scale);
-        self.complete_with_usage(&prompt, &purpose).await
+        self.complete_with_usage(&prompt, &purpose, output_max_tokens).await
     }
 
     /// Summarize a worklog description for Tempo upload.
@@ -473,13 +475,14 @@ Git Commits:
             description.chars().take(2000).collect::<String>()
         );
 
-        self.complete_with_usage(&prompt, "worklog_description").await
+        self.complete_with_usage(&prompt, "worklog_description", 200).await
     }
 
-    /// Send completion request to LLM and return usage record
-    pub async fn complete_with_usage(&self, prompt: &str, purpose: &str) -> Result<(String, LlmUsageRecord), String> {
+    /// Send completion request to LLM and return usage record.
+    /// `max_tokens` controls the maximum output tokens for the API call.
+    pub async fn complete_with_usage(&self, prompt: &str, purpose: &str, max_tokens: u32) -> Result<(String, LlmUsageRecord), String> {
         let start = Instant::now();
-        let result = self.complete_raw(prompt).await;
+        let result = self.complete_raw(prompt, max_tokens).await;
         let duration_ms = start.elapsed().as_millis() as i64;
 
         match result {
@@ -517,16 +520,16 @@ Git Commits:
     }
 
     /// Send completion request and return (text, prompt_tokens, completion_tokens, total_tokens)
-    async fn complete_raw(&self, prompt: &str) -> Result<(String, Option<i64>, Option<i64>, Option<i64>), String> {
+    async fn complete_raw(&self, prompt: &str, max_tokens: u32) -> Result<(String, Option<i64>, Option<i64>, Option<i64>), String> {
         match self.config.provider.as_str() {
-            "openai" | "openai-compatible" => self.complete_openai(prompt).await,
-            "anthropic" => self.complete_anthropic(prompt).await,
-            "ollama" => self.complete_ollama(prompt).await,
+            "openai" | "openai-compatible" => self.complete_openai(prompt, max_tokens).await,
+            "anthropic" => self.complete_anthropic(prompt, max_tokens).await,
+            "ollama" => self.complete_ollama(prompt, max_tokens).await,
             _ => Err(format!("Unsupported LLM provider: {}", self.config.provider)),
         }
     }
 
-    async fn complete_openai(&self, prompt: &str) -> Result<(String, Option<i64>, Option<i64>, Option<i64>), String> {
+    async fn complete_openai(&self, prompt: &str, max_tokens: u32) -> Result<(String, Option<i64>, Option<i64>, Option<i64>), String> {
         let api_key = self.config.api_key.as_ref()
             .ok_or("OpenAI API key not configured")?;
 
@@ -535,7 +538,7 @@ Git Commits:
 
         // Use Responses API for GPT-5 series models
         if uses_responses_api(&self.config.model) {
-            return self.complete_openai_responses_api(prompt, api_key, base_url).await;
+            return self.complete_openai_responses_api(prompt, api_key, base_url, max_tokens).await;
         }
 
         let messages = vec![OpenAIMessageRequest {
@@ -543,13 +546,18 @@ Git Commits:
             content: prompt.to_string(),
         }];
 
+        log::info!("OpenAI request: model={}, max_tokens={}, no_temp={}, uses_mct={}",
+            self.config.model, max_tokens,
+            no_temperature_support(&self.config.model),
+            uses_max_completion_tokens(&self.config.model));
+
         // Use appropriate request struct based on model capabilities
         let response = if no_temperature_support(&self.config.model) {
             // Models like o1, o3 don't support custom temperature
             let request = OpenAIRequestNewNoTemp {
                 model: self.config.model.clone(),
                 messages,
-                max_completion_tokens: 500,
+                max_completion_tokens: max_tokens,
                 reasoning_effort: self.config.reasoning_effort.clone(),
             };
             self.client
@@ -564,7 +572,7 @@ Git Commits:
             let request = OpenAIRequestNew {
                 model: self.config.model.clone(),
                 messages,
-                max_completion_tokens: 500,
+                max_completion_tokens: max_tokens,
                 temperature: 0.3,
             };
             self.client
@@ -579,7 +587,7 @@ Git Commits:
             let request = OpenAIRequestLegacy {
                 model: self.config.model.clone(),
                 messages,
-                max_tokens: 500,
+                max_tokens: max_tokens,
                 temperature: 0.3,
             };
             self.client
@@ -608,13 +616,19 @@ Git Commits:
 
         let text = result.choices.first()
             .map(|c| {
-                // For o-series models, check reasoning_content first, then content
+                // Always prefer content (the actual answer).
+                // reasoning_content is the internal chain-of-thought for o-series models — never use it as output.
+                if !c.message.content.is_empty() {
+                    return c.message.content.clone();
+                }
+                // Fallback: if content is empty but reasoning exists (shouldn't normally happen)
                 if let Some(ref reasoning) = c.message.reasoning_content {
                     if !reasoning.is_empty() {
+                        log::warn!("OpenAI response has empty content but non-empty reasoning_content, falling back to reasoning");
                         return reasoning.clone();
                     }
                 }
-                c.message.content.clone()
+                String::new()
             })
             .ok_or_else(|| format!("No response from LLM. Choices: {:?}", result.choices))?;
 
@@ -639,17 +653,19 @@ Git Commits:
         prompt: &str,
         api_key: &str,
         base_url: &str,
+        max_tokens: u32,
     ) -> Result<(String, Option<i64>, Option<i64>, Option<i64>), String> {
         // Build request with explicit text format to ensure message output
         let reasoning = self.config.reasoning_effort.as_ref().map(|effort| ReasoningConfig {
             effort: effort.clone(),
         });
 
+        // For Responses API, reasoning tokens are separate from output tokens,
+        // so max_output_tokens directly controls text output length
         let request = ResponsesApiRequest {
             model: self.config.model.clone(),
             input: prompt.to_string(),
-            // Use higher token limit for GPT-5 - reasoning uses tokens first
-            max_output_tokens: Some(1000),
+            max_output_tokens: Some(max_tokens),
             text: Some(ResponsesTextConfig {
                 format: ResponsesTextFormat {
                     format_type: "text".to_string(),
@@ -735,13 +751,13 @@ Git Commits:
         Ok((output_text, prompt_tokens, completion_tokens, total_tokens))
     }
 
-    async fn complete_anthropic(&self, prompt: &str) -> Result<(String, Option<i64>, Option<i64>, Option<i64>), String> {
+    async fn complete_anthropic(&self, prompt: &str, max_tokens: u32) -> Result<(String, Option<i64>, Option<i64>, Option<i64>), String> {
         let api_key = self.config.api_key.as_ref()
             .ok_or("Anthropic API key not configured")?;
 
         let request = AnthropicRequest {
             model: self.config.model.clone(),
-            max_tokens: 500,
+            max_tokens: max_tokens,
             messages: vec![AnthropicMessage {
                 role: "user".to_string(),
                 content: prompt.to_string(),
@@ -785,7 +801,7 @@ Git Commits:
         Ok((text, prompt_tokens, completion_tokens, total_tokens))
     }
 
-    async fn complete_ollama(&self, prompt: &str) -> Result<(String, Option<i64>, Option<i64>, Option<i64>), String> {
+    async fn complete_ollama(&self, prompt: &str, max_tokens: u32) -> Result<(String, Option<i64>, Option<i64>, Option<i64>), String> {
         let base_url = self.config.base_url.as_deref()
             .unwrap_or("http://localhost:11434");
 
@@ -796,7 +812,7 @@ Git Commits:
                 role: "user".to_string(),
                 content: prompt.to_string(),
             }],
-            max_tokens: 500,
+            max_tokens: max_tokens,
             temperature: 0.3,
         };
 
