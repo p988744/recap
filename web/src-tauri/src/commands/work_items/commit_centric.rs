@@ -37,8 +37,9 @@ pub async fn get_commit_centric_worklog(
         .unwrap_or("unknown")
         .to_string();
 
-    // Get commits for the date
-    let commits = get_commits_for_date(&project_path, &date);
+    // Get commits for the date (filtered by git user)
+    let author = recap_core::get_git_user_email(&project_path);
+    let commits = get_commits_for_date(&project_path, &date, author.as_deref());
     let total_commits = commits.len() as i32;
 
     // Calculate total hours from commits

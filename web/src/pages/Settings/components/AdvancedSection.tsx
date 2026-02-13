@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import {
-  AlertTriangle, RefreshCw, Trash2, RotateCcw, Loader2, Save,
+  AlertTriangle, RefreshCw, Trash2, RotateCcw, Loader2, Save, Eye, EyeOff,
 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -41,6 +41,14 @@ const DEFAULT_SUMMARY_PROMPT = `你是工作報告助手。請根據以下工作
 2. 空一行後，用條列式列出關鍵成果，每個要點以「- 」開頭
 
 重要：請直接輸出完整的工作摘要內容，不要只回覆「OK」或「好的」。`
+
+/** Preview: substitute template variables with sample data */
+function previewPrompt(prompt: string): string {
+  return prompt
+    .replace(/\{length_hint\}/g, '500-1000字')
+    .replace(/\{context_section\}/g, '\n前一時段摘要（作為前後文參考）：\n完成使用者認證模組重構，修復 JWT token 過期問題。\n')
+    .replace(/\{data\}/g, '- 09:00-10:30 修復登入頁面 token refresh 邏輯\n- 10:30-12:00 重構 AuthProvider，改用 React Context\n- 14:00-16:00 新增單元測試，覆蓋率提升至 85%')
+}
 
 interface AdvancedSectionProps {
   // LLM params
@@ -113,6 +121,7 @@ export function AdvancedSection({
   const [confirmInput, setConfirmInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [progress, setProgress] = useState<RecompactProgress | null>(null)
+  const [showPreview, setShowPreview] = useState(false)
 
   // Background task context (shared with Layout sidebar)
   const { task, startTask, updateProgress, completeTask, setTaskError } = useBackgroundTask()
@@ -272,26 +281,40 @@ export function AdvancedSection({
           <div>
             <div className="flex items-center justify-between mb-2">
               <Label className="block">摘要 Prompt</Label>
-              {summaryPrompt && (
+              <div className="flex items-center gap-3">
                 <button
-                  onClick={() => setSummaryPrompt('')}
+                  onClick={() => setShowPreview((v) => !v)}
                   className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
                 >
-                  <RotateCcw className="w-3 h-3" />
-                  恢復預設
+                  {showPreview ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                  {showPreview ? '編輯' : '預覽'}
                 </button>
-              )}
+                {summaryPrompt && (
+                  <button
+                    onClick={() => setSummaryPrompt('')}
+                    className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    恢復預設
+                  </button>
+                )}
+              </div>
             </div>
             <p className="text-xs text-muted-foreground mb-2">
-              自訂 LLM 生成摘要時使用的 Prompt。可用變數：<code className="px-1 py-0.5 bg-muted rounded text-[11px]">{'{data}'}</code>（工作資料）、<code className="px-1 py-0.5 bg-muted rounded text-[11px]">{'{length_hint}'}</code>（字數提示）、<code className="px-1 py-0.5 bg-muted rounded text-[11px]">{'{context_section}'}</code>（前期摘要）。留空則使用預設 Prompt。
+              自訂 LLM 生成摘要時使用的 Prompt。可用變數：<code className="px-1 py-0.5 bg-muted rounded text-[11px]">{'{data}'}</code>（工作資料）、<code className="px-1 py-0.5 bg-muted rounded text-[11px]">{'{length_hint}'}</code>（字數提示）、<code className="px-1 py-0.5 bg-muted rounded text-[11px]">{'{context_section}'}</code>（前期摘要）。
             </p>
-            <textarea
-              value={summaryPrompt}
-              onChange={(e) => setSummaryPrompt(e.target.value)}
-              placeholder={DEFAULT_SUMMARY_PROMPT}
-              rows={10}
-              className="w-full px-3 py-2 bg-background border border-border text-sm font-mono focus:outline-none focus:ring-1 focus:ring-foreground resize-y leading-relaxed"
-            />
+            {showPreview ? (
+              <pre className="w-full px-3 py-2 bg-muted/50 border border-border text-sm font-mono whitespace-pre-wrap leading-relaxed overflow-auto max-h-[400px]">
+                {previewPrompt(summaryPrompt || DEFAULT_SUMMARY_PROMPT)}
+              </pre>
+            ) : (
+              <textarea
+                value={summaryPrompt || DEFAULT_SUMMARY_PROMPT}
+                onChange={(e) => setSummaryPrompt(e.target.value)}
+                rows={12}
+                className="w-full px-3 py-2 bg-background border border-border text-sm font-mono focus:outline-none focus:ring-1 focus:ring-foreground resize-y leading-relaxed"
+              />
+            )}
           </div>
 
           {/* Save Button */}

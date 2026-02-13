@@ -210,7 +210,7 @@ mod tests {
     }
 
     fn get_commits_in_range(project_path: &str, start: &str, end: &str) -> Vec<TimelineCommit> {
-        get_commits_in_time_range(project_path, start, end)
+        get_commits_in_time_range(project_path, start, end, None)
     }
 
     fn create_test_jsonl(content: &str) -> NamedTempFile {

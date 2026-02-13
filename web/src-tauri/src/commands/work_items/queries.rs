@@ -310,7 +310,8 @@ pub async fn get_timeline_data(
 
         // Get commits for this session's time range
         let project_path = item.project_path.clone().unwrap_or_default();
-        let commits = crate::core_services::get_commits_in_time_range(&project_path, &start_time, &end_time);
+        let author = crate::core_services::get_git_user_email(&project_path);
+        let commits = crate::core_services::get_commits_in_time_range(&project_path, &start_time, &end_time, author.as_deref());
 
         sessions.push(TimelineSession {
             id: item.session_id.unwrap_or_else(|| item.id.clone()),

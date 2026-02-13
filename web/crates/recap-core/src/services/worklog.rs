@@ -11,6 +11,27 @@ use crate::utils::create_command;
 
 use crate::models::HoursSource;
 
+/// Get the git user email configured for a repository.
+/// Runs `git config user.email` in the given repo directory.
+pub fn get_git_user_email(repo_path: &str) -> Option<String> {
+    let repo_dir = PathBuf::from(repo_path);
+    if !repo_dir.exists() {
+        return None;
+    }
+    let output = create_command("git")
+        .arg("config")
+        .arg("user.email")
+        .current_dir(&repo_dir)
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let email = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !email.is_empty() { Some(email) } else { None }
+    } else {
+        None
+    }
+}
+
 /// A single commit record with hours estimation
 #[derive(Debug, Clone, Serialize)]
 pub struct CommitRecord {
@@ -154,8 +175,9 @@ pub fn estimate_from_diff(additions: i32, deletions: i32, files_count: usize) ->
     (hours * 4.0).round() / 4.0
 }
 
-/// Get commits for a specific date from a git repository
-pub fn get_commits_for_date(repo_path: &str, date: &NaiveDate) -> Vec<CommitRecord> {
+/// Get commits for a specific date from a git repository.
+/// If `author_filter` is Some, only commits by the matching author (email) are returned.
+pub fn get_commits_for_date(repo_path: &str, date: &NaiveDate, author_filter: Option<&str>) -> Vec<CommitRecord> {
     let repo_dir = PathBuf::from(repo_path);
 
     if !repo_dir.exists() || !repo_dir.join(".git").exists() {
@@ -166,14 +188,18 @@ pub fn get_commits_for_date(repo_path: &str, date: &NaiveDate) -> Vec<CommitReco
     let until = format!("{} 23:59:59", date);
 
     // Get commit list with metadata
-    let output = create_command("git")
-        .arg("log")
+    let mut cmd = create_command("git");
+    cmd.arg("log")
         .arg("--since")
         .arg(&since)
         .arg("--until")
         .arg(&until)
         .arg("--format=%H|%h|%an|%aI|%s")
-        .arg("--all")
+        .arg("--all");
+    if let Some(author) = author_filter {
+        cmd.arg("--author").arg(author);
+    }
+    let output = cmd
         .current_dir(&repo_dir)
         .output();
 
@@ -312,8 +338,9 @@ pub struct TimelineCommit {
     pub message: String,
 }
 
-/// Get commits within a specific time range (for session-based timeline)
-pub fn get_commits_in_time_range(repo_path: &str, start: &str, end: &str) -> Vec<TimelineCommit> {
+/// Get commits within a specific time range (for session-based timeline).
+/// If `author_filter` is Some, only commits by the matching author (email) are returned.
+pub fn get_commits_in_time_range(repo_path: &str, start: &str, end: &str, author_filter: Option<&str>) -> Vec<TimelineCommit> {
     if repo_path.is_empty() {
         return Vec::new();
     }
@@ -323,14 +350,18 @@ pub fn get_commits_in_time_range(repo_path: &str, start: &str, end: &str) -> Vec
         return Vec::new();
     }
 
-    let output = create_command("git")
-        .arg("log")
+    let mut cmd = create_command("git");
+    cmd.arg("log")
         .arg("--since")
         .arg(start)
         .arg("--until")
         .arg(end)
         .arg("--format=%H|%an|%aI|%s")
-        .arg("--all")
+        .arg("--all");
+    if let Some(author) = author_filter {
+        cmd.arg("--author").arg(author);
+    }
+    let output = cmd
         .current_dir(&repo_dir)
         .output();
 
@@ -549,13 +580,13 @@ mod tests {
 
     #[test]
     fn test_get_commits_in_time_range_empty_path() {
-        let commits = get_commits_in_time_range("", "2026-01-11T00:00:00+08:00", "2026-01-11T23:59:59+08:00");
+        let commits = get_commits_in_time_range("", "2026-01-11T00:00:00+08:00", "2026-01-11T23:59:59+08:00", None);
         assert!(commits.is_empty(), "Empty path should return no commits");
     }
 
     #[test]
     fn test_get_commits_in_time_range_nonexistent_path() {
-        let commits = get_commits_in_time_range("/nonexistent/path", "2026-01-11T00:00:00+08:00", "2026-01-11T23:59:59+08:00");
+        let commits = get_commits_in_time_range("/nonexistent/path", "2026-01-11T00:00:00+08:00", "2026-01-11T23:59:59+08:00", None);
         assert!(commits.is_empty(), "Nonexistent path should return no commits");
     }
 
@@ -581,6 +612,7 @@ mod tests {
             &parent_path,
             "2026-01-30T00:00:00+08:00",
             "2026-01-30T23:59:59+08:00",
+            None,
         );
 
         println!("Found {} commits for 2026-01-30", commits.len());
@@ -609,6 +641,7 @@ mod tests {
             &parent_path,
             "2026-01-30T09:00:00+08:00",
             "2026-01-30T10:00:00+08:00",
+            None,
         );
 
         println!("Found {} commits for 09:00-10:00", commits.len());

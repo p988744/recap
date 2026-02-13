@@ -24,8 +24,8 @@ pub use tempo::{JiraClient, TempoClient, WorklogUploader, WorklogEntry, JiraAuth
 pub use worklog::{
     CommitRecord, DailyWorklog, FileChange, HoursEstimate, SessionBrief,
     StandaloneSession, TimelineCommit, estimate_commit_hours, estimate_from_diff,
-    get_commits_for_date, get_commits_in_time_range, calculate_session_hours,
-    build_rule_based_outcome,
+    get_commits_for_date, get_commits_in_time_range, get_git_user_email,
+    calculate_session_hours, build_rule_based_outcome,
 };
 pub use session_parser::{
     extract_cwd, generate_daily_hash, is_meaningful_message, extract_tool_detail,

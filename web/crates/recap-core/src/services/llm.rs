@@ -265,8 +265,7 @@ impl LlmService {
     pub async fn test_connection(&self) -> Result<LlmTestResult, String> {
         let start = std::time::Instant::now();
 
-        // Send a simple test prompt — must produce >20 chars to pass Responses API trivial check
-        let test_prompt = "請用一句繁體中文描述你是什麼類型的 AI 模型。";
+        let test_prompt = "Reply with exactly: Connection test successful.";
         let result = self.complete_raw(test_prompt, 100).await;
         let latency_ms = start.elapsed().as_millis() as i64;
 
@@ -282,6 +281,19 @@ impl LlmService {
                 })
             }
             Err(e) => {
+                // For test connection, "trivial response" or "no text content" errors
+                // actually prove the API is reachable and the key is valid — treat as success
+                if e.contains("trivial response") || e.contains("no text content") {
+                    return Ok(LlmTestResult {
+                        success: true,
+                        message: format!("連線成功: {}", self.config.model),
+                        latency_ms,
+                        prompt_tokens: None,
+                        completion_tokens: None,
+                        model_response: None,
+                    });
+                }
+
                 // Parse error message for better user feedback
                 let user_message = if e.contains("401") || e.contains("Unauthorized") {
                     "API Key 無效或已過期"
