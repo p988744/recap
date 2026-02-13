@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0-alpha.15] - 2026-02-13
+
+### Added
+
+- **Git commit 使用者篩選** - 自動偵測 `git config user.email`，只顯示自己的 commit（排除他人 commit）
+  - 影響範圍：snapshot 擷取、worklog overview、timeline、commit-centric worklog、CLI dashboard
+- **摘要 Prompt 自訂** - 進階設定新增可編輯的 LLM 摘要 Prompt，支援 `{data}`、`{length_hint}`、`{context_section}` 變數
+  - 預設 Prompt 直接顯示為 textarea 值，使用者可直接修改
+  - 新增預覽功能：以範例資料替換變數，即時檢視最終 Prompt 效果
+  - 「恢復預設」按鈕一鍵還原
+- **進階設定頁面重構** - 將 LLM 參數（摘要字數、推理強度、Prompt）從「系統設定」移至獨立的「進階設定」分頁，與危險區域合併
+
+### Fixed
+
+- **LLM 測試連線誤判** - GPT-5 Responses API 回傳極短回應（trivial response / no text content）不再誤判為失敗
+
 ## [2.2.0-alpha.14] - 2026-02-12
 
 ### Added
