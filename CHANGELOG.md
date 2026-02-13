@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0-alpha.16] - 2026-02-13
+
+### Improved
+
+- **LLM 錯誤訊息可展開** - 呼叫記錄中的 ERR 狀態可點擊展開查看完整錯誤訊息
+
 ## [2.2.0-alpha.15] - 2026-02-13
 
 ### Added
