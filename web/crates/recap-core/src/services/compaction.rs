@@ -27,6 +27,9 @@ use super::llm_batch::{BatchRequest, HourlyCompactionRequest, LlmBatchService};
 use super::llm_usage::save_usage_log;
 use super::snapshot::{CommitSnapshot, ToolCallRecord};
 
+/// Maximum number of concurrent compaction tasks (limits LLM API parallelism)
+const COMPACTION_CONCURRENCY: usize = 5;
+
 // ============ Types ============
 
 /// Result of a compaction cycle
@@ -873,10 +876,16 @@ pub async fn process_completed_batch(
     .await
     .map_err(|e| format!("Failed to find uncompacted days: {}", e))?;
 
-    for (project_path, day) in &uncompacted_days {
-        match compact_daily(pool, llm, user_id, project_path, day).await {
-            Ok(()) => result.daily_compacted += 1,
-            Err(e) => result.errors.push(format!("daily {}/{}: {}", project_path, day, e)),
+    for chunk in uncompacted_days.chunks(COMPACTION_CONCURRENCY) {
+        let futs: Vec<_> = chunk.iter().map(|(project_path, day)| {
+            compact_daily(pool, llm, user_id, project_path, day)
+        }).collect();
+        let chunk_results = futures::future::join_all(futs).await;
+        for (r, (project_path, day)) in chunk_results.into_iter().zip(chunk.iter()) {
+            match r {
+                Ok(()) => result.daily_compacted += 1,
+                Err(e) => result.errors.push(format!("daily {}/{}: {}", project_path, day, e)),
+            }
         }
     }
 
@@ -905,10 +914,16 @@ pub async fn process_completed_batch(
     .await
     .map_err(|e| format!("Failed to find monthly projects: {}", e))?;
 
-    for (project_path,) in &monthly_projects {
-        match compact_period(pool, llm, user_id, Some(project_path), "monthly", &month_start, &month_end).await {
-            Ok(()) => result.monthly_compacted += 1,
-            Err(e) => result.errors.push(format!("monthly {}: {}", project_path, e)),
+    for chunk in monthly_projects.chunks(COMPACTION_CONCURRENCY) {
+        let futs: Vec<_> = chunk.iter().map(|(project_path,)| {
+            compact_period(pool, llm, user_id, Some(project_path.as_str()), "monthly", &month_start, &month_end)
+        }).collect();
+        let chunk_results = futures::future::join_all(futs).await;
+        for (r, (project_path,)) in chunk_results.into_iter().zip(chunk.iter()) {
+            match r {
+                Ok(()) => result.monthly_compacted += 1,
+                Err(e) => result.errors.push(format!("monthly {}: {}", project_path, e)),
+            }
         }
     }
 
@@ -1010,17 +1025,23 @@ pub async fn run_compaction_cycle(
 
     log::info!("Step 3: Compacting {} hourly snapshots...", all_hourly.len());
 
-    // 3. Compact hourly
-    for (project_path, hour_bucket) in &all_hourly {
-        log::debug!("  Compacting hourly: {} @ {}", project_path, hour_bucket);
-        match compact_hourly(pool, llm, user_id, project_path, hour_bucket).await {
-            Ok(()) => {
-                log::debug!("    ✓ Hourly compaction successful");
-                result.hourly_compacted += 1;
-            }
-            Err(e) => {
-                log::warn!("    ✗ Hourly compaction failed: {}", e);
-                result.errors.push(format!("hourly {}/{}: {}", project_path, hour_bucket, e));
+    // 3. Compact hourly (parallel in chunks of COMPACTION_CONCURRENCY)
+    for chunk in all_hourly.chunks(COMPACTION_CONCURRENCY) {
+        let futs: Vec<_> = chunk.iter().map(|(project_path, hour_bucket)| {
+            log::debug!("  Compacting hourly: {} @ {}", project_path, hour_bucket);
+            compact_hourly(pool, llm, user_id, project_path, hour_bucket)
+        }).collect();
+        let chunk_results = futures::future::join_all(futs).await;
+        for (r, (project_path, hour_bucket)) in chunk_results.into_iter().zip(chunk.iter()) {
+            match r {
+                Ok(()) => {
+                    log::debug!("    ✓ Hourly compaction successful");
+                    result.hourly_compacted += 1;
+                }
+                Err(e) => {
+                    log::warn!("    ✗ Hourly compaction failed: {}", e);
+                    result.errors.push(format!("hourly {}/{}: {}", project_path, hour_bucket, e));
+                }
             }
         }
     }
@@ -1077,20 +1098,26 @@ pub async fn run_compaction_cycle(
 
     log::info!("Step 6: Compacting {} daily summaries...", all_days.len());
 
-    for (project_path, day) in &all_days {
-        log::debug!("  Compacting daily: {} @ {}", project_path, day);
-        match compact_daily(pool, llm, user_id, project_path, day).await {
-            Ok(()) => {
-                log::debug!("    ✓ Daily compaction successful");
-                result.daily_compacted += 1;
-                // Track the latest compacted date
-                if result.latest_compacted_date.as_ref().map_or(true, |d| day > d) {
-                    result.latest_compacted_date = Some(day.clone());
+    for chunk in all_days.chunks(COMPACTION_CONCURRENCY) {
+        let futs: Vec<_> = chunk.iter().map(|(project_path, day)| {
+            log::debug!("  Compacting daily: {} @ {}", project_path, day);
+            compact_daily(pool, llm, user_id, project_path, day)
+        }).collect();
+        let chunk_results = futures::future::join_all(futs).await;
+        for (r, (project_path, day)) in chunk_results.into_iter().zip(chunk.iter()) {
+            match r {
+                Ok(()) => {
+                    log::debug!("    ✓ Daily compaction successful");
+                    result.daily_compacted += 1;
+                    // Track the latest compacted date
+                    if result.latest_compacted_date.as_ref().map_or(true, |d| day > d) {
+                        result.latest_compacted_date = Some(day.clone());
+                    }
                 }
-            }
-            Err(e) => {
-                log::warn!("    ✗ Daily compaction failed: {}", e);
-                result.errors.push(format!("daily {}/{}: {}", project_path, day, e));
+                Err(e) => {
+                    log::warn!("    ✗ Daily compaction failed: {}", e);
+                    result.errors.push(format!("daily {}/{}: {}", project_path, day, e));
+                }
             }
         }
     }
@@ -1165,18 +1192,26 @@ pub async fn run_compaction_cycle(
 
     log::info!("Step 8: Compacting {} weekly summaries...", all_weeks.len());
 
-    for (project_path, week_start, week_end) in &all_weeks {
-        log::debug!("  Compacting weekly: {} @ {} to {}", project_path, week_start, week_end);
-        let period_start = format!("{}T00:00:00+00:00", week_start);
-        let period_end = format!("{}T00:00:00+00:00", week_end);
-        match compact_period(pool, llm, user_id, Some(project_path), "weekly", &period_start, &period_end).await {
-            Ok(()) => {
-                log::debug!("    ✓ Weekly compaction successful");
-                result.weekly_compacted += 1;
+    for chunk in all_weeks.chunks(COMPACTION_CONCURRENCY) {
+        let futs: Vec<_> = chunk.iter().map(|(project_path, week_start, week_end)| {
+            log::debug!("  Compacting weekly: {} @ {} to {}", project_path, week_start, week_end);
+            let period_start = format!("{}T00:00:00+00:00", week_start);
+            let period_end = format!("{}T00:00:00+00:00", week_end);
+            async move {
+                compact_period(pool, llm, user_id, Some(project_path.as_str()), "weekly", &period_start, &period_end).await
             }
-            Err(e) => {
-                log::warn!("    ✗ Weekly compaction failed: {}", e);
-                result.errors.push(format!("weekly {}/{}: {}", project_path, week_start, e));
+        }).collect();
+        let chunk_results = futures::future::join_all(futs).await;
+        for (r, (project_path, week_start, _)) in chunk_results.into_iter().zip(chunk.iter()) {
+            match r {
+                Ok(()) => {
+                    log::debug!("    ✓ Weekly compaction successful");
+                    result.weekly_compacted += 1;
+                }
+                Err(e) => {
+                    log::warn!("    ✗ Weekly compaction failed: {}", e);
+                    result.errors.push(format!("weekly {}/{}: {}", project_path, week_start, e));
+                }
             }
         }
     }
@@ -1212,16 +1247,22 @@ pub async fn run_compaction_cycle(
     log::debug!("Found {} projects with weekly summaries for monthly compaction", monthly_projects.len());
     log::info!("Step 10: Compacting {} monthly summaries...", monthly_projects.len());
 
-    for (project_path,) in &monthly_projects {
-        log::debug!("  Compacting monthly: {}", project_path);
-        match compact_period(pool, llm, user_id, Some(project_path), "monthly", &month_start, &month_end).await {
-            Ok(()) => {
-                log::debug!("    ✓ Monthly compaction successful");
-                result.monthly_compacted += 1;
-            }
-            Err(e) => {
-                log::warn!("    ✗ Monthly compaction failed: {}", e);
-                result.errors.push(format!("monthly {}: {}", project_path, e));
+    for chunk in monthly_projects.chunks(COMPACTION_CONCURRENCY) {
+        let futs: Vec<_> = chunk.iter().map(|(project_path,)| {
+            log::debug!("  Compacting monthly: {}", project_path);
+            compact_period(pool, llm, user_id, Some(project_path.as_str()), "monthly", &month_start, &month_end)
+        }).collect();
+        let chunk_results = futures::future::join_all(futs).await;
+        for (r, (project_path,)) in chunk_results.into_iter().zip(chunk.iter()) {
+            match r {
+                Ok(()) => {
+                    log::debug!("    ✓ Monthly compaction successful");
+                    result.monthly_compacted += 1;
+                }
+                Err(e) => {
+                    log::warn!("    ✗ Monthly compaction failed: {}", e);
+                    result.errors.push(format!("monthly {}: {}", project_path, e));
+                }
             }
         }
     }

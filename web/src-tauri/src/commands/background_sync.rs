@@ -511,32 +511,37 @@ pub async fn trigger_sync_with_progress(
 
         let mut hourly_success = 0;
         let mut hourly_errors = 0;
-        for (idx, (project_path, hour_bucket)) in uncompacted.iter().enumerate() {
-            if idx % 5 == 0 || idx == total_items - 1 {
-                emit(
-                    "compaction",
-                    None,
-                    idx + 1,
-                    total_items,
-                    &format!("處理摘要 ({}/{})", idx + 1, total_items),
-                );
-            }
+        const COMPACTION_CONCURRENCY: usize = 5;
+        for (chunk_idx, chunk) in uncompacted.chunks(COMPACTION_CONCURRENCY).enumerate() {
+            let base_idx = chunk_idx * COMPACTION_CONCURRENCY;
+            emit(
+                "compaction",
+                None,
+                base_idx + chunk.len(),
+                total_items,
+                &format!("處理摘要 ({}/{})", base_idx + chunk.len(), total_items),
+            );
 
-            match recap_core::services::compaction::compact_hourly(
-                &pool,
-                llm.as_ref(),
-                &user_id,
-                project_path,
-                hour_bucket,
-            )
-            .await {
-                Ok(_) => {
-                    hourly_success += 1;
-                    log::debug!("[{}/{}] 壓縮成功: {} @ {}", idx + 1, total_items, project_path, hour_bucket);
-                }
-                Err(e) => {
-                    hourly_errors += 1;
-                    log::warn!("[{}/{}] 壓縮失敗: {} @ {} - {}", idx + 1, total_items, project_path, hour_bucket, e);
+            let futs: Vec<_> = chunk.iter().map(|(project_path, hour_bucket)| {
+                recap_core::services::compaction::compact_hourly(
+                    &pool,
+                    llm.as_ref(),
+                    &user_id,
+                    project_path,
+                    hour_bucket,
+                )
+            }).collect();
+            let chunk_results = futures::future::join_all(futs).await;
+            for (r, (project_path, hour_bucket)) in chunk_results.into_iter().zip(chunk.iter()) {
+                match r {
+                    Ok(_) => {
+                        hourly_success += 1;
+                        log::debug!("壓縮成功: {} @ {}", project_path, hour_bucket);
+                    }
+                    Err(e) => {
+                        hourly_errors += 1;
+                        log::warn!("壓縮失敗: {} @ {} - {}", project_path, hour_bucket, e);
+                    }
                 }
             }
         }
