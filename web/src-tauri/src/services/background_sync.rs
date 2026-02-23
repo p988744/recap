@@ -504,11 +504,17 @@ impl BackgroundSyncService {
         let mut config = self.config.write().await;
         let was_enabled = config.enabled;
         let old_interval = config.interval_minutes;
+        let old_compaction_interval = config.compaction_interval_minutes;
+        let old_auto_summaries = config.auto_generate_summaries;
         *config = new_config.clone();
         drop(config);
 
-        // Restart if interval changed or enabled state changed
-        if new_config.enabled && (!was_enabled || new_config.interval_minutes != old_interval) {
+        // Restart if any scheduling-related config changed
+        if new_config.enabled && (!was_enabled
+            || new_config.interval_minutes != old_interval
+            || new_config.compaction_interval_minutes != old_compaction_interval
+            || new_config.auto_generate_summaries != old_auto_summaries)
+        {
             self.restart().await;
         } else if !new_config.enabled && was_enabled {
             self.stop().await;
@@ -744,12 +750,39 @@ impl BackgroundSyncService {
                             }
                         };
 
-                        // Overlap prevention: skip if already syncing
-                        {
+                        // Overlap prevention: skip if already syncing (with stuck recovery)
+                        let should_force_recover = {
                             let lc = lifecycle.read().await;
+                            if let ServiceLifecycle::Syncing { ref started_at } = *lc {
+                                if let Ok(started) = chrono::DateTime::parse_from_rfc3339(started_at) {
+                                    let elapsed = chrono::Utc::now() - started.with_timezone(&chrono::Utc);
+                                    if elapsed > chrono::Duration::minutes(30) {
+                                        log::warn!(
+                                            "Sync stuck for {} min (started {}), will force-recover",
+                                            elapsed.num_minutes(), started_at
+                                        );
+                                        true
+                                    } else {
+                                        log::warn!("Previous sync still running ({}min), skipping this tick", elapsed.num_minutes());
+                                        return;
+                                    }
+                                } else {
+                                    log::warn!("Previous sync still running (bad timestamp), skipping this tick");
+                                    return;
+                                }
+                            } else {
+                                false
+                            }
+                        };
+
+                        if should_force_recover {
+                            let mut lc = lifecycle.write().await;
                             if lc.is_syncing() {
-                                log::warn!("Previous sync still running, skipping this tick");
-                                return;
+                                *lc = ServiceLifecycle::Idle {
+                                    last_sync_at: None,
+                                    next_sync_at: None,
+                                };
+                                log::info!("Force-recovered from stuck Syncing state to Idle");
                             }
                         }
 

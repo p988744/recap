@@ -146,15 +146,25 @@ export function useAppSync(isAuthenticated: boolean, token: string | null): Sync
   useEffect(() => {
     if (!isAuthenticated || !token) return
 
-    backgroundSync.start().catch((err) => {
-      console.warn('Failed to start background sync:', err)
-    })
+    const init = async () => {
+      // Must await start() so the scheduler is created before performFullSync()
+      // runs — otherwise performFullSync() sets lifecycle to Syncing via
+      // begin_sync_operation(), and start() fails with AlreadyRunning/SyncInProgress,
+      // leaving the scheduler never created → periodic sync never fires.
+      try {
+        await backgroundSync.start()
+      } catch (err) {
+        console.warn('Failed to start background sync:', err)
+      }
 
-    // Trigger initial sync once after authentication is ready
-    if (!initialSyncDone.current) {
-      initialSyncDone.current = true
-      performFullSync()
+      // Trigger initial sync once after authentication is ready
+      if (!initialSyncDone.current) {
+        initialSyncDone.current = true
+        performFullSync()
+      }
     }
+
+    init()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated, token])
 
