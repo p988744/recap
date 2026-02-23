@@ -511,16 +511,9 @@ pub async fn trigger_sync_with_progress(
 
         let mut hourly_success = 0;
         let mut hourly_errors = 0;
-        const COMPACTION_CONCURRENCY: usize = 5;
+        use recap_core::services::compaction::COMPACTION_CONCURRENCY;
         for (chunk_idx, chunk) in uncompacted.chunks(COMPACTION_CONCURRENCY).enumerate() {
             let base_idx = chunk_idx * COMPACTION_CONCURRENCY;
-            emit(
-                "compaction",
-                None,
-                base_idx + chunk.len(),
-                total_items,
-                &format!("處理摘要 ({}/{})", base_idx + chunk.len(), total_items),
-            );
 
             let futs: Vec<_> = chunk.iter().map(|(project_path, hour_bucket)| {
                 recap_core::services::compaction::compact_hourly(
@@ -532,6 +525,15 @@ pub async fn trigger_sync_with_progress(
                 )
             }).collect();
             let chunk_results = futures::future::join_all(futs).await;
+
+            emit(
+                "compaction",
+                None,
+                base_idx + chunk.len(),
+                total_items,
+                &format!("處理摘要 ({}/{})", base_idx + chunk.len(), total_items),
+            );
+
             for (r, (project_path, hour_bucket)) in chunk_results.into_iter().zip(chunk.iter()) {
                 match r {
                     Ok(_) => {

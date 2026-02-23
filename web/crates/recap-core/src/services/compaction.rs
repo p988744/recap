@@ -28,7 +28,7 @@ use super::llm_usage::save_usage_log;
 use super::snapshot::{CommitSnapshot, ToolCallRecord};
 
 /// Maximum number of concurrent compaction tasks (limits LLM API parallelism)
-const COMPACTION_CONCURRENCY: usize = 5;
+pub const COMPACTION_CONCURRENCY: usize = 5;
 
 // ============ Types ============
 
@@ -1268,9 +1268,10 @@ pub async fn run_compaction_cycle(
     }
 
     log::info!(
-        "Compaction cycle complete: {} hourly, {} daily, {} monthly, {} errors",
+        "Compaction cycle complete: {} hourly, {} daily, {} weekly, {} monthly, {} errors",
         result.hourly_compacted,
         result.daily_compacted,
+        result.weekly_compacted,
         result.monthly_compacted,
         result.errors.len()
     );
