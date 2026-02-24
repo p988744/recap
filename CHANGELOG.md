@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0-beta.1] - 2026-02-24
+
+### Added
+
+- **E2E 測試基礎設施** - 新增 WebdriverIO + tauri-driver E2E 測試框架
+  - 4 個測試檔案覆蓋登入、儀表板、導覽、設定關鍵路徑
+  - GitHub Actions CI workflow（ubuntu-22.04 + xvfb）
+  - 註：tauri-driver 不支援 macOS，E2E 僅在 CI Linux 環境執行
+- **同步狀態 UI 強化** - DataSyncStatus 顯示同步經過時間、2 分鐘後出現取消按鈕、5 分鐘卡住警告
+
+### Fixed
+
+- **同步重啟競態條件** - `restart()` 改為輪詢 lifecycle state（最多 10 秒），避免舊同步未結束就啟動新同步
+- **LLM 警告可見性** - LLM 呼叫的 warning 訊息現在顯示在 `last_error`，使用者可在 UI 看到
+- **Compaction panic 安全** - Compaction 迴圈加入 panic catch，單一專案失敗不會中斷整體壓縮
+- **同步卡住恢復** - 偵測並自動恢復卡在 Syncing/Compacting 狀態的同步服務
+- **取消同步指令** - 新增 `cancel_sync` command，前端可主動中斷長時間同步
+
+### Improved
+
+- **Compaction 平行化** - 壓縮迴圈改用 `chunks + join_all` 平行處理，提升大量專案的壓縮速度
+- **背景同步測試覆蓋** - 新增 20 個 background-sync service 測試
+
+## [2.2.0-alpha.17] - 2026-02-24
+
+### Fixed
+
+- **Compaction panic 安全** - Compaction 迴圈加入 panic catch，單一專案失敗不會中斷整體壓縮
+- **同步卡住恢復** - 偵測並自動恢復卡在 Syncing/Compacting 狀態的同步服務
+- **取消同步指令** - 新增 `cancel_sync` command，前端可主動中斷長時間同步
+- **同步啟動競態條件** - 修正背景同步啟動時的 race condition 和 stuck state recovery
+
+### Improved
+
+- **Compaction 平行化** - 壓縮迴圈改用 `chunks + join_all` 平行處理，提升大量專案的壓縮速度
+
 ## [2.2.0-alpha.16] - 2026-02-13
 
 ### Improved

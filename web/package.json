@@ -1,7 +1,7 @@
 {
   "name": "recap-web",
   "private": true,
-  "version": "2.2.0-alpha.17",
+  "version": "2.2.0-beta.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,6 +11,8 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "e2e": "wdio run e2e/wdio.conf.ts",
+    "e2e:build": "cargo tauri build --debug",
     "prepare": "cd .. && husky"
   },
   "dependencies": {
@@ -68,6 +70,11 @@
     "tailwindcss": "^3.4.14",
     "typescript": "^5.6.3",
     "vite": "^5.4.10",
-    "vitest": "^4.0.17"
+    "vitest": "^4.0.17",
+    "@wdio/cli": "^9.0.0",
+    "@wdio/local-runner": "^9.0.0",
+    "@wdio/mocha-framework": "^9.0.0",
+    "@wdio/spec-reporter": "^9.0.0",
+    "ts-node": "^10.9.0"
   }
 }
