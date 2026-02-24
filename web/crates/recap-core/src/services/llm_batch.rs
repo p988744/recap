@@ -254,9 +254,13 @@ pub struct LlmBatchService {
 
 impl LlmBatchService {
     pub fn new(config: LlmConfig) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
             config,
-            client: reqwest::Client::new(),
+            client,
         }
     }
 

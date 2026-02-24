@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0-beta.2] - 2026-02-24
+
+### Fixed
+
+- **Compaction TOCTOU 競態條件** - `begin_compaction()` 改用 `AtomicBool::compare_exchange` 原子操作，消除兩個 compaction 同時執行的風險
+- **LLM API 無超時保護** - `reqwest::Client` 加入 30 秒 timeout，防止 LLM API 無回應時永久阻塞 compaction
+- **E2E 測試假陽性** - 移除 `if (isDisplayed)` guard 模式，改為 `waitForDisplayed` + `expect().toBeDisplayed()` 明確斷言
+
+### Added
+
+- **danger_zone.rs 測試覆蓋** - 新增 14 個測試覆蓋 `clear_synced_data` 和 `factory_reset` 破壞性操作，包含用戶隔離和邊界情況
+- **GPT-5 路由測試** - 新增 35 個測試覆蓋 GPT-5 Responses API 偵測、請求序列化、回應解析和路由整合
+
 ## [2.2.0-beta.1] - 2026-02-24
 
 ### Added

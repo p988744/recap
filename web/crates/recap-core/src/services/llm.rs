@@ -2,7 +2,7 @@
 //! Supports OpenAI, Anthropic, Ollama, and OpenAI-compatible APIs
 
 use serde::{Deserialize, Serialize};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
 pub struct LlmConfig {
@@ -234,11 +234,18 @@ pub struct LlmService {
     client: reqwest::Client,
 }
 
+/// Default timeout for LLM API calls (30 seconds)
+const LLM_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
 impl LlmService {
     pub fn new(config: LlmConfig) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(LLM_REQUEST_TIMEOUT)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
             config,
-            client: reqwest::Client::new(),
+            client,
         }
     }
 
@@ -727,21 +734,7 @@ Git Commits:
                 e, &response_text.chars().take(500).collect::<String>()))?;
 
         // Extract text from output items
-        // Look for message items with text content
-        let mut output_text = String::new();
-        for item in &result.output {
-            if item.item_type == "message" {
-                if let Some(contents) = &item.content {
-                    for content in contents {
-                        if content.content_type == "output_text" || content.content_type == "text" {
-                            if let Some(text) = &content.text {
-                                output_text.push_str(text);
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let output_text = extract_responses_text(&result.output);
 
         log::info!("Responses API extracted text length: {} chars, preview: '{}'",
             output_text.len(),
@@ -884,6 +877,26 @@ pub fn parse_error_usage(err: &str) -> Option<LlmUsageRecord> {
     }
 }
 
+/// Extract text content from a Responses API output array.
+/// Returns the concatenated text from all message items with output_text/text content.
+fn extract_responses_text(output: &[ResponsesOutputItem]) -> String {
+    let mut text = String::new();
+    for item in output {
+        if item.item_type == "message" {
+            if let Some(contents) = &item.content {
+                for content in contents {
+                    if content.content_type == "output_text" || content.content_type == "text" {
+                        if let Some(t) = &content.text {
+                            text.push_str(t);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    text
+}
+
 /// Create LLM service from database config
 pub async fn create_llm_service(pool: &sqlx::SqlitePool, user_id: &str) -> Result<LlmService, String> {
     let row: (Option<String>, Option<String>, Option<String>, Option<String>, Option<i32>, Option<String>, Option<String>) = sqlx::query_as(
@@ -906,4 +919,542 @@ pub async fn create_llm_service(pool: &sqlx::SqlitePool, user_id: &str) -> Resul
     };
 
     Ok(LlmService::new(config))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== Model detection tests ====================
+
+    #[test]
+    fn test_uses_responses_api_gpt5_models() {
+        assert!(uses_responses_api("gpt-5"));
+        assert!(uses_responses_api("gpt-5-mini"));
+        assert!(uses_responses_api("gpt-5-nano"));
+        assert!(uses_responses_api("gpt-5-turbo"));
+        assert!(uses_responses_api("gpt-5-0601"));
+    }
+
+    #[test]
+    fn test_uses_responses_api_non_gpt5_models() {
+        assert!(!uses_responses_api("gpt-4o"));
+        assert!(!uses_responses_api("gpt-4o-mini"));
+        assert!(!uses_responses_api("gpt-4.1"));
+        assert!(!uses_responses_api("gpt-4-turbo"));
+        assert!(!uses_responses_api("o1"));
+        assert!(!uses_responses_api("o3-mini"));
+        assert!(!uses_responses_api("claude-3-5-sonnet"));
+        assert!(!uses_responses_api("llama3"));
+    }
+
+    #[test]
+    fn test_uses_max_completion_tokens() {
+        // Should use max_completion_tokens
+        assert!(uses_max_completion_tokens("gpt-5"));
+        assert!(uses_max_completion_tokens("gpt-5-nano"));
+        assert!(uses_max_completion_tokens("gpt-4.1"));
+        assert!(uses_max_completion_tokens("gpt-4o"));
+        assert!(uses_max_completion_tokens("gpt-4o-mini"));
+        assert!(uses_max_completion_tokens("o1"));
+        assert!(uses_max_completion_tokens("o1-mini"));
+        assert!(uses_max_completion_tokens("o3"));
+        assert!(uses_max_completion_tokens("o3-mini"));
+
+        // Should NOT use max_completion_tokens (legacy models)
+        assert!(!uses_max_completion_tokens("gpt-4-turbo"));
+        assert!(!uses_max_completion_tokens("gpt-4"));
+        assert!(!uses_max_completion_tokens("gpt-3.5-turbo"));
+        assert!(!uses_max_completion_tokens("claude-3-5-sonnet"));
+    }
+
+    #[test]
+    fn test_no_temperature_support() {
+        // No temperature support
+        assert!(no_temperature_support("gpt-5"));
+        assert!(no_temperature_support("gpt-5-mini"));
+        assert!(no_temperature_support("gpt-5-nano"));
+        assert!(no_temperature_support("o1"));
+        assert!(no_temperature_support("o1-mini"));
+        assert!(no_temperature_support("o3"));
+        assert!(no_temperature_support("o3-mini"));
+
+        // Has temperature support
+        assert!(!no_temperature_support("gpt-4o"));
+        assert!(!no_temperature_support("gpt-4o-mini"));
+        assert!(!no_temperature_support("gpt-4.1"));
+        assert!(!no_temperature_support("gpt-4-turbo"));
+        assert!(!no_temperature_support("gpt-3.5-turbo"));
+    }
+
+    // ==================== Request serialization tests ====================
+
+    #[test]
+    fn test_responses_api_request_serialization() {
+        let request = ResponsesApiRequest {
+            model: "gpt-5-nano".to_string(),
+            input: "Hello world".to_string(),
+            max_output_tokens: Some(500),
+            text: Some(ResponsesTextConfig {
+                format: ResponsesTextFormat {
+                    format_type: "text".to_string(),
+                },
+            }),
+            reasoning: None,
+        };
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(json["model"], "gpt-5-nano");
+        assert_eq!(json["input"], "Hello world");
+        assert_eq!(json["max_output_tokens"], 500);
+        assert_eq!(json["text"]["format"]["type"], "text");
+        // reasoning should be skipped when None
+        assert!(json.get("reasoning").is_none());
+    }
+
+    #[test]
+    fn test_responses_api_request_with_reasoning() {
+        let request = ResponsesApiRequest {
+            model: "gpt-5".to_string(),
+            input: "Summarize this".to_string(),
+            max_output_tokens: Some(1000),
+            text: None,
+            reasoning: Some(ReasoningConfig {
+                effort: "medium".to_string(),
+            }),
+        };
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(json["reasoning"]["effort"], "medium");
+        // text should be skipped when None
+        assert!(json.get("text").is_none());
+    }
+
+    #[test]
+    fn test_chat_completions_request_no_temp() {
+        let request = OpenAIRequestNewNoTemp {
+            model: "o1".to_string(),
+            messages: vec![OpenAIMessageRequest {
+                role: "user".to_string(),
+                content: "test".to_string(),
+            }],
+            max_completion_tokens: 500,
+            reasoning_effort: Some("high".to_string()),
+        };
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(json["model"], "o1");
+        assert_eq!(json["max_completion_tokens"], 500);
+        assert_eq!(json["reasoning_effort"], "high");
+        // Should NOT have temperature or max_tokens
+        assert!(json.get("temperature").is_none());
+        assert!(json.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn test_chat_completions_request_new() {
+        let request = OpenAIRequestNew {
+            model: "gpt-4o".to_string(),
+            messages: vec![OpenAIMessageRequest {
+                role: "user".to_string(),
+                content: "test".to_string(),
+            }],
+            max_completion_tokens: 500,
+            temperature: 0.3,
+        };
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(json["model"], "gpt-4o");
+        assert_eq!(json["max_completion_tokens"], 500);
+        let temp = json["temperature"].as_f64().unwrap();
+        assert!((temp - 0.3).abs() < 0.001, "temperature should be ~0.3, got {}", temp);
+        // Should NOT have max_tokens
+        assert!(json.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn test_chat_completions_request_legacy() {
+        let request = OpenAIRequestLegacy {
+            model: "gpt-4-turbo".to_string(),
+            messages: vec![OpenAIMessageRequest {
+                role: "user".to_string(),
+                content: "test".to_string(),
+            }],
+            max_tokens: 500,
+            temperature: 0.3,
+        };
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(json["model"], "gpt-4-turbo");
+        assert_eq!(json["max_tokens"], 500);
+        let temp = json["temperature"].as_f64().unwrap();
+        assert!((temp - 0.3).abs() < 0.001, "temperature should be ~0.3, got {}", temp);
+        // Should NOT have max_completion_tokens
+        assert!(json.get("max_completion_tokens").is_none());
+    }
+
+    // ==================== Response parsing tests ====================
+
+    #[test]
+    fn test_parse_responses_api_response() {
+        let json = r#"{
+            "id": "resp_abc",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {"type": "output_text", "text": "This is the summary output."}
+                    ]
+                }
+            ],
+            "usage": {"input_tokens": 100, "output_tokens": 50}
+        }"#;
+        let result: ResponsesApiResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(result.output.len(), 1);
+        assert_eq!(result.output[0].item_type, "message");
+        let usage = result.usage.unwrap();
+        assert_eq!(usage.input_tokens, Some(100));
+        assert_eq!(usage.output_tokens, Some(50));
+    }
+
+    #[test]
+    fn test_parse_responses_api_response_with_reasoning() {
+        let json = r#"{
+            "id": "resp_xyz",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "reasoning",
+                    "content": [
+                        {"type": "reasoning_text", "text": "thinking..."}
+                    ]
+                },
+                {
+                    "type": "message",
+                    "content": [
+                        {"type": "output_text", "text": "Final answer here."}
+                    ]
+                }
+            ],
+            "usage": {"input_tokens": 200, "output_tokens": 100}
+        }"#;
+        let result: ResponsesApiResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(result.output.len(), 2);
+        assert_eq!(result.output[0].item_type, "reasoning");
+        assert_eq!(result.output[1].item_type, "message");
+    }
+
+    #[test]
+    fn test_parse_chat_completions_response() {
+        let json = r#"{
+            "choices": [
+                {"message": {"role": "assistant", "content": "Hello there!"}}
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        }"#;
+        let result: OpenAIResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(result.choices.len(), 1);
+        assert_eq!(result.choices[0].message.content, "Hello there!");
+        let usage = result.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, Some(10));
+        assert_eq!(usage.completion_tokens, Some(5));
+        assert_eq!(usage.total_tokens, Some(15));
+    }
+
+    #[test]
+    fn test_parse_chat_completions_response_with_reasoning() {
+        let json = r#"{
+            "choices": [
+                {"message": {"role": "assistant", "content": "Result", "reasoning_content": "thinking step..."}}
+            ],
+            "usage": null
+        }"#;
+        let result: OpenAIResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(result.choices[0].message.content, "Result");
+        assert_eq!(
+            result.choices[0].message.reasoning_content.as_deref(),
+            Some("thinking step...")
+        );
+    }
+
+    // ==================== extract_responses_text tests ====================
+
+    #[test]
+    fn test_extract_responses_text_single_message() {
+        let output = vec![ResponsesOutputItem {
+            item_type: "message".to_string(),
+            content: Some(vec![ResponsesContent {
+                content_type: "output_text".to_string(),
+                text: Some("Hello world".to_string()),
+            }]),
+        }];
+        assert_eq!(extract_responses_text(&output), "Hello world");
+    }
+
+    #[test]
+    fn test_extract_responses_text_skips_reasoning() {
+        let output = vec![
+            ResponsesOutputItem {
+                item_type: "reasoning".to_string(),
+                content: Some(vec![ResponsesContent {
+                    content_type: "reasoning_text".to_string(),
+                    text: Some("I should think about this...".to_string()),
+                }]),
+            },
+            ResponsesOutputItem {
+                item_type: "message".to_string(),
+                content: Some(vec![ResponsesContent {
+                    content_type: "output_text".to_string(),
+                    text: Some("The actual answer".to_string()),
+                }]),
+            },
+        ];
+        assert_eq!(extract_responses_text(&output), "The actual answer");
+    }
+
+    #[test]
+    fn test_extract_responses_text_handles_text_content_type() {
+        let output = vec![ResponsesOutputItem {
+            item_type: "message".to_string(),
+            content: Some(vec![ResponsesContent {
+                content_type: "text".to_string(),
+                text: Some("Text type content".to_string()),
+            }]),
+        }];
+        assert_eq!(extract_responses_text(&output), "Text type content");
+    }
+
+    #[test]
+    fn test_extract_responses_text_empty_output() {
+        let output: Vec<ResponsesOutputItem> = vec![];
+        assert_eq!(extract_responses_text(&output), "");
+    }
+
+    #[test]
+    fn test_extract_responses_text_no_text_field() {
+        let output = vec![ResponsesOutputItem {
+            item_type: "message".to_string(),
+            content: Some(vec![ResponsesContent {
+                content_type: "output_text".to_string(),
+                text: None,
+            }]),
+        }];
+        assert_eq!(extract_responses_text(&output), "");
+    }
+
+    #[test]
+    fn test_extract_responses_text_concatenates_multiple_content() {
+        let output = vec![ResponsesOutputItem {
+            item_type: "message".to_string(),
+            content: Some(vec![
+                ResponsesContent {
+                    content_type: "output_text".to_string(),
+                    text: Some("Part 1".to_string()),
+                },
+                ResponsesContent {
+                    content_type: "output_text".to_string(),
+                    text: Some(" Part 2".to_string()),
+                },
+            ]),
+        }];
+        assert_eq!(extract_responses_text(&output), "Part 1 Part 2");
+    }
+
+    #[test]
+    fn test_extract_responses_text_ignores_unknown_content_types() {
+        let output = vec![ResponsesOutputItem {
+            item_type: "message".to_string(),
+            content: Some(vec![
+                ResponsesContent {
+                    content_type: "image".to_string(),
+                    text: Some("should be ignored".to_string()),
+                },
+                ResponsesContent {
+                    content_type: "output_text".to_string(),
+                    text: Some("kept".to_string()),
+                },
+            ]),
+        }];
+        assert_eq!(extract_responses_text(&output), "kept");
+    }
+
+    // ==================== Trivial response detection tests ====================
+
+    #[test]
+    fn test_trivial_response_detection() {
+        // The trivial response check is: trimmed.len() < 20
+        let trivial_responses = ["OK", "好的", "收到", "ok", "Yes", ""];
+        for resp in &trivial_responses {
+            assert!(
+                resp.trim().len() < 20,
+                "'{}' should be detected as trivial",
+                resp
+            );
+        }
+
+        let non_trivial = "這是一個足夠長的工作摘要，包含了足夠的字元數。";
+        assert!(
+            non_trivial.trim().len() >= 20,
+            "should not be trivial"
+        );
+    }
+
+    // ==================== parse_error_usage tests ====================
+
+    #[test]
+    fn test_parse_error_usage_valid() {
+        let usage = LlmUsageRecord {
+            provider: "openai".to_string(),
+            model: "gpt-5".to_string(),
+            prompt_tokens: Some(100),
+            completion_tokens: Some(50),
+            total_tokens: Some(150),
+            duration_ms: 500,
+            purpose: "test".to_string(),
+            status: "error".to_string(),
+            error_message: Some("test error".to_string()),
+        };
+        let json = serde_json::to_string(&usage).unwrap();
+        let err_str = format!("LLM_ERROR:{}::Some error happened", json);
+        let parsed = parse_error_usage(&err_str).unwrap();
+        assert_eq!(parsed.provider, "openai");
+        assert_eq!(parsed.model, "gpt-5");
+        assert_eq!(parsed.prompt_tokens, Some(100));
+        assert_eq!(parsed.completion_tokens, Some(50));
+        assert_eq!(parsed.duration_ms, 500);
+        assert_eq!(parsed.status, "error");
+    }
+
+    #[test]
+    fn test_parse_error_usage_not_llm_error() {
+        assert!(parse_error_usage("Some random error").is_none());
+        assert!(parse_error_usage("").is_none());
+        assert!(parse_error_usage("Request failed: timeout").is_none());
+    }
+
+    #[test]
+    fn test_parse_error_usage_malformed_json() {
+        assert!(parse_error_usage("LLM_ERROR:not-json::error msg").is_none());
+    }
+
+    #[test]
+    fn test_parse_error_usage_no_separator() {
+        assert!(parse_error_usage("LLM_ERROR:no-double-colon-separator").is_none());
+    }
+
+    // ==================== LlmService::is_configured tests ====================
+
+    #[test]
+    fn test_is_configured_openai_with_key() {
+        let service = LlmService::new(LlmConfig {
+            provider: "openai".to_string(),
+            model: "gpt-5".to_string(),
+            api_key: Some("sk-test".to_string()),
+            base_url: None,
+            summary_max_chars: 2000,
+            reasoning_effort: None,
+            summary_prompt: None,
+        });
+        assert!(service.is_configured());
+    }
+
+    #[test]
+    fn test_is_configured_openai_without_key() {
+        let service = LlmService::new(LlmConfig {
+            provider: "openai".to_string(),
+            model: "gpt-5".to_string(),
+            api_key: None,
+            base_url: None,
+            summary_max_chars: 2000,
+            reasoning_effort: None,
+            summary_prompt: None,
+        });
+        assert!(!service.is_configured());
+    }
+
+    #[test]
+    fn test_is_configured_ollama_without_key() {
+        let service = LlmService::new(LlmConfig {
+            provider: "ollama".to_string(),
+            model: "llama3".to_string(),
+            api_key: None,
+            base_url: None,
+            summary_max_chars: 2000,
+            reasoning_effort: None,
+            summary_prompt: None,
+        });
+        assert!(service.is_configured());
+    }
+
+    #[test]
+    fn test_is_configured_anthropic_without_key() {
+        let service = LlmService::new(LlmConfig {
+            provider: "anthropic".to_string(),
+            model: "claude-3-5-sonnet".to_string(),
+            api_key: None,
+            base_url: None,
+            summary_max_chars: 2000,
+            reasoning_effort: None,
+            summary_prompt: None,
+        });
+        assert!(!service.is_configured());
+    }
+
+    // ==================== Responses API usage token calculation tests ====================
+
+    #[test]
+    fn test_responses_usage_total_tokens_calculation() {
+        let usage = ResponsesUsage {
+            input_tokens: Some(100),
+            output_tokens: Some(50),
+        };
+        let total = match (usage.input_tokens, usage.output_tokens) {
+            (Some(i), Some(o)) => Some(i + o),
+            _ => None,
+        };
+        assert_eq!(total, Some(150));
+    }
+
+    #[test]
+    fn test_responses_usage_partial_tokens() {
+        let usage = ResponsesUsage {
+            input_tokens: Some(100),
+            output_tokens: None,
+        };
+        let total = match (usage.input_tokens, usage.output_tokens) {
+            (Some(i), Some(o)) => Some(i + o),
+            _ => None,
+        };
+        assert_eq!(total, None);
+    }
+
+    // ==================== Request routing integration tests ====================
+
+    #[test]
+    fn test_model_routing_gpt5_uses_responses_api_and_no_temp() {
+        let model = "gpt-5-nano";
+        assert!(uses_responses_api(model), "gpt-5 should use Responses API");
+        assert!(no_temperature_support(model), "gpt-5 should not support temperature");
+        assert!(uses_max_completion_tokens(model), "gpt-5 should use max_completion_tokens");
+    }
+
+    #[test]
+    fn test_model_routing_gpt4o_uses_chat_completions_with_temp() {
+        let model = "gpt-4o";
+        assert!(!uses_responses_api(model), "gpt-4o should NOT use Responses API");
+        assert!(!no_temperature_support(model), "gpt-4o SHOULD support temperature");
+        assert!(uses_max_completion_tokens(model), "gpt-4o should use max_completion_tokens");
+    }
+
+    #[test]
+    fn test_model_routing_o1_uses_chat_completions_no_temp() {
+        let model = "o1";
+        assert!(!uses_responses_api(model), "o1 should NOT use Responses API");
+        assert!(no_temperature_support(model), "o1 should NOT support temperature");
+        assert!(uses_max_completion_tokens(model), "o1 should use max_completion_tokens");
+    }
+
+    #[test]
+    fn test_model_routing_legacy_gpt4_turbo() {
+        let model = "gpt-4-turbo";
+        assert!(!uses_responses_api(model));
+        assert!(!no_temperature_support(model));
+        assert!(!uses_max_completion_tokens(model));
+    }
 }

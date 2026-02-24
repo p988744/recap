@@ -28,10 +28,15 @@ pub struct CompactionGuard {
 }
 
 impl CompactionGuard {
-    fn new(flag: Arc<AtomicBool>, started_at: Arc<RwLock<Option<String>>>) -> Self {
-        flag.store(true, Ordering::SeqCst);
-        // started_at is set by the caller before creating the guard
-        Self { flag, started_at }
+    /// Try to atomically acquire the compaction guard.
+    /// Returns `Some(guard)` if the flag was successfully set from false to true,
+    /// or `None` if compaction is already running.
+    fn try_acquire(flag: Arc<AtomicBool>, started_at: Arc<RwLock<Option<String>>>) -> Option<Self> {
+        // Atomic compare-and-swap: only succeeds if flag is currently false
+        match flag.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => Some(Self { flag, started_at }),
+            Err(_) => None, // Already compacting
+        }
     }
 }
 
@@ -440,18 +445,18 @@ impl BackgroundSyncService {
     /// Begin a compaction operation (for use by manual sync commands).
     /// Returns a guard that auto-resets `is_compacting` on drop.
     /// Returns None if compaction is already running.
+    /// Uses atomic compare_exchange to prevent TOCTOU race conditions.
     pub async fn begin_compaction(&self) -> Option<CompactionGuard> {
-        if self.is_compacting.load(Ordering::SeqCst) {
-            return None;
-        }
+        // Atomically try to set is_compacting from false to true
+        let guard = CompactionGuard::try_acquire(
+            Arc::clone(&self.is_compacting),
+            Arc::clone(&self.compaction_started_at),
+        )?;
         {
             let mut sa = self.compaction_started_at.write().await;
             *sa = Some(chrono::Utc::now().to_rfc3339());
         }
-        Some(CompactionGuard::new(
-            Arc::clone(&self.is_compacting),
-            Arc::clone(&self.compaction_started_at),
-        ))
+        Some(guard)
     }
 
     /// Record compaction completion
@@ -1024,7 +1029,7 @@ impl BackgroundSyncService {
                             }
                         }
 
-                        // Perform compaction (guard ensures is_compacting resets on panic)
+                        // Perform compaction (guard resets is_compacting on drop, even on panic)
                         Self::perform_compaction(
                             &db,
                             &last_compaction_at,
@@ -1456,17 +1461,21 @@ impl BackgroundSyncService {
         last_error: &Arc<RwLock<Option<String>>>,
         user_id: &str,
     ) {
-        // Set started_at timestamp before creating the guard
+        // Atomically acquire the compaction guard (sets is_compacting=true, resets on drop)
+        let _guard = match CompactionGuard::try_acquire(
+            Arc::clone(is_compacting),
+            Arc::clone(compaction_started_at),
+        ) {
+            Some(g) => g,
+            None => {
+                log::warn!("Compaction already running (race), skipping");
+                return;
+            }
+        };
         {
             let mut sa = compaction_started_at.write().await;
             *sa = Some(chrono::Utc::now().to_rfc3339());
         }
-
-        // Guard: sets is_compacting=true now, resets to false on drop (even on panic)
-        let _guard = CompactionGuard::new(
-            Arc::clone(is_compacting),
-            Arc::clone(compaction_started_at),
-        );
 
         log::info!("Starting data compaction for user: {}", user_id);
 
