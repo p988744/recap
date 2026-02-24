@@ -20,7 +20,7 @@ use super::session_parser::{
     extract_tool_detail, is_meaningful_message, SessionMessage, ToolUseContent,
 };
 use super::sync::DiscoveredProject;
-use super::worklog::get_commits_in_time_range;
+use super::worklog::{get_commits_in_time_range, get_git_user_email};
 
 // ============ Types ============
 
@@ -224,6 +224,7 @@ pub fn enrich_buckets_with_git_commits(
     // Resolve the actual git root from the project path
     // (project_path may be a subdirectory of the git repo)
     let git_root = resolve_git_root(project_path);
+    let author = get_git_user_email(&git_root);
 
     for bucket in buckets.iter_mut() {
         // Parse hour_bucket to get time range
@@ -252,7 +253,7 @@ pub fn enrich_buckets_with_git_commits(
             }
         };
 
-        let commits = get_commits_in_time_range(&git_root, &start_str, &end_str);
+        let commits = get_commits_in_time_range(&git_root, &start_str, &end_str, author.as_deref());
         for commit in commits {
             // Get file changes for additions/deletions
             let (additions, deletions) = get_commit_stats(&git_root, &commit.hash);

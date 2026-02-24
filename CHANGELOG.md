@@ -5,6 +5,96 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0-beta.1] - 2026-02-24
+
+### Added
+
+- **E2E 測試基礎設施** - 新增 WebdriverIO + tauri-driver E2E 測試框架
+  - 4 個測試檔案覆蓋登入、儀表板、導覽、設定關鍵路徑
+  - GitHub Actions CI workflow（ubuntu-22.04 + xvfb）
+  - 註：tauri-driver 不支援 macOS，E2E 僅在 CI Linux 環境執行
+- **同步狀態 UI 強化** - DataSyncStatus 顯示同步經過時間、2 分鐘後出現取消按鈕、5 分鐘卡住警告
+
+### Fixed
+
+- **同步重啟競態條件** - `restart()` 改為輪詢 lifecycle state（最多 10 秒），避免舊同步未結束就啟動新同步
+- **LLM 警告可見性** - LLM 呼叫的 warning 訊息現在顯示在 `last_error`，使用者可在 UI 看到
+- **Compaction panic 安全** - Compaction 迴圈加入 panic catch，單一專案失敗不會中斷整體壓縮
+- **同步卡住恢復** - 偵測並自動恢復卡在 Syncing/Compacting 狀態的同步服務
+- **取消同步指令** - 新增 `cancel_sync` command，前端可主動中斷長時間同步
+
+### Improved
+
+- **Compaction 平行化** - 壓縮迴圈改用 `chunks + join_all` 平行處理，提升大量專案的壓縮速度
+- **背景同步測試覆蓋** - 新增 20 個 background-sync service 測試
+
+## [2.2.0-alpha.17] - 2026-02-24
+
+### Fixed
+
+- **Compaction panic 安全** - Compaction 迴圈加入 panic catch，單一專案失敗不會中斷整體壓縮
+- **同步卡住恢復** - 偵測並自動恢復卡在 Syncing/Compacting 狀態的同步服務
+- **取消同步指令** - 新增 `cancel_sync` command，前端可主動中斷長時間同步
+- **同步啟動競態條件** - 修正背景同步啟動時的 race condition 和 stuck state recovery
+
+### Improved
+
+- **Compaction 平行化** - 壓縮迴圈改用 `chunks + join_all` 平行處理，提升大量專案的壓縮速度
+
+## [2.2.0-alpha.16] - 2026-02-13
+
+### Improved
+
+- **LLM 錯誤訊息可展開** - 呼叫記錄中的 ERR 狀態可點擊展開查看完整錯誤訊息
+
+## [2.2.0-alpha.15] - 2026-02-13
+
+### Added
+
+- **Git commit 使用者篩選** - 自動偵測 `git config user.email`，只顯示自己的 commit（排除他人 commit）
+  - 影響範圍：snapshot 擷取、worklog overview、timeline、commit-centric worklog、CLI dashboard
+- **摘要 Prompt 自訂** - 進階設定新增可編輯的 LLM 摘要 Prompt，支援 `{data}`、`{length_hint}`、`{context_section}` 變數
+  - 預設 Prompt 直接顯示為 textarea 值，使用者可直接修改
+  - 新增預覽功能：以範例資料替換變數，即時檢視最終 Prompt 效果
+  - 「恢復預設」按鈕一鍵還原
+- **進階設定頁面重構** - 將 LLM 參數（摘要字數、推理強度、Prompt）從「系統設定」移至獨立的「進階設定」分頁，與危險區域合併
+
+### Fixed
+
+- **LLM 測試連線誤判** - GPT-5 Responses API 回傳極短回應（trivial response / no text content）不再誤判為失敗
+
+## [2.2.0-alpha.14] - 2026-02-12
+
+### Added
+
+- **LLM 預設快速切換** - 儲存多組 LLM 設定，一鍵切換不同模型/API
+  - 「已儲存的設定」區塊：顯示預設名稱、provider/model、使用中標記
+  - 點擊預設即套用（自動更新 provider、model、API key、base URL）
+  - 支援新增/刪除預設，預設按最近使用排序
+  - 新增 `llm_presets` 資料表與 4 個 Tauri commands
+
+### Fixed
+
+- **LLM 設定表單空白** - 修正點擊已選中的 provider 按鈕會清空模型名稱和 API URL 的問題
+- **測試連線使用表單值** - 「測試連線」按鈕現在測試表單當前輸入的值（而非 DB 已存值），可先測試再儲存
+- **LLM max_tokens 參數** - 各 LLM 呼叫點加入明確的 max_tokens 參數
+
+## [2.2.0-alpha.13] - 2026-02-11
+
+### Fixed
+
+- **README HTML 渲染** - 專案描述頁面的 README 現在正確渲染 HTML 標籤（新增 `rehype-raw` plugin）
+
+### Removed
+
+- **隱藏 Antigravity 整合** - 前端完全移除所有 Antigravity (Gemini) 相關 UI
+  - 移除專案卡片、時間軸、Worklog 等處的 Antigravity 來源標籤
+  - 移除 Dashboard 和 WorkItems 的 Antigravity 來源篩選器
+  - 移除設定頁面的 Antigravity API 狀態檢查和路徑設定
+  - 移除同步設定中的 Antigravity 開關
+  - 移除 Onboarding 流程中的 Antigravity 連線測試
+  - 後端同步設定保持不變，僅隱藏前端 UI
+
 ## [2.2.0-alpha.12] - 2026-02-11
 
 ### Added

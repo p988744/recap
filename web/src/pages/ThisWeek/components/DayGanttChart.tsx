@@ -463,7 +463,7 @@ export function DayGanttChart({ date, projects, manualItems = [] }: DayGanttChar
 
                     // Format sources for display
                     const sourcesDisplay = Array.from(span.allSources)
-                      .map(s => s === 'claude_code' ? 'Claude Code' : s === 'antigravity' ? 'Antigravity' : s === 'manual' ? '手動項目' : s)
+                      .map(s => s === 'claude_code' ? 'Claude Code' : s === 'manual' ? '手動項目' : s)
                       .join(' + ')
 
                     // Calculate commit marker positions within the span

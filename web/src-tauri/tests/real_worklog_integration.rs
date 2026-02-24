@@ -159,7 +159,7 @@ fn test_actual_get_commits_for_date() {
     let date = NaiveDate::parse_from_str("2026-01-11", "%Y-%m-%d").unwrap();
 
     // Call the ACTUAL function from worklog.rs
-    let commits = get_commits_for_date(repo_path, &date);
+    let commits = get_commits_for_date(repo_path, &date, None);
 
     println!("Repository: {}", repo_path);
     println!("Date: {}", date);
@@ -278,7 +278,7 @@ fn test_recap_project_actual_output() {
     let date = NaiveDate::parse_from_str("2026-01-11", "%Y-%m-%d").unwrap();
 
     // Get commits using the ACTUAL function
-    let commits = get_commits_for_date(repo_path, &date);
+    let commits = get_commits_for_date(repo_path, &date, None);
 
     println!("┌─────────────────────────────────────────────────────────────────────────┐");
     println!("│ Git Commits for {} ({} total)                                   │", date, commits.len());

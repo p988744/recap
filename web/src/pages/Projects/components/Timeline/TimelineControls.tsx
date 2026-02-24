@@ -16,7 +16,6 @@ import {
 } from '@/components/ui/popover'
 import type { TimeUnit } from '@/types'
 import { ClaudeIcon } from '@/pages/Settings/components/ProjectsSection/icons/ClaudeIcon'
-import { GeminiIcon } from '@/pages/Settings/components/ProjectsSection/icons/GeminiIcon'
 
 interface TimelineControlsProps {
   timeUnit: TimeUnit
@@ -38,10 +37,6 @@ const SOURCE_CONFIG: Record<string, { icon: React.ReactNode; label: string }> = 
   claude_code: {
     icon: <ClaudeIcon className="w-4 h-4" />,
     label: 'Claude Code',
-  },
-  antigravity: {
-    icon: <GeminiIcon className="w-4 h-4" />,
-    label: 'Antigravity',
   },
 }
 

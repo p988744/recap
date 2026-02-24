@@ -1,10 +1,11 @@
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { Loader2, CheckCircle2, AlertCircle, RefreshCw, XCircle } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
+import { backgroundSync } from '@/services'
 import type { BackgroundSyncStatus, SyncProgress } from '@/services/background-sync'
 import { ClaudeIcon } from './icons/ClaudeIcon'
-import { GeminiIcon } from './icons/GeminiIcon'
 
 type PhaseState = 'idle' | 'syncing' | 'done'
 type SourceState = PhaseState | 'disconnected'
@@ -16,6 +17,7 @@ interface DataSyncStatusProps {
   summaryState: PhaseState
   syncProgress: SyncProgress | null
   onTriggerSync: () => void
+  onRefreshStatus?: () => Promise<void>
   antigravityConnected?: boolean
 }
 
@@ -96,6 +98,17 @@ const phaseLabels: Record<SyncProgress['phase'], string> = {
   complete: '完成',
 }
 
+const CANCEL_THRESHOLD_MS = 2 * 60 * 1000  // 2 minutes
+const WARNING_THRESHOLD_MS = 5 * 60 * 1000 // 5 minutes
+
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000)
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  if (minutes > 0) return `${minutes}m ${seconds}s`
+  return `${seconds}s`
+}
+
 export function DataSyncStatus({
   status,
   enabled,
@@ -103,8 +116,43 @@ export function DataSyncStatus({
   summaryState,
   syncProgress,
   onTriggerSync,
-  antigravityConnected,
+  onRefreshStatus,
+  antigravityConnected: _antigravityConnected,
 }: DataSyncStatusProps) {
+  const [elapsedMs, setElapsedMs] = useState(0)
+  const [cancelling, setCancelling] = useState(false)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const isSyncing = status?.is_syncing ?? false
+  const syncingStartedAt = status?.syncing_started_at ?? null
+
+  // Elapsed time timer
+  useEffect(() => {
+    if (isSyncing && syncingStartedAt) {
+      const startTime = new Date(syncingStartedAt).getTime()
+      const tick = () => setElapsedMs(Date.now() - startTime)
+      tick()
+      intervalRef.current = setInterval(tick, 1000)
+      return () => {
+        if (intervalRef.current) clearInterval(intervalRef.current)
+      }
+    }
+    setElapsedMs(0)
+    setCancelling(false)
+  }, [isSyncing, syncingStartedAt])
+
+  const handleCancel = useCallback(async () => {
+    setCancelling(true)
+    try {
+      await backgroundSync.cancelSync()
+      if (onRefreshStatus) await onRefreshStatus()
+    } catch (err) {
+      console.error('Failed to cancel sync:', err)
+    } finally {
+      setCancelling(false)
+    }
+  }, [onRefreshStatus])
+
   if (!status) {
     return (
       <Card className="p-4">
@@ -113,17 +161,13 @@ export function DataSyncStatus({
     )
   }
 
-  const isSyncing = status.is_syncing
   const isActive = enabled && (status.is_running || !!status.last_sync_at)
   const hasError = status.last_error
+  const showCancel = isSyncing && elapsedMs >= CANCEL_THRESHOLD_MS
+  const showWarning = isSyncing && elapsedMs >= WARNING_THRESHOLD_MS
 
   // Determine per-source states based on overall dataSyncState
-  // When syncing, Claude Code syncs first, then Antigravity
   const claudeState: SourceState = dataSyncState
-  // If Antigravity API is not connected, show disconnected state
-  const antigravityState: SourceState = antigravityConnected === false
-    ? 'disconnected'
-    : dataSyncState === 'syncing' ? 'idle' : dataSyncState
 
   // Calculate progress percentage
   const progressPercent = syncProgress
@@ -140,7 +184,7 @@ export function DataSyncStatus({
           {isSyncing ? (
             <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-foreground/10">
               <Loader2 className="w-3 h-3 animate-spin" />
-              同步中
+              {syncingStartedAt ? `同步中 (已進行 ${formatElapsed(elapsedMs)})` : '同步中'}
             </span>
           ) : isActive ? (
             <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-sage/10 text-sage">
@@ -154,20 +198,38 @@ export function DataSyncStatus({
             </span>
           )}
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onTriggerSync}
-          disabled={isSyncing}
-          className="h-7 px-2"
-        >
-          {isSyncing ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          ) : (
-            <RefreshCw className="w-3.5 h-3.5" />
+        <div className="flex items-center gap-1">
+          {showCancel && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleCancel}
+              disabled={cancelling}
+              className="h-7 px-2 text-destructive hover:text-destructive hover:bg-destructive/10"
+            >
+              {cancelling ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <XCircle className="w-3.5 h-3.5" />
+              )}
+              <span className="ml-1.5 text-xs">取消同步</span>
+            </Button>
           )}
-          <span className="ml-1.5 text-xs">立即同步</span>
-        </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onTriggerSync}
+            disabled={isSyncing}
+            className="h-7 px-2"
+          >
+            {isSyncing ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="w-3.5 h-3.5" />
+            )}
+            <span className="ml-1.5 text-xs">立即同步</span>
+          </Button>
+        </div>
       </div>
 
       {/* Per-source sync status */}
@@ -177,12 +239,6 @@ export function DataSyncStatus({
           label="Claude Code"
           state={claudeState}
           colorClass="text-amber-600 dark:text-amber-400"
-        />
-        <SourceSyncRow
-          icon={<GeminiIcon className="w-4 h-4" />}
-          label="Antigravity"
-          state={antigravityState}
-          colorClass="text-blue-600 dark:text-blue-400"
         />
       </div>
 
@@ -222,6 +278,13 @@ export function DataSyncStatus({
               </span>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Stuck sync warning */}
+      {showWarning && (
+        <div className="mt-2 p-2 bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs border-l-2 border-amber-500">
+          同步時間較長，可能已卡住
         </div>
       )}
 

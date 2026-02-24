@@ -70,7 +70,8 @@ pub async fn show_timeline(ctx: &Context, date: Option<String>) -> Result<()> {
         // Get commits for this session
         let commit_count = if let Some(project_path) = &item.project_path {
             if let (Some(start), Some(end)) = (&item.start_time, &item.end_time) {
-                let commits = recap_core::get_commits_in_time_range(project_path, start, end);
+                let author = recap_core::get_git_user_email(project_path);
+                let commits = recap_core::get_commits_in_time_range(project_path, start, end, author.as_deref());
                 total_commits += commits.len();
                 commits.len()
             } else {

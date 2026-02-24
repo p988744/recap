@@ -1,5 +1,6 @@
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import rehypeRaw from 'rehype-raw'
 
 interface MarkdownSummaryProps {
   content: string
@@ -20,7 +21,7 @@ export function MarkdownSummary({ content, className = '' }: MarkdownSummaryProp
       prose-tr:border-b prose-tr:border-border
       text-sm text-muted-foreground ${className}`}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>{content}</ReactMarkdown>
     </div>
   )
 }

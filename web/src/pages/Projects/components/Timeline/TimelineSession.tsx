@@ -4,7 +4,6 @@ import { cn } from '@/lib/utils'
 import type { TimelineSessionDetail, TimelineCommitDetail } from '@/types'
 import { MarkdownSummary } from '@/components/MarkdownSummary'
 import { ClaudeIcon } from '@/pages/Settings/components/ProjectsSection/icons/ClaudeIcon'
-import { GeminiIcon } from '@/pages/Settings/components/ProjectsSection/icons/GeminiIcon'
 import { CommitDiffModal } from '../Modals/CommitDiffModal'
 
 interface TimelineSessionProps {
@@ -17,11 +16,6 @@ const SOURCE_CONFIG: Record<string, { icon: React.ReactNode; label: string; clas
     icon: <ClaudeIcon className="w-3.5 h-3.5" />,
     label: 'Claude Code',
     className: 'bg-amber-50 dark:bg-amber-900/20 border-amber-200/50 dark:border-amber-800/30',
-  },
-  antigravity: {
-    icon: <GeminiIcon className="w-3.5 h-3.5" />,
-    label: 'Antigravity',
-    className: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200/50 dark:border-blue-800/30',
   },
 }
 

@@ -34,6 +34,9 @@ pub struct UpdateBackgroundSyncConfigRequest {
     pub sync_gitlab: Option<bool>,
     pub sync_jira: Option<bool>,
     pub auto_generate_summaries: Option<bool>,
+    pub summary_max_chars: Option<u32>,
+    pub summary_reasoning_effort: Option<String>,
+    pub summary_prompt: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -47,6 +50,9 @@ pub struct BackgroundSyncConfigResponse {
     pub sync_gitlab: bool,
     pub sync_jira: bool,
     pub auto_generate_summaries: bool,
+    pub summary_max_chars: u32,
+    pub summary_reasoning_effort: String,
+    pub summary_prompt: Option<String>,
 }
 
 impl From<BackgroundSyncConfig> for BackgroundSyncConfigResponse {
@@ -61,6 +67,9 @@ impl From<BackgroundSyncConfig> for BackgroundSyncConfigResponse {
             sync_gitlab: config.sync_gitlab,
             sync_jira: config.sync_jira,
             auto_generate_summaries: config.auto_generate_summaries,
+            summary_max_chars: config.summary_max_chars,
+            summary_reasoning_effort: config.summary_reasoning_effort,
+            summary_prompt: config.summary_prompt,
         }
     }
 }
@@ -70,6 +79,7 @@ pub struct BackgroundSyncStatusResponse {
     pub is_running: bool,
     pub is_syncing: bool,
     pub is_compacting: bool,
+    pub syncing_started_at: Option<String>,
     pub last_sync_at: Option<String>,
     pub last_compaction_at: Option<String>,
     pub next_sync_at: Option<String>,
@@ -84,6 +94,7 @@ impl From<SyncServiceStatus> for BackgroundSyncStatusResponse {
             is_running: status.is_running,
             is_syncing: status.is_syncing,
             is_compacting: status.is_compacting,
+            syncing_started_at: status.syncing_started_at,
             last_sync_at: status.last_sync_at,
             last_compaction_at: status.last_compaction_at,
             next_sync_at: status.next_sync_at,
@@ -157,6 +168,9 @@ pub async fn update_background_sync_config(
         sync_gitlab: config.sync_gitlab.unwrap_or(current.sync_gitlab),
         sync_jira: config.sync_jira.unwrap_or(current.sync_jira),
         auto_generate_summaries: config.auto_generate_summaries.unwrap_or(current.auto_generate_summaries),
+        summary_max_chars: config.summary_max_chars.unwrap_or(current.summary_max_chars),
+        summary_reasoning_effort: config.summary_reasoning_effort.unwrap_or(current.summary_reasoning_effort.clone()),
+        summary_prompt: if config.summary_prompt.is_some() { config.summary_prompt } else { current.summary_prompt.clone() },
     };
 
     // Validate data sync interval
@@ -167,6 +181,16 @@ pub async fn update_background_sync_config(
     // Validate compaction interval (30min, 1h, 3h, 6h, 12h, 24h)
     if ![30, 60, 180, 360, 720, 1440].contains(&new_config.compaction_interval_minutes) {
         return Err("壓縮間隔必須是 30 分鐘、1、3、6、12 或 24 小時".to_string());
+    }
+
+    // Validate summary_max_chars (200..=5000)
+    if !(200..=5000).contains(&new_config.summary_max_chars) {
+        return Err("摘要最大字數必須在 200 到 5000 之間".to_string());
+    }
+
+    // Validate summary_reasoning_effort
+    if !["low", "medium", "high"].contains(&new_config.summary_reasoning_effort.as_str()) {
+        return Err("推理強度必須是 low、medium 或 high".to_string());
     }
 
     // Update in-memory config
@@ -187,7 +211,10 @@ pub async fn update_background_sync_config(
             auto_generate_summaries = ?,
             sync_git = ?,
             sync_claude = ?,
-            sync_antigravity = ?
+            sync_antigravity = ?,
+            summary_max_chars = ?,
+            summary_reasoning_effort = ?,
+            summary_prompt = ?
         WHERE id = ?
         "#
     )
@@ -198,6 +225,9 @@ pub async fn update_background_sync_config(
     .bind(new_config.sync_git)
     .bind(new_config.sync_claude)
     .bind(new_config.sync_antigravity)
+    .bind(new_config.summary_max_chars)
+    .bind(&new_config.summary_reasoning_effort)
+    .bind(&new_config.summary_prompt)
     .execute(&pool)
     .await
     .map_err(|e| format!("Failed to persist sync config: {}", e))?;
@@ -245,6 +275,9 @@ pub async fn start_background_sync(
         Option<bool>,
         Option<bool>,
         Option<bool>,
+        Option<i32>,
+        Option<String>,
+        Option<String>,
     )> = sqlx::query_as(
         r#"
         SELECT
@@ -254,7 +287,10 @@ pub async fn start_background_sync(
             auto_generate_summaries,
             sync_git,
             sync_claude,
-            sync_antigravity
+            sync_antigravity,
+            summary_max_chars,
+            summary_reasoning_effort,
+            summary_prompt
         FROM users WHERE id = ?
         "#
     )
@@ -264,7 +300,7 @@ pub async fn start_background_sync(
     .ok()
     .flatten();
 
-    if let Some((enabled, interval, compaction, auto_summaries, git, claude, antigravity)) = config_row {
+    if let Some((enabled, interval, compaction, auto_summaries, git, claude, antigravity, max_chars, reasoning_effort, summary_prompt)) = config_row {
         let config = BackgroundSyncConfig {
             enabled: enabled.unwrap_or(true),
             interval_minutes: interval.unwrap_or(15) as u32,
@@ -275,6 +311,9 @@ pub async fn start_background_sync(
             sync_antigravity: antigravity.unwrap_or(true),
             sync_gitlab: false,
             sync_jira: false,
+            summary_max_chars: max_chars.unwrap_or(2000) as u32,
+            summary_reasoning_effort: reasoning_effort.unwrap_or_else(|| "medium".to_string()),
+            summary_prompt: summary_prompt.filter(|s| !s.is_empty()),
         };
         state.background_sync.update_config(config).await;
         log::info!("Loaded sync config from database");
@@ -301,6 +340,24 @@ pub async fn stop_background_sync(
     log::info!("Background sync service stopped");
 
     Ok(())
+}
+
+/// Force-cancel a stuck sync operation
+#[tauri::command]
+pub async fn cancel_background_sync(
+    state: State<'_, AppState>,
+    token: String,
+) -> Result<bool, String> {
+    verify_token(&token).map_err(|e| e.to_string())?;
+
+    let cancelled = state.background_sync.cancel_sync().await;
+    if cancelled {
+        log::info!("Sync operation force-cancelled by user");
+    } else {
+        log::info!("No sync operation to cancel");
+    }
+
+    Ok(cancelled)
 }
 
 /// Trigger an immediate sync
@@ -443,6 +500,9 @@ pub async fn trigger_sync_with_progress(
     log::info!("========== 開始資料壓縮 ==========");
     emit("compaction", None, 0, 100, "正在處理摘要...");
 
+    // Acquire compaction guard (mutual exclusion with scheduled compaction)
+    let _compaction_guard = state.background_sync.begin_compaction().await;
+
     if config.sync_claude {
         let llm = recap_core::services::llm::create_llm_service(&pool, &user_id)
             .await
@@ -474,32 +534,39 @@ pub async fn trigger_sync_with_progress(
 
         let mut hourly_success = 0;
         let mut hourly_errors = 0;
-        for (idx, (project_path, hour_bucket)) in uncompacted.iter().enumerate() {
-            if idx % 5 == 0 || idx == total_items - 1 {
-                emit(
-                    "compaction",
-                    None,
-                    idx + 1,
-                    total_items,
-                    &format!("處理摘要 ({}/{})", idx + 1, total_items),
-                );
-            }
+        use recap_core::services::compaction::COMPACTION_CONCURRENCY;
+        for (chunk_idx, chunk) in uncompacted.chunks(COMPACTION_CONCURRENCY).enumerate() {
+            let base_idx = chunk_idx * COMPACTION_CONCURRENCY;
 
-            match recap_core::services::compaction::compact_hourly(
-                &pool,
-                llm.as_ref(),
-                &user_id,
-                project_path,
-                hour_bucket,
-            )
-            .await {
-                Ok(_) => {
-                    hourly_success += 1;
-                    log::debug!("[{}/{}] 壓縮成功: {} @ {}", idx + 1, total_items, project_path, hour_bucket);
-                }
-                Err(e) => {
-                    hourly_errors += 1;
-                    log::warn!("[{}/{}] 壓縮失敗: {} @ {} - {}", idx + 1, total_items, project_path, hour_bucket, e);
+            let futs: Vec<_> = chunk.iter().map(|(project_path, hour_bucket)| {
+                recap_core::services::compaction::compact_hourly(
+                    &pool,
+                    llm.as_ref(),
+                    &user_id,
+                    project_path,
+                    hour_bucket,
+                )
+            }).collect();
+            let chunk_results = futures::future::join_all(futs).await;
+
+            emit(
+                "compaction",
+                None,
+                base_idx + chunk.len(),
+                total_items,
+                &format!("處理摘要 ({}/{})", base_idx + chunk.len(), total_items),
+            );
+
+            for (r, (project_path, hour_bucket)) in chunk_results.into_iter().zip(chunk.iter()) {
+                match r {
+                    Ok(_) => {
+                        hourly_success += 1;
+                        log::debug!("壓縮成功: {} @ {}", project_path, hour_bucket);
+                    }
+                    Err(e) => {
+                        hourly_errors += 1;
+                        log::warn!("壓縮失敗: {} @ {} - {}", project_path, hour_bucket, e);
+                    }
                 }
             }
         }
@@ -649,6 +716,9 @@ mod tests {
             sync_gitlab: false,
             sync_jira: false,
             auto_generate_summaries: true,
+            summary_max_chars: 2000,
+            summary_reasoning_effort: "medium".to_string(),
+            summary_prompt: None,
         };
 
         let response: BackgroundSyncConfigResponse = config.into();
@@ -660,6 +730,8 @@ mod tests {
         assert!(!response.sync_gitlab);
         assert!(!response.sync_jira);
         assert!(response.auto_generate_summaries);
+        assert_eq!(response.summary_max_chars, 2000);
+        assert_eq!(response.summary_reasoning_effort, "medium");
     }
 
     #[test]
@@ -668,6 +740,7 @@ mod tests {
             is_running: true,
             is_syncing: false,
             is_compacting: false,
+            syncing_started_at: None,
             last_sync_at: Some("2026-01-16T12:00:00Z".to_string()),
             last_compaction_at: Some("2026-01-16T10:00:00Z".to_string()),
             next_sync_at: Some("2026-01-16T12:15:00Z".to_string()),

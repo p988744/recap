@@ -19,10 +19,7 @@ import {
   EyeOff,
 } from 'lucide-react'
 import { projects as projectsService, config as configService, auth as authService } from '@/services'
-import { antigravity } from '@/services/integrations'
-import type { AntigravityApiStatus } from '@/types'
 import { ClaudeIcon } from '@/pages/Settings/components/ProjectsSection/icons/ClaudeIcon'
-import { GeminiIcon } from '@/pages/Settings/components/ProjectsSection/icons/GeminiIcon'
 
 const LLM_PROVIDERS = [
   { id: 'openai', label: 'OpenAI', desc: 'GPT-5 系列', defaultModel: 'gpt-5-nano' },
@@ -60,8 +57,6 @@ export function OnboardingPage() {
   // Step 3: Data Sources
   const [claudePath, setClaudePath] = useState('')
   const [claudePathLoading, setClaudePathLoading] = useState(true)
-  const [antigravityStatus, setAntigravityStatus] = useState<AntigravityApiStatus | null>(null)
-  const [antigravityLoading, setAntigravityLoading] = useState(false)
 
   // Step 4: LLM
   const [llmProvider, setLlmProvider] = useState('openai')
@@ -90,25 +85,10 @@ export function OnboardingPage() {
     }
   }, [])
 
-  // Check Antigravity status
-  const checkAntigravity = useCallback(async () => {
-    try {
-      setAntigravityLoading(true)
-      const data = await antigravity.checkApiStatus()
-      setAntigravityStatus(data)
-    } catch (err) {
-      console.error('Failed to check Antigravity status:', err)
-      setAntigravityStatus({ running: false, healthy: false })
-    } finally {
-      setAntigravityLoading(false)
-    }
-  }, [])
-
   // Load data sources info when reaching step 3
   useEffect(() => {
     if (step === 3) {
       fetchClaudePath()
-      // Don't auto-check Antigravity - let user click to test
     }
   }, [step, fetchClaudePath])
 
@@ -393,40 +373,6 @@ export function OnboardingPage() {
                 <p className="text-xs text-muted-foreground">
                   {claudePathLoading ? '檢查中...' : claudePath || '未偵測到路徑'}
                 </p>
-              </div>
-
-              {/* Antigravity */}
-              <div className="p-3 border border-border rounded-lg">
-                <div className="flex items-center gap-2 mb-2">
-                  <GeminiIcon className="w-4 h-4" />
-                  <span className="text-sm font-medium">Antigravity (Gemini)</span>
-                  {antigravityLoading ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground ml-auto" />
-                  ) : antigravityStatus?.healthy ? (
-                    <CheckCircle2 className="w-3.5 h-3.5 text-sage ml-auto" />
-                  ) : (
-                    <span className="text-[10px] text-muted-foreground ml-auto">選用</span>
-                  )}
-                </div>
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-xs text-muted-foreground">
-                    {antigravityLoading
-                      ? '檢查中...'
-                      : antigravityStatus?.healthy
-                        ? `已連線 (${antigravityStatus.session_count || 0} sessions)`
-                        : '未連線（可稍後設定）'}
-                  </p>
-                  {!antigravityStatus?.healthy && (
-                    <button
-                      type="button"
-                      onClick={checkAntigravity}
-                      disabled={antigravityLoading}
-                      className="text-[10px] text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-                    >
-                      {antigravityLoading ? '測試中...' : '測試連線'}
-                    </button>
-                  )}
-                </div>
               </div>
 
             </div>

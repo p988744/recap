@@ -396,7 +396,7 @@ pub async fn execute_http_export(
                             .replace("\\\"", "\"")
                             .replace("\\n", "\n");
 
-                        match llm.complete_with_usage(&clean_prompt, "http_export_summary").await {
+                        match llm.complete_with_usage(&clean_prompt, "http_export_summary", 1000).await {
                             Ok((summary, usage)) => {
                                 let _ = save_usage_log(&db.pool, &claims.sub, &usage).await;
                                 llm_summaries.insert(item.0.clone(), summary);

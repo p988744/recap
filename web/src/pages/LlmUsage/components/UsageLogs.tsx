@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { List } from 'lucide-react'
 import type { LlmUsageLog } from '@/types'
 
@@ -37,6 +38,8 @@ function formatPurpose(purpose: string): string {
 }
 
 export function UsageLogs({ logs }: UsageLogsProps) {
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+
   return (
     <div>
       <div className="flex items-center gap-2 mb-6">
@@ -63,24 +66,40 @@ export function UsageLogs({ logs }: UsageLogsProps) {
             </thead>
             <tbody>
               {logs.map((log) => (
-                <tr key={log.id} className="border-b border-border/50 hover:bg-muted/30">
-                  <td className="py-2 pr-4 text-muted-foreground tabular-nums whitespace-nowrap">
-                    {log.created_at.replace('T', ' ').slice(0, 16)}
-                  </td>
-                  <td className="py-2 pr-4">{formatPurpose(log.purpose)}</td>
-                  <td className="py-2 pr-4 text-muted-foreground">{log.model}</td>
-                  <td className="py-2 pr-4 text-right tabular-nums">{formatTokens(log.prompt_tokens)}</td>
-                  <td className="py-2 pr-4 text-right tabular-nums">{formatTokens(log.completion_tokens)}</td>
-                  <td className="py-2 pr-4 text-right tabular-nums">{formatCost(log.estimated_cost)}</td>
-                  <td className="py-2 pr-4 text-right tabular-nums text-muted-foreground">{formatDuration(log.duration_ms)}</td>
-                  <td className="py-2">
-                    {log.status === 'success' ? (
-                      <span className="text-green-600">OK</span>
-                    ) : (
-                      <span className="text-red-500" title={log.error_message || undefined}>ERR</span>
-                    )}
-                  </td>
-                </tr>
+                <>
+                  <tr key={log.id} className="border-b border-border/50 hover:bg-muted/30">
+                    <td className="py-2 pr-4 text-muted-foreground tabular-nums whitespace-nowrap">
+                      {log.created_at.replace('T', ' ').slice(0, 16)}
+                    </td>
+                    <td className="py-2 pr-4">{formatPurpose(log.purpose)}</td>
+                    <td className="py-2 pr-4 text-muted-foreground">{log.model}</td>
+                    <td className="py-2 pr-4 text-right tabular-nums">{formatTokens(log.prompt_tokens)}</td>
+                    <td className="py-2 pr-4 text-right tabular-nums">{formatTokens(log.completion_tokens)}</td>
+                    <td className="py-2 pr-4 text-right tabular-nums">{formatCost(log.estimated_cost)}</td>
+                    <td className="py-2 pr-4 text-right tabular-nums text-muted-foreground">{formatDuration(log.duration_ms)}</td>
+                    <td className="py-2">
+                      {log.status === 'success' ? (
+                        <span className="text-green-600">OK</span>
+                      ) : (
+                        <button
+                          onClick={() => setExpandedId(expandedId === log.id ? null : log.id)}
+                          className="text-red-500 hover:text-red-400 cursor-pointer underline decoration-dotted underline-offset-2"
+                        >
+                          ERR
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                  {expandedId === log.id && log.error_message && (
+                    <tr key={`${log.id}-err`} className="border-b border-border/50">
+                      <td colSpan={8} className="py-2 px-4">
+                        <pre className="text-xs text-red-400 bg-red-500/5 border border-red-500/20 rounded px-3 py-2 whitespace-pre-wrap break-all max-h-40 overflow-auto font-mono">
+                          {log.error_message}
+                        </pre>
+                      </td>
+                    </tr>
+                  )}
+                </>
               ))}
             </tbody>
           </table>

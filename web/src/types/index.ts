@@ -22,6 +22,7 @@ export type {
   UpdateLlmConfigRequest,
   UpdateJiraConfigRequest,
   MessageResponse,
+  LlmPreset,
 } from './config'
 
 // Work Items types

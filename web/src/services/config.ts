@@ -9,6 +9,7 @@ import type {
   UpdateLlmConfigRequest,
   UpdateJiraConfigRequest,
   MessageResponse,
+  LlmPreset,
 } from '@/types'
 
 /**
@@ -52,10 +53,15 @@ export interface LlmTestResult {
 }
 
 /**
- * Test LLM connection
+ * Test LLM connection with current form values
  */
-export async function testLlmConnection(): Promise<LlmTestResult> {
-  return invokeAuth<LlmTestResult>('test_llm_connection')
+export async function testLlmConnection(request?: {
+  provider?: string
+  model?: string
+  api_key?: string
+  base_url?: string
+}): Promise<LlmTestResult> {
+  return invokeAuth<LlmTestResult>('test_llm_connection', { request })
 }
 
 /**
@@ -77,4 +83,32 @@ export async function getOnboardingStatus(): Promise<OnboardingStatusResponse> {
  */
 export async function completeOnboarding(): Promise<MessageResponse> {
   return invokeAuth<MessageResponse>('complete_onboarding')
+}
+
+/**
+ * List all LLM presets for the current user
+ */
+export async function listLlmPresets(): Promise<LlmPreset[]> {
+  return invokeAuth<LlmPreset[]>('list_llm_presets')
+}
+
+/**
+ * Save current LLM config as a named preset
+ */
+export async function saveLlmPreset(name: string): Promise<LlmPreset> {
+  return invokeAuth<LlmPreset>('save_llm_preset', { name })
+}
+
+/**
+ * Delete an LLM preset
+ */
+export async function deleteLlmPreset(presetId: string): Promise<void> {
+  return invokeAuth<void>('delete_llm_preset', { presetId })
+}
+
+/**
+ * Apply an LLM preset — copies config to active settings
+ */
+export async function applyLlmPreset(presetId: string): Promise<ConfigResponse> {
+  return invokeAuth<ConfigResponse>('apply_llm_preset', { presetId })
 }

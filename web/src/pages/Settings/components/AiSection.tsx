@@ -9,12 +9,15 @@ import {
   EyeOff,
   RefreshCw,
   Zap,
+  Bookmark,
+  X,
+  Plus,
 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import type { ConfigResponse } from '@/types'
+import type { ConfigResponse, LlmPreset } from '@/types'
 import type { SettingsMessage } from '../hooks/useSettings'
 import { useLlmUsage } from '@/pages/LlmUsage/hooks/useLlmUsage'
 import { UsageSummary } from '@/pages/LlmUsage/components/UsageSummary'
@@ -41,6 +44,14 @@ interface AiSectionProps {
   ) => Promise<void>
   setMessage: (msg: SettingsMessage | null) => void
   refreshConfig: () => Promise<ConfigResponse>
+  presets: LlmPreset[]
+  onSavePreset: (name: string, setMessage: (msg: SettingsMessage | null) => void) => Promise<void>
+  onDeletePreset: (presetId: string) => Promise<void>
+  onApplyPreset: (
+    presetId: string,
+    setMessage: (msg: SettingsMessage | null) => void,
+    refreshConfig: () => Promise<ConfigResponse>,
+  ) => Promise<void>
 }
 
 const LLM_PROVIDERS = [
@@ -66,10 +77,16 @@ export function AiSection({
   onSaveLlm,
   setMessage,
   refreshConfig,
+  presets,
+  onSavePreset,
+  onDeletePreset,
+  onApplyPreset,
 }: AiSectionProps) {
   const [rangeDays, setRangeDays] = useState(30)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ success: boolean; message: string; latency?: number } | null>(null)
+  const [presetName, setPresetName] = useState('')
+  const [showPresetInput, setShowPresetInput] = useState(false)
   const usageRange = getUsageDateRange(rangeDays)
   const { stats, daily, logs, loading: usageLoading, refresh } = useLlmUsage(usageRange.start, usageRange.end)
 
@@ -77,7 +94,12 @@ export function AiSection({
     setTesting(true)
     setTestResult(null)
     try {
-      const result = await configService.testLlmConnection()
+      const result = await configService.testLlmConnection({
+        provider: llmProvider,
+        model: llmModel,
+        api_key: llmApiKey || undefined,
+        base_url: llmBaseUrl || undefined,
+      })
       setTestResult({
         success: result.success,
         message: result.message,
@@ -91,7 +113,7 @@ export function AiSection({
     } finally {
       setTesting(false)
     }
-  }, [])
+  }, [llmProvider, llmModel, llmApiKey, llmBaseUrl])
 
   return (
     <section className="animate-fade-up opacity-0 delay-1 space-y-8">
@@ -206,7 +228,7 @@ export function AiSection({
               <Button
                 variant="outline"
                 onClick={handleTestConnection}
-                disabled={testing || !config?.llm_configured}
+                disabled={testing}
               >
                 {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
                 測試連線
@@ -231,6 +253,123 @@ export function AiSection({
                   )}
                 </div>
               </div>
+            )}
+          </div>
+
+          {/* Presets Section */}
+          <div className="pt-4 border-t border-border space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Bookmark className="w-4 h-4 text-muted-foreground" strokeWidth={1.5} />
+                <Label className="text-xs">已儲存的設定</Label>
+              </div>
+              {!showPresetInput && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => {
+                    setPresetName(`${llmProvider} / ${llmModel}`)
+                    setShowPresetInput(true)
+                  }}
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  儲存目前設定
+                </Button>
+              )}
+            </div>
+
+            {showPresetInput && (
+              <div className="flex items-center gap-2">
+                <Input
+                  value={presetName}
+                  onChange={(e) => setPresetName(e.target.value)}
+                  placeholder="輸入預設名稱"
+                  className="text-sm h-8"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && presetName.trim()) {
+                      onSavePreset(presetName.trim(), setMessage)
+                      setPresetName('')
+                      setShowPresetInput(false)
+                    }
+                    if (e.key === 'Escape') setShowPresetInput(false)
+                  }}
+                  autoFocus
+                />
+                <Button
+                  size="sm"
+                  className="h-8 shrink-0"
+                  disabled={!presetName.trim()}
+                  onClick={() => {
+                    if (presetName.trim()) {
+                      onSavePreset(presetName.trim(), setMessage)
+                      setPresetName('')
+                      setShowPresetInput(false)
+                    }
+                  }}
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  儲存
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0"
+                  onClick={() => setShowPresetInput(false)}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            )}
+
+            {presets.length > 0 ? (
+              <div className="space-y-1.5">
+                {presets.map((preset) => {
+                  const isActive = preset.provider === llmProvider && preset.model === llmModel
+                  return (
+                    <div
+                      key={preset.id}
+                      className={`group flex items-center gap-3 p-2.5 rounded-lg border transition-colors cursor-pointer ${
+                        isActive
+                          ? 'border-foreground bg-foreground/5'
+                          : 'border-border hover:border-foreground/30'
+                      }`}
+                      onClick={() => onApplyPreset(preset.id, setMessage, refreshConfig)}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{preset.name}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {preset.provider} / {preset.model}
+                          {preset.base_url && ` — ${preset.base_url}`}
+                        </p>
+                      </div>
+                      {preset.has_api_key && (
+                        <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded shrink-0">
+                          Key
+                        </span>
+                      )}
+                      {isActive && (
+                        <span className="text-[10px] text-sage bg-sage/10 px-1.5 py-0.5 rounded shrink-0">
+                          使用中
+                        </span>
+                      )}
+                      <button
+                        className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive shrink-0"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onDeletePreset(preset.id)
+                        }}
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground py-2">
+                尚無儲存的預設。儲存設定後可快速切換不同的 LLM 配置。
+              </p>
             )}
           </div>
         </div>

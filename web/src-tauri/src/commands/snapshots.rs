@@ -497,7 +497,8 @@ pub async fn get_worklog_overview(
                 // If no commits from snapshots, query git directly
                 if commits == 0 {
                     if let Ok(naive_date) = NaiveDate::parse_from_str(date, "%Y-%m-%d") {
-                        let git_commits = get_commits_for_date(project_path, &naive_date);
+                        let author = recap_core::get_git_user_email(project_path);
+                        let git_commits = get_commits_for_date(project_path, &naive_date, author.as_deref());
                         commits = git_commits.len() as i32;
                     }
                 }
@@ -552,7 +553,8 @@ pub async fn get_worklog_overview(
         for project in day.projects.iter_mut() {
             if project.total_commits == 0 {
                 if let Ok(naive_date) = NaiveDate::parse_from_str(date, "%Y-%m-%d") {
-                    let git_commits = get_commits_for_date(&project.project_path, &naive_date);
+                    let author = recap_core::get_git_user_email(&project.project_path);
+                    let git_commits = get_commits_for_date(&project.project_path, &naive_date, author.as_deref());
                     project.total_commits = git_commits.len() as i32;
                 }
             }

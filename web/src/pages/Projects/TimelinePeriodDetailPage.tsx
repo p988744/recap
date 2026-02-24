@@ -8,7 +8,6 @@ import type { HourlyBreakdownItem } from '@/types/worklog'
 import type { WorkItem } from '@/types'
 import { MarkdownSummary } from '@/components/MarkdownSummary'
 import { ClaudeIcon } from '@/pages/Settings/components/ProjectsSection/icons/ClaudeIcon'
-import { GeminiIcon } from '@/pages/Settings/components/ProjectsSection/icons/GeminiIcon'
 import { CommitDiffModal } from './components/Modals/CommitDiffModal'
 import { EditModal, DeleteModal } from '@/pages/WorkItems/components/Modals'
 import type { WorkItemFormData } from '@/pages/WorkItems/hooks/useWorkItems'
@@ -109,11 +108,6 @@ const SOURCE_CONFIG: Record<string, { icon: React.ReactNode; label: string; head
     icon: <ClaudeIcon className="w-3.5 h-3.5" />,
     label: 'Claude Code',
     headerBgClass: 'bg-amber-50 dark:bg-amber-900/20',
-  },
-  antigravity: {
-    icon: <GeminiIcon className="w-3.5 h-3.5" />,
-    label: 'Antigravity',
-    headerBgClass: 'bg-blue-50 dark:bg-blue-900/20',
   },
 }
 
@@ -267,7 +261,6 @@ interface DaySectionProps {
 
 function DaySection({ date, items, projectPath }: DaySectionProps) {
   const claudeItems = items.filter(item => item.source === 'claude_code')
-  const antigravityItems = items.filter(item => item.source === 'antigravity')
   const totalHours = items.length // Each item represents approximately 1 hour
   const totalCommits = items.reduce((sum, item) => sum + item.git_commits.length, 0)
 
@@ -300,9 +293,6 @@ function DaySection({ date, items, projectPath }: DaySectionProps) {
       <div className="divide-y divide-border">
         {claudeItems.length > 0 && (
           <SourceSection source="claude_code" items={claudeItems} projectPath={projectPath} />
-        )}
-        {antigravityItems.length > 0 && (
-          <SourceSection source="antigravity" items={antigravityItems} projectPath={projectPath} />
         )}
       </div>
     </div>

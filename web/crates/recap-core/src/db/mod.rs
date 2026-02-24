@@ -431,6 +431,20 @@ impl Database {
             .await
             .ok();
 
+        // Add summary configuration columns
+        sqlx::query("ALTER TABLE users ADD COLUMN summary_max_chars INTEGER DEFAULT 2000")
+            .execute(&self.pool)
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE users ADD COLUMN summary_reasoning_effort TEXT DEFAULT 'medium'")
+            .execute(&self.pool)
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE users ADD COLUMN summary_prompt TEXT")
+            .execute(&self.pool)
+            .await
+            .ok();
+
         // Create snapshot_raw_data table for hourly session snapshots
         sqlx::query(
             r#"
@@ -760,6 +774,30 @@ impl Database {
         .await?;
 
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_http_export_logs_config ON http_export_logs(config_id, created_at)")
+            .execute(&self.pool)
+            .await?;
+
+        // Create llm_presets table for saving/switching LLM configurations
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS llm_presets (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                api_key TEXT,
+                base_url TEXT,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_used_at DATETIME,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_llm_presets_user ON llm_presets(user_id)")
             .execute(&self.pool)
             .await?;
 

@@ -135,8 +135,8 @@ export function SyncSection({
   setSyncGit,
   syncClaude,
   setSyncClaude,
-  syncAntigravity,
-  setSyncAntigravity,
+  syncAntigravity: _syncAntigravity,
+  setSyncAntigravity: _setSyncAntigravity,
   loading,
   saving,
   onSave,
@@ -209,13 +209,6 @@ export function SyncSection({
                 description="同步 Claude Code 工作階段"
                 disabled={!enabled}
               />
-              <Toggle
-                checked={syncAntigravity}
-                onChange={setSyncAntigravity}
-                label="Antigravity (Gemini Code)"
-                description="同步 Gemini Code Assist 工作階段（連接本地 localhost）"
-                disabled={!enabled}
-              />
             </div>
           </div>
 
@@ -223,7 +216,7 @@ export function SyncSection({
           <div className={enabled ? '' : 'opacity-50 pointer-events-none'}>
             <Label className="mb-2 block">資料同步間隔</Label>
             <p className="text-xs text-muted-foreground mb-2">
-              從 Claude Code、Antigravity 等來源擷取新資料
+              從 Claude Code 等來源擷取新資料
             </p>
             <div className="flex items-center gap-2">
               <Clock className="w-4 h-4 text-muted-foreground" />
