@@ -138,7 +138,6 @@ export function ProjectsSection({
             syncProgress={syncProgress}
             onTriggerSync={onTriggerSync}
             onRefreshStatus={onRefreshStatus}
-            antigravityConnected={false}
           />
           <DataCompactionStatus
             status={syncStatus}

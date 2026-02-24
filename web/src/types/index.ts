@@ -123,12 +123,6 @@ export type {
   SummarizeResult,
   SyncProjectsRequest,
   ClaudeSyncResult,
-  // Antigravity (Gemini Code)
-  AntigravityApiStatus,
-  AntigravitySession,
-  AntigravityProject,
-  AntigravitySyncProjectsRequest,
-  AntigravitySyncResult,
   // Teams (Legacy)
   TeamMember,
   Team,
@@ -192,7 +186,6 @@ export type {
   ProjectDirectories,
   AddManualProjectRequest,
   ClaudeSessionPathResponse,
-  AntigravitySessionPathResponse,
   // Project descriptions & summaries
   ProjectDescription,
   UpdateProjectDescriptionRequest,

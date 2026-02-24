@@ -228,45 +228,6 @@ export interface ClaudeSyncResult {
   work_items_updated: number
 }
 
-// ============ Antigravity (Gemini Code) ============
-// Uses local HTTP API when Antigravity app is running
-
-export interface AntigravityApiStatus {
-  running: boolean
-  api_url?: string
-  healthy: boolean
-  session_count?: number
-}
-
-export interface AntigravitySession {
-  session_id: string
-  summary?: string
-  cwd: string
-  git_branch?: string
-  git_repo?: string
-  step_count: number
-  first_timestamp?: string
-  last_timestamp?: string
-  status: string
-}
-
-export interface AntigravityProject {
-  path: string
-  name: string
-  sessions: AntigravitySession[]
-}
-
-export interface AntigravitySyncProjectsRequest {
-  project_paths: string[]
-}
-
-export interface AntigravitySyncResult {
-  sessions_processed: number
-  sessions_skipped: number
-  work_items_created: number
-  work_items_updated: number
-}
-
 // ============ Teams (Legacy) ============
 
 export interface TeamMember {

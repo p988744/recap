@@ -20,7 +20,6 @@ export interface SyncFormState {
   // Source toggles
   syncGit: boolean
   syncClaude: boolean
-  syncAntigravity: boolean
   syncGitlab: boolean
   syncJira: boolean
   // UI State
@@ -43,7 +42,6 @@ export function useSyncForm() {
     summaryPrompt: '',
     syncGit: true,
     syncClaude: true,
-    syncAntigravity: true,
     syncGitlab: false,
     syncJira: false,
     loading: true,
@@ -102,7 +100,6 @@ export function useSyncForm() {
           summaryPrompt: config.summary_prompt ?? '',
           syncGit: config.sync_git,
           syncClaude: config.sync_claude,
-          syncAntigravity: config.sync_antigravity,
           syncGitlab: config.sync_gitlab,
           syncJira: config.sync_jira,
           loading: false,
@@ -140,10 +137,6 @@ export function useSyncForm() {
     setState((prev) => ({ ...prev, syncClaude }))
   }, [])
 
-  const setSyncAntigravity = useCallback((syncAntigravity: boolean) => {
-    setState((prev) => ({ ...prev, syncAntigravity }))
-  }, [])
-
   const setSyncGitlab = useCallback((syncGitlab: boolean) => {
     setState((prev) => ({ ...prev, syncGitlab }))
   }, [])
@@ -175,7 +168,6 @@ export function useSyncForm() {
           compaction_interval_minutes: state.compactionIntervalMinutes,
           sync_git: state.syncGit,
           sync_claude: state.syncClaude,
-          sync_antigravity: state.syncAntigravity,
           sync_gitlab: state.syncGitlab,
           sync_jira: state.syncJira,
           auto_generate_summaries: state.autoGenerateSummaries,
@@ -197,7 +189,6 @@ export function useSyncForm() {
           summaryPrompt: savedConfig.summary_prompt ?? '',
           syncGit: savedConfig.sync_git,
           syncClaude: savedConfig.sync_claude,
-          syncAntigravity: savedConfig.sync_antigravity,
           syncGitlab: savedConfig.sync_gitlab,
           syncJira: savedConfig.sync_jira,
           saving: false,
@@ -256,8 +247,6 @@ export function useSyncForm() {
     setSyncGit,
     syncClaude: state.syncClaude,
     setSyncClaude,
-    syncAntigravity: state.syncAntigravity,
-    setSyncAntigravity,
     syncGitlab: state.syncGitlab,
     setSyncGitlab,
     syncJira: state.syncJira,

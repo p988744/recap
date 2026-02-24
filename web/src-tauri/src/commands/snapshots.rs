@@ -263,6 +263,17 @@ pub async fn get_worklog_overview(
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
     let db = state.db.lock().await;
 
+    // 0. Fetch hidden project names for this user
+    let hidden_projects: Vec<(String,)> = sqlx::query_as(
+        "SELECT project_name FROM project_preferences WHERE user_id = ? AND hidden = 1",
+    )
+    .bind(&claims.sub)
+    .fetch_all(&db.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    let hidden_names: std::collections::HashSet<String> =
+        hidden_projects.into_iter().map(|(n,)| n).collect();
+
     // 1. Fetch all daily summaries in range
     //    period_start is stored as local time without offset: "2026-01-26T00:00:00"
     let daily_summaries: Vec<WorkSummary> = sqlx::query_as(
@@ -357,31 +368,6 @@ pub async fn get_worklog_overview(
     .await
     .map_err(|e| e.to_string())?;
 
-    // 4b. Fetch Antigravity work items (grouped by date and project_path)
-    let antigravity_items: Vec<recap_core::WorkItem> = sqlx::query_as(
-        r#"SELECT * FROM work_items
-           WHERE user_id = ? AND source = 'antigravity' AND date >= ? AND date <= ?
-           ORDER BY date DESC"#,
-    )
-    .bind(&claims.sub)
-    .bind(&start_date)
-    .bind(&end_date)
-    .fetch_all(&db.pool)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    // Group Antigravity items by (date, project_path)
-    let mut antigravity_stats: std::collections::HashMap<(String, String), (f64, String)> = std::collections::HashMap::new();
-    for item in &antigravity_items {
-        let date = item.date.to_string();
-        let project_path = item.project_path.clone().unwrap_or_default();
-        let entry = antigravity_stats.entry((date, project_path)).or_insert((0.0, String::new()));
-        entry.0 += item.hours;
-        if entry.1.is_empty() {
-            entry.1 = item.description.clone().unwrap_or_else(|| item.title.clone());
-        }
-    }
-
     // 5. Build the response: group by date
     let mut days_map: std::collections::BTreeMap<String, WorklogDay> = std::collections::BTreeMap::new();
 
@@ -413,6 +399,11 @@ pub async fn get_worklog_overview(
         }
 
         let project_name = std::path::Path::new(&project_path).file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string();
+
+        // Skip hidden projects
+        if hidden_names.contains(&project_name) {
+            continue;
+        }
 
         // Parse commit/file counts from summary metadata
         let commit_count = summary.git_commits_summary.as_ref()
@@ -459,6 +450,12 @@ pub async fn get_worklog_overview(
                 continue;
             }
             let project_name = std::path::Path::new(&project_path).file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string();
+
+            // Skip hidden projects
+            if hidden_names.contains(&project_name) {
+                continue;
+            }
+
             let has_hourly = hourly_exists.iter().any(|(pp, d)| pp == project_path && d == day);
 
             day_entry.projects.push(WorklogDayProject {
@@ -470,54 +467,6 @@ pub async fn get_worklog_overview(
                 total_hours: *hours,
                 has_hourly_data: has_hourly,
             });
-        }
-    }
-
-    // Add Antigravity projects (or merge with existing projects)
-    for ((date, project_path), (hours, summary)) in &antigravity_stats {
-        if project_path.is_empty() {
-            continue;
-        }
-        get_or_create_day(&mut days_map, date);
-        if let Some(day_entry) = days_map.get_mut(date.as_str()) {
-            // Check if project already exists (from Claude Code data)
-            if let Some(existing) = day_entry.projects.iter_mut().find(|p| &p.project_path == project_path) {
-                // Merge: add Antigravity hours to existing project
-                existing.total_hours += hours;
-                // Mark as having hourly data (Antigravity items will show in breakdown)
-                existing.has_hourly_data = true;
-            } else {
-                // New project (only has Antigravity data)
-                // Look up commit/file counts from snapshot_stats if available (from Claude Code data)
-                let (mut commits, files) = snapshot_stats.iter()
-                    .find(|(pp, d, _, _, _)| pp == project_path && d == date)
-                    .map(|(_, _, c, f, _)| (*c, *f))
-                    .unwrap_or((0, 0));
-
-                // If no commits from snapshots, query git directly
-                if commits == 0 {
-                    if let Ok(naive_date) = NaiveDate::parse_from_str(date, "%Y-%m-%d") {
-                        let author = recap_core::get_git_user_email(project_path);
-                        let git_commits = get_commits_for_date(project_path, &naive_date, author.as_deref());
-                        commits = git_commits.len() as i32;
-                    }
-                }
-
-                let project_name = std::path::Path::new(&project_path)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-                day_entry.projects.push(WorklogDayProject {
-                    project_path: project_path.clone(),
-                    project_name,
-                    daily_summary: Some(summary.clone()),
-                    total_commits: commits,
-                    total_files: files,
-                    total_hours: *hours,
-                    has_hourly_data: true, // Antigravity items will show in breakdown
-                });
-            }
         }
     }
 
@@ -785,177 +734,8 @@ pub async fn get_hourly_breakdown(
         }).collect();
     }
 
-    // Build set of hours that already have items (from work_summaries or snapshots)
-    let existing_hours: std::collections::HashSet<String> = items.iter()
-        .map(|i| i.hour_start.clone())
-        .collect();
-
-    // Query Antigravity work items for the same date and project
-    // First try exact path match, then fall back to matching by project name
-    let mut antigravity_items: Vec<recap_core::WorkItem> = sqlx::query_as(
-        r#"SELECT * FROM work_items
-           WHERE user_id = ? AND source = 'antigravity' AND date = ? AND project_path = ?
-           ORDER BY created_at DESC"#,
-    )
-    .bind(&claims.sub)
-    .bind(&date)
-    .bind(&project_path)
-    .fetch_all(&db.pool)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    // If no exact match, try matching by project name (last path component)
-    if antigravity_items.is_empty() {
-        let project_name = std::path::Path::new(&project_path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
-        if !project_name.is_empty() {
-            // Use LIKE to match paths ending with the project name
-            let pattern = format!("%/{}", project_name);
-            antigravity_items = sqlx::query_as(
-                r#"SELECT * FROM work_items
-                   WHERE user_id = ? AND source = 'antigravity' AND date = ? AND project_path LIKE ?
-                   ORDER BY created_at DESC"#,
-            )
-            .bind(&claims.sub)
-            .bind(&date)
-            .bind(&pattern)
-            .fetch_all(&db.pool)
-            .await
-            .map_err(|e| e.to_string())?;
-        }
-    }
-
-    // Build a map of Antigravity session_ids to their hours for source attribution
-    let mut antigravity_session_hours: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    for item in &antigravity_items {
-        let hour_start = item
-            .start_time
-            .as_ref()
-            .and_then(|ts| {
-                chrono::DateTime::parse_from_rfc3339(ts)
-                    .ok()
-                    .map(|dt| dt.with_timezone(&chrono::Local).format("%H:00").to_string())
-            })
-            .unwrap_or_else(|| item.created_at.format("%H:00").to_string());
-
-        if let Some(session_id) = &item.session_id {
-            antigravity_session_hours.insert(session_id.clone(), hour_start);
-        }
-    }
-
-    // Update source for existing items that came from Antigravity snapshots
-    // Check if the work_summary's source_snapshot_ids reference Antigravity sessions
-    for item in &mut items {
-        // If this hour has an Antigravity work_item, mark the source as antigravity
-        // since the LLM summary was generated from Antigravity snapshot data
-        if antigravity_session_hours.values().any(|h| h == &item.hour_start) {
-            item.source = "antigravity".to_string();
-        }
-    }
-
-    // Only add Antigravity items for hours that DON'T already have entries
-    // (to avoid duplicates when we already have LLM-generated summaries)
-    for item in antigravity_items {
-        // Skip items without session_id or start_time - these are orphan entries
-        // that weren't properly linked to snapshots and would show incorrect times
-        if item.session_id.is_none() || item.start_time.is_none() {
-            continue;
-        }
-
-        // Extract hour from start_time (actual session time)
-        let hour_start = item
-            .start_time
-            .as_ref()
-            .and_then(|ts| {
-                // Parse ISO timestamp and convert to local timezone
-                chrono::DateTime::parse_from_rfc3339(ts)
-                    .ok()
-                    .map(|dt| dt.with_timezone(&chrono::Local).format("%H:00").to_string())
-            })
-            .unwrap_or_else(|| item.created_at.format("%H:00").to_string());
-
-        // Skip if we already have an entry for this hour (LLM summary exists)
-        if existing_hours.contains(&hour_start) {
-            continue;
-        }
-
-        let hour_end = next_hour(&hour_start);
-
-        // Extract summary from description, building a rich summary from available fields
-        let summary = item
-            .description
-            .as_ref()
-            .map(|desc| {
-                // Extract key fields from the description
-                let mut parts: Vec<String> = Vec::new();
-
-                // Get the summary line
-                let summary_text = desc.lines()
-                    .find(|line| line.starts_with("📋 Summary:"))
-                    .map(|line| line.trim_start_matches("📋 Summary:").trim().to_string())
-                    .filter(|s| !s.is_empty() && s.len() > 10) // Only use if meaningful (>10 chars)
-                    .unwrap_or_default();
-
-                if !summary_text.is_empty() {
-                    parts.push(summary_text);
-                }
-
-                // If summary is too short, add context from other fields
-                if parts.is_empty() || parts[0].len() < 15 {
-                    // Extract steps/duration info
-                    if let Some(steps_line) = desc.lines().find(|line| line.contains("Steps:")) {
-                        let steps_info = steps_line
-                            .trim_start_matches("💬 ")
-                            .trim();
-                        if !steps_info.is_empty() {
-                            parts.push(steps_info.to_string());
-                        }
-                    }
-
-                    // Extract branch info
-                    if let Some(branch_line) = desc.lines().find(|line| line.starts_with("🌿 Branch:")) {
-                        let branch = branch_line.trim_start_matches("🌿 Branch:").trim();
-                        if !branch.is_empty() && branch != "N/A" {
-                            parts.push(format!("Branch: {}", branch));
-                        }
-                    }
-                }
-
-                if parts.is_empty() {
-                    // Fall back to title without project prefix
-                    item.title
-                        .split(']')
-                        .nth(1)
-                        .map(|s| s.trim().to_string())
-                        .unwrap_or_else(|| item.title.clone())
-                } else {
-                    parts.join(" | ")
-                }
-            })
-            .unwrap_or_else(|| {
-                // No description - use title
-                item.title
-                    .split(']')
-                    .nth(1)
-                    .map(|s| s.trim().to_string())
-                    .unwrap_or_else(|| item.title.clone())
-            });
-
-        items.push(HourlyBreakdownItem {
-            hour_start,
-            hour_end,
-            summary,
-            files_modified: Vec::new(),
-            git_commits: Vec::new(),
-            source: "antigravity".to_string(),
-        });
-    }
-
-    // Sort by source first (claude_code before antigravity), then by hour_start descending
+    // Sort by hour_start descending
     items.sort_by(|a, b| {
-        // Primary: sort by hour_start descending
         b.hour_start.cmp(&a.hour_start)
     });
     Ok(items)
@@ -969,7 +749,7 @@ pub struct HourlyBreakdownItem {
     pub summary: String,
     pub files_modified: Vec<String>,
     pub git_commits: Vec<GitCommitRef>,
-    /// Data source: "claude_code" or "antigravity"
+    /// Data source: "claude_code"
     pub source: String,
 }
 

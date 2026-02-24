@@ -5,7 +5,6 @@
 export * as gitlab from './gitlab'
 export * as tempo from './tempo'
 export * as claude from './claude'
-export * as antigravity from './antigravity'
 export * as sources from './sources'
 export * as teams from './teams'
 export * as httpExport from './http-export'

@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 
-use super::{SyncSource, ClaudeSource, AntigravitySource};
+use super::{SyncSource, ClaudeSource};
 
 /// Configuration for which sources to sync
 #[derive(Debug, Clone, Default)]
@@ -14,7 +14,7 @@ pub struct SyncConfig {
     pub enabled: bool,
     /// Sync interval in minutes
     pub interval_minutes: u32,
-    /// Enabled source names (e.g., "claude_code", "antigravity")
+    /// Enabled source names (e.g., "claude_code")
     pub enabled_sources: HashSet<String>,
 }
 
@@ -23,7 +23,6 @@ impl SyncConfig {
     pub fn new() -> Self {
         let mut enabled_sources = HashSet::new();
         enabled_sources.insert("claude_code".to_string());
-        enabled_sources.insert("antigravity".to_string());
 
         Self {
             enabled: true,
@@ -52,7 +51,6 @@ impl SyncConfig {
         enabled: bool,
         interval_minutes: u32,
         sync_claude: bool,
-        sync_antigravity: bool,
         sync_git: bool,
         sync_gitlab: bool,
         sync_jira: bool,
@@ -61,9 +59,6 @@ impl SyncConfig {
 
         if sync_claude {
             enabled_sources.insert("claude_code".to_string());
-        }
-        if sync_antigravity {
-            enabled_sources.insert("antigravity".to_string());
         }
         if sync_git {
             enabled_sources.insert("git".to_string());
@@ -90,7 +85,6 @@ impl SyncConfig {
 pub fn get_all_sources() -> Vec<Box<dyn SyncSource>> {
     vec![
         Box::new(ClaudeSource::new()),
-        Box::new(AntigravitySource::new()),
     ]
 }
 
@@ -98,7 +92,7 @@ pub fn get_all_sources() -> Vec<Box<dyn SyncSource>> {
 ///
 /// Returns only sources that are:
 /// 1. Enabled in the configuration
-/// 2. Currently available (e.g., Antigravity only if running)
+/// 2. Currently available
 ///
 /// This is the main entry point for background sync to get sources to sync.
 pub async fn get_enabled_sources(config: &SyncConfig) -> Vec<Box<dyn SyncSource>> {
@@ -106,13 +100,6 @@ pub async fn get_enabled_sources(config: &SyncConfig) -> Vec<Box<dyn SyncSource>
 
     if config.is_source_enabled("claude_code") {
         let source = ClaudeSource::new();
-        if source.is_available().await {
-            sources.push(Box::new(source));
-        }
-    }
-
-    if config.is_source_enabled("antigravity") {
-        let source = AntigravitySource::new();
         if source.is_available().await {
             sources.push(Box::new(source));
         }
@@ -130,14 +117,13 @@ pub async fn get_enabled_sources(config: &SyncConfig) -> Vec<Box<dyn SyncSource>
 pub fn get_source_by_name(name: &str) -> Option<Box<dyn SyncSource>> {
     match name {
         "claude_code" => Some(Box::new(ClaudeSource::new())),
-        "antigravity" => Some(Box::new(AntigravitySource::new())),
         _ => None,
     }
 }
 
 /// Get all registered source names
 pub fn get_source_names() -> Vec<&'static str> {
-    vec!["claude_code", "antigravity"]
+    vec!["claude_code"]
 }
 
 #[cfg(test)]
@@ -150,7 +136,6 @@ mod tests {
         assert!(config.enabled);
         assert_eq!(config.interval_minutes, 15);
         assert!(config.is_source_enabled("claude_code"));
-        assert!(config.is_source_enabled("antigravity"));
         assert!(!config.is_source_enabled("git"));
     }
 
@@ -171,7 +156,6 @@ mod tests {
             true,
             30,
             true,
-            false,
             true,
             false,
             false,
@@ -180,7 +164,6 @@ mod tests {
         assert!(config.enabled);
         assert_eq!(config.interval_minutes, 30);
         assert!(config.is_source_enabled("claude_code"));
-        assert!(!config.is_source_enabled("antigravity"));
         assert!(config.is_source_enabled("git"));
         assert!(!config.is_source_enabled("gitlab"));
     }
@@ -188,11 +171,10 @@ mod tests {
     #[test]
     fn test_get_all_sources() {
         let sources = get_all_sources();
-        assert_eq!(sources.len(), 2);
+        assert_eq!(sources.len(), 1);
 
         let names: Vec<_> = sources.iter().map(|s| s.source_name()).collect();
         assert!(names.contains(&"claude_code"));
-        assert!(names.contains(&"antigravity"));
     }
 
     #[test]
@@ -200,10 +182,6 @@ mod tests {
         let claude = get_source_by_name("claude_code");
         assert!(claude.is_some());
         assert_eq!(claude.unwrap().source_name(), "claude_code");
-
-        let antigravity = get_source_by_name("antigravity");
-        assert!(antigravity.is_some());
-        assert_eq!(antigravity.unwrap().source_name(), "antigravity");
 
         let unknown = get_source_by_name("unknown");
         assert!(unknown.is_none());
@@ -213,6 +191,5 @@ mod tests {
     fn test_get_source_names() {
         let names = get_source_names();
         assert!(names.contains(&"claude_code"));
-        assert!(names.contains(&"antigravity"));
     }
 }

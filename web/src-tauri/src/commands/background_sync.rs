@@ -30,7 +30,6 @@ pub struct UpdateBackgroundSyncConfigRequest {
     pub compaction_interval_minutes: Option<u32>,
     pub sync_git: Option<bool>,
     pub sync_claude: Option<bool>,
-    pub sync_antigravity: Option<bool>,
     pub sync_gitlab: Option<bool>,
     pub sync_jira: Option<bool>,
     pub auto_generate_summaries: Option<bool>,
@@ -46,7 +45,6 @@ pub struct BackgroundSyncConfigResponse {
     pub compaction_interval_minutes: u32,
     pub sync_git: bool,
     pub sync_claude: bool,
-    pub sync_antigravity: bool,
     pub sync_gitlab: bool,
     pub sync_jira: bool,
     pub auto_generate_summaries: bool,
@@ -63,7 +61,6 @@ impl From<BackgroundSyncConfig> for BackgroundSyncConfigResponse {
             compaction_interval_minutes: config.compaction_interval_minutes,
             sync_git: config.sync_git,
             sync_claude: config.sync_claude,
-            sync_antigravity: config.sync_antigravity,
             sync_gitlab: config.sync_gitlab,
             sync_jira: config.sync_jira,
             auto_generate_summaries: config.auto_generate_summaries,
@@ -164,7 +161,6 @@ pub async fn update_background_sync_config(
         compaction_interval_minutes: config.compaction_interval_minutes.unwrap_or(current.compaction_interval_minutes),
         sync_git: config.sync_git.unwrap_or(current.sync_git),
         sync_claude: config.sync_claude.unwrap_or(current.sync_claude),
-        sync_antigravity: config.sync_antigravity.unwrap_or(current.sync_antigravity),
         sync_gitlab: config.sync_gitlab.unwrap_or(current.sync_gitlab),
         sync_jira: config.sync_jira.unwrap_or(current.sync_jira),
         auto_generate_summaries: config.auto_generate_summaries.unwrap_or(current.auto_generate_summaries),
@@ -211,7 +207,6 @@ pub async fn update_background_sync_config(
             auto_generate_summaries = ?,
             sync_git = ?,
             sync_claude = ?,
-            sync_antigravity = ?,
             summary_max_chars = ?,
             summary_reasoning_effort = ?,
             summary_prompt = ?
@@ -224,7 +219,6 @@ pub async fn update_background_sync_config(
     .bind(new_config.auto_generate_summaries)
     .bind(new_config.sync_git)
     .bind(new_config.sync_claude)
-    .bind(new_config.sync_antigravity)
     .bind(new_config.summary_max_chars)
     .bind(&new_config.summary_reasoning_effort)
     .bind(&new_config.summary_prompt)
@@ -274,7 +268,6 @@ pub async fn start_background_sync(
         Option<bool>,
         Option<bool>,
         Option<bool>,
-        Option<bool>,
         Option<i32>,
         Option<String>,
         Option<String>,
@@ -287,7 +280,6 @@ pub async fn start_background_sync(
             auto_generate_summaries,
             sync_git,
             sync_claude,
-            sync_antigravity,
             summary_max_chars,
             summary_reasoning_effort,
             summary_prompt
@@ -300,7 +292,7 @@ pub async fn start_background_sync(
     .ok()
     .flatten();
 
-    if let Some((enabled, interval, compaction, auto_summaries, git, claude, antigravity, max_chars, reasoning_effort, summary_prompt)) = config_row {
+    if let Some((enabled, interval, compaction, auto_summaries, git, claude, max_chars, reasoning_effort, summary_prompt)) = config_row {
         let config = BackgroundSyncConfig {
             enabled: enabled.unwrap_or(true),
             interval_minutes: interval.unwrap_or(15) as u32,
@@ -308,7 +300,6 @@ pub async fn start_background_sync(
             auto_generate_summaries: auto_summaries.unwrap_or(true),
             sync_git: git.unwrap_or(true),
             sync_claude: claude.unwrap_or(true),
-            sync_antigravity: antigravity.unwrap_or(true),
             sync_gitlab: false,
             sync_jira: false,
             summary_max_chars: max_chars.unwrap_or(2000) as u32,
@@ -712,7 +703,6 @@ mod tests {
             compaction_interval_minutes: 30,
             sync_git: true,
             sync_claude: true,
-            sync_antigravity: true,
             sync_gitlab: false,
             sync_jira: false,
             auto_generate_summaries: true,

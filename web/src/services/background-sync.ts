@@ -17,7 +17,6 @@ export interface BackgroundSyncConfig {
   compaction_interval_minutes: number
   sync_git: boolean
   sync_claude: boolean
-  sync_antigravity: boolean
   sync_gitlab: boolean
   sync_jira: boolean
   auto_generate_summaries: boolean

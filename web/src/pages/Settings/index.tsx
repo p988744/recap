@@ -122,8 +122,6 @@ export function SettingsPage() {
             setSyncGit={syncForm.setSyncGit}
             syncClaude={syncForm.syncClaude}
             setSyncClaude={syncForm.setSyncClaude}
-            syncAntigravity={syncForm.syncAntigravity}
-            setSyncAntigravity={syncForm.setSyncAntigravity}
             loading={syncForm.loading}
             saving={syncForm.saving}
             onSave={syncForm.handleSave}

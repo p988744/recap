@@ -108,7 +108,7 @@ export function useThisWeek(isAuthenticated: boolean) {
   })
 
   // Consume app-level sync state to know when to refetch data
-  const { dataSyncState } = useSyncContext()
+  const { dataSyncState, summaryState, backendStatus } = useSyncContext()
 
   // Today's date for comparison
   const today = useMemo(() => new Date().toISOString().split('T')[0], [])
@@ -179,7 +179,7 @@ export function useThisWeek(isAuthenticated: boolean) {
   useEffect(() => {
     if (!isAuthenticated) return
     fetchData()
-  }, [isAuthenticated, fetchData, dataSyncState])
+  }, [isAuthenticated, fetchData, dataSyncState, summaryState, backendStatus?.last_sync_at])
 
   // ==========================================================================
   // Date navigation

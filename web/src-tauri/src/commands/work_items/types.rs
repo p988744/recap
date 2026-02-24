@@ -322,10 +322,10 @@ mod tests {
 
     #[test]
     fn test_timeline_query_with_sources() {
-        let json = r#"{"date": "2024-01-15", "sources": ["claude_code", "antigravity"]}"#;
+        let json = r#"{"date": "2024-01-15", "sources": ["claude_code"]}"#;
         let query: TimelineQuery = serde_json::from_str(json).unwrap();
         assert_eq!(query.date, "2024-01-15");
-        assert_eq!(query.sources, Some(vec!["claude_code".to_string(), "antigravity".to_string()]));
+        assert_eq!(query.sources, Some(vec!["claude_code".to_string()]));
     }
 
     #[test]

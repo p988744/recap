@@ -62,7 +62,7 @@ export function useDashboard(isAuthenticated: boolean) {
   const [ganttSources, setGanttSources] = useState<string[]>(['claude_code'])
 
   // Consume app-level sync state to know when to refetch data
-  const { dataSyncState } = useSyncContext()
+  const { dataSyncState, summaryState, backendStatus } = useSyncContext()
 
   // Main data fetch effect — re-runs when app-level sync completes
   useEffect(() => {
@@ -85,7 +85,7 @@ export function useDashboard(isAuthenticated: boolean) {
       }
     }
     fetchData()
-  }, [weekRange, heatmapRange, dataSyncState, isAuthenticated])
+  }, [weekRange, heatmapRange, dataSyncState, summaryState, backendStatus?.last_sync_at, isAuthenticated])
 
   // Gantt timeline fetch effect — also re-runs when app-level sync completes
   useEffect(() => {
@@ -119,7 +119,7 @@ export function useDashboard(isAuthenticated: boolean) {
       }
     }
     fetchTimeline()
-  }, [ganttDate, ganttSources, dataSyncState, isAuthenticated])
+  }, [ganttDate, ganttSources, dataSyncState, summaryState, backendStatus?.last_sync_at, isAuthenticated])
 
   // Computed values
   const chartData = useMemo(() => {
