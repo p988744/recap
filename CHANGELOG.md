@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0-beta.3] - 2026-02-24
+
+### Removed
+
+- **Antigravity (Gemini Code) 整合完全移除** - 刪除所有相關程式碼、類型、UI 元件和測試（-2951 行）
+  - 移除 AntigravitySource、session path 設定、sync_antigravity 旗標
+  - 移除 Worklog 頁面的資料來源篩選器（僅保留 Claude Code）
+  - 移除 Settings 頁面的 Antigravity 路徑設定和同步開關
+  - DB schema migrations 保留以維持向後相容性
+
 ## [2.2.0-beta.2] - 2026-02-24
 
 ### Fixed
