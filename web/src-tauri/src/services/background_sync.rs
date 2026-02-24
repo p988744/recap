@@ -944,6 +944,7 @@ impl BackgroundSyncService {
             let last_compaction_at = Arc::clone(&self.last_compaction_at);
             let next_compaction_at = Arc::clone(&self.next_compaction_at);
             let is_compacting = Arc::clone(&self.is_compacting);
+            let last_error = Arc::clone(&self.last_error);
             let scheduler_ref = Arc::clone(&self.scheduler);
             let compaction_job_id_ref = Arc::clone(&self.compaction_job_id);
 
@@ -965,6 +966,7 @@ impl BackgroundSyncService {
                     let last_compaction_at = Arc::clone(&last_compaction_at);
                     let next_compaction_at = Arc::clone(&next_compaction_at);
                     let is_compacting = Arc::clone(&is_compacting);
+                    let last_error = Arc::clone(&last_error);
                     let compaction_started_at = Arc::clone(&compaction_started_at);
                     let scheduler_ref = Arc::clone(&scheduler_ref);
                     let compaction_job_id_ref = Arc::clone(&compaction_job_id_ref);
@@ -1028,6 +1030,7 @@ impl BackgroundSyncService {
                             &last_compaction_at,
                             &is_compacting,
                             &compaction_started_at,
+                            &last_error,
                             &uid,
                         ).await;
 
@@ -1112,8 +1115,29 @@ impl BackgroundSyncService {
     /// Restart the background sync service
     pub async fn restart(&self) {
         self.stop().await;
-        // Small delay to ensure clean shutdown
-        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Wait for lifecycle to leave Syncing state (up to 10 seconds)
+        for _ in 0..100 {
+            let lc = self.lifecycle.read().await;
+            if !lc.is_syncing() {
+                break;
+            }
+            drop(lc);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        // Force-recover if still stuck
+        {
+            let mut lc = self.lifecycle.write().await;
+            if lc.is_syncing() {
+                log::warn!("Sync still running after 10s wait in restart(), force-recovering");
+                *lc = ServiceLifecycle::Idle {
+                    last_sync_at: self.last_sync_at.read().await.clone(),
+                    next_sync_at: None,
+                };
+            }
+        }
+
         self.start().await;
     }
 
@@ -1429,6 +1453,7 @@ impl BackgroundSyncService {
         last_compaction_at: &Arc<RwLock<Option<String>>>,
         is_compacting: &Arc<AtomicBool>,
         compaction_started_at: &Arc<RwLock<Option<String>>>,
+        last_error: &Arc<RwLock<Option<String>>>,
         user_id: &str,
     ) {
         // Set started_at timestamp before creating the guard
@@ -1470,13 +1495,18 @@ impl BackgroundSyncService {
                         cr.daily_compacted
                     );
                 }
-                // Log LLM warnings
+                // Surface LLM warnings to last_error so users can see them
                 if !cr.llm_warnings.is_empty() {
-                    log::warn!("LLM warnings: {}", cr.llm_warnings.join("; "));
+                    let warning_msg = format!("LLM 警告: {}", cr.llm_warnings.join("; "));
+                    log::warn!("{}", warning_msg);
+                    let mut err = last_error.write().await;
+                    *err = Some(warning_msg);
                 }
             }
             Err(e) => {
                 log::warn!("Compaction cycle error: {}", e);
+                let mut err = last_error.write().await;
+                *err = Some(format!("壓縮週期錯誤: {}", e));
             }
         }
 

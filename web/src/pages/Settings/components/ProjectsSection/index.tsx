@@ -137,6 +137,7 @@ export function ProjectsSection({
             summaryState={summaryState}
             syncProgress={syncProgress}
             onTriggerSync={onTriggerSync}
+            onRefreshStatus={onRefreshStatus}
             antigravityConnected={false}
           />
           <DataCompactionStatus

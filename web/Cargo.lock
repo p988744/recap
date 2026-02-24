@@ -4277,7 +4277,7 @@ dependencies = [
 
 [[package]]
 name = "recap"
-version = "2.2.0-alpha.16"
+version = "2.2.0-alpha.17"
 dependencies = [
  "anyhow",
  "async-trait",
