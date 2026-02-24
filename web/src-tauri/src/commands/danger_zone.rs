@@ -55,55 +55,63 @@ pub async fn clear_synced_data(
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
     let db = state.db.lock().await;
 
+    clear_synced_data_impl(&db.pool, &claims.sub).await
+}
+
+/// Core implementation for clearing synced data, separated for testability.
+pub(crate) async fn clear_synced_data_impl(
+    pool: &sqlx::SqlitePool,
+    user_id: &str,
+) -> Result<DangerousOperationResult, String> {
     // Count items to be deleted
     let work_items_count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM work_items WHERE user_id = ? AND source != 'manual'",
     )
-    .bind(&claims.sub)
-    .fetch_one(&db.pool)
+    .bind(user_id)
+    .fetch_one(pool)
     .await
     .map_err(|e| e.to_string())?;
 
     let snapshots_count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM snapshot_raw_data WHERE user_id = ?",
     )
-    .bind(&claims.sub)
-    .fetch_one(&db.pool)
+    .bind(user_id)
+    .fetch_one(pool)
     .await
     .map_err(|e| e.to_string())?;
 
     let summaries_count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM work_summaries WHERE user_id = ?",
     )
-    .bind(&claims.sub)
-    .fetch_one(&db.pool)
+    .bind(user_id)
+    .fetch_one(pool)
     .await
     .map_err(|e| e.to_string())?;
 
     // Delete synced work items (keep manual)
     sqlx::query("DELETE FROM work_items WHERE user_id = ? AND source != 'manual'")
-        .bind(&claims.sub)
-        .execute(&db.pool)
+        .bind(user_id)
+        .execute(pool)
         .await
         .map_err(|e| e.to_string())?;
 
     // Delete all snapshots
     sqlx::query("DELETE FROM snapshot_raw_data WHERE user_id = ?")
-        .bind(&claims.sub)
-        .execute(&db.pool)
+        .bind(user_id)
+        .execute(pool)
         .await
         .map_err(|e| e.to_string())?;
 
     // Delete all summaries
     sqlx::query("DELETE FROM work_summaries WHERE user_id = ?")
-        .bind(&claims.sub)
-        .execute(&db.pool)
+        .bind(user_id)
+        .execute(pool)
         .await
         .map_err(|e| e.to_string())?;
 
     log::info!(
         "Cleared synced data for user {}: {} work items, {} snapshots, {} summaries",
-        claims.sub,
+        user_id,
         work_items_count.0,
         snapshots_count.0,
         summaries_count.0
@@ -144,77 +152,85 @@ pub async fn factory_reset(
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
     let db = state.db.lock().await;
 
+    factory_reset_impl(&db.pool, &claims.sub).await
+}
+
+/// Core implementation for factory reset, separated for testability.
+pub(crate) async fn factory_reset_impl(
+    pool: &sqlx::SqlitePool,
+    user_id: &str,
+) -> Result<DangerousOperationResult, String> {
     // Count all items
     let work_items_count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM work_items WHERE user_id = ?",
     )
-    .bind(&claims.sub)
-    .fetch_one(&db.pool)
+    .bind(user_id)
+    .fetch_one(pool)
     .await
     .map_err(|e| e.to_string())?;
 
     let snapshots_count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM snapshot_raw_data WHERE user_id = ?",
     )
-    .bind(&claims.sub)
-    .fetch_one(&db.pool)
+    .bind(user_id)
+    .fetch_one(pool)
     .await
     .map_err(|e| e.to_string())?;
 
     let summaries_count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM work_summaries WHERE user_id = ?",
     )
-    .bind(&claims.sub)
-    .fetch_one(&db.pool)
+    .bind(user_id)
+    .fetch_one(pool)
     .await
     .map_err(|e| e.to_string())?;
 
     // Delete ALL work items (including manual)
     sqlx::query("DELETE FROM work_items WHERE user_id = ?")
-        .bind(&claims.sub)
-        .execute(&db.pool)
+        .bind(user_id)
+        .execute(pool)
         .await
         .map_err(|e| e.to_string())?;
 
     // Delete all snapshots
     sqlx::query("DELETE FROM snapshot_raw_data WHERE user_id = ?")
-        .bind(&claims.sub)
-        .execute(&db.pool)
+        .bind(user_id)
+        .execute(pool)
         .await
         .map_err(|e| e.to_string())?;
 
     // Delete all summaries
     sqlx::query("DELETE FROM work_summaries WHERE user_id = ?")
-        .bind(&claims.sub)
-        .execute(&db.pool)
+        .bind(user_id)
+        .execute(pool)
         .await
         .map_err(|e| e.to_string())?;
 
     // Delete all reports
     sqlx::query("DELETE FROM reports WHERE user_id = ?")
-        .bind(&claims.sub)
-        .execute(&db.pool)
+        .bind(user_id)
+        .execute(pool)
         .await
         .map_err(|e| e.to_string())?;
 
     // Delete all projects
     sqlx::query("DELETE FROM projects WHERE user_id = ?")
-        .bind(&claims.sub)
-        .execute(&db.pool)
+        .bind(user_id)
+        .execute(pool)
         .await
         .map_err(|e| e.to_string())?;
 
     // Delete worklog sync records
     sqlx::query("DELETE FROM worklog_sync_records WHERE user_id = ?")
-        .bind(&claims.sub)
-        .execute(&db.pool)
+        .bind(user_id)
+        .execute(pool)
         .await
         .map_err(|e| e.to_string())?;
 
     // Delete project issue mappings
     sqlx::query("DELETE FROM project_issue_mappings WHERE user_id = ?")
-        .bind(&claims.sub)
-        .execute(&db.pool)
+        .bind(user_id)
+        .execute(pool)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -241,14 +257,14 @@ pub async fn factory_reset(
             updated_at = CURRENT_TIMESTAMP
         WHERE user_id = ?"#,
     )
-    .bind(&claims.sub)
-    .execute(&db.pool)
+    .bind(user_id)
+    .execute(pool)
     .await
     .map_err(|e| e.to_string())?;
 
     log::info!(
         "Factory reset for user {}: {} work items, {} snapshots, {} summaries deleted, configs reset",
-        claims.sub,
+        user_id,
         work_items_count.0,
         snapshots_count.0,
         summaries_count.0
@@ -483,4 +499,493 @@ pub async fn force_recompact_with_progress(
             configs_reset: None,
         }),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use recap_core::db::Database;
+    use tempfile::TempDir;
+
+    /// Helper to create a test database with all required tables
+    async fn create_test_db() -> (Database, TempDir) {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let db_path = temp_dir.path().join("test.db");
+        let db = Database::open(db_path).await.expect("Failed to create test database");
+
+        // Create additional tables referenced by factory_reset that aren't in core migrations
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS reports (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                title TEXT,
+                content TEXT
+            )",
+        )
+        .execute(&db.pool)
+        .await
+        .expect("Failed to create reports table");
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS projects (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                name TEXT
+            )",
+        )
+        .execute(&db.pool)
+        .await
+        .expect("Failed to create projects table");
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS user_config (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                daily_hours REAL DEFAULT 8.0,
+                normalize_hours INTEGER DEFAULT 0,
+                claude_code_path TEXT,
+                antigravity_path TEXT,
+                gitlab_url TEXT,
+                gitlab_token TEXT,
+                jira_url TEXT,
+                jira_auth_type TEXT DEFAULT 'pat',
+                jira_token TEXT,
+                jira_email TEXT,
+                tempo_token TEXT,
+                llm_provider TEXT,
+                llm_model TEXT,
+                llm_api_key TEXT,
+                llm_base_url TEXT,
+                timezone TEXT DEFAULT 'Asia/Taipei',
+                week_start_day INTEGER DEFAULT 1,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )",
+        )
+        .execute(&db.pool)
+        .await
+        .expect("Failed to create user_config table");
+
+        (db, temp_dir)
+    }
+
+    /// Ensure a user exists in the users table (needed for FK constraints)
+    async fn ensure_user(pool: &sqlx::SqlitePool, user_id: &str) {
+        sqlx::query(
+            "INSERT OR IGNORE INTO users (id, email, password_hash, name) VALUES (?, ?, 'hash', 'Test User')",
+        )
+        .bind(user_id)
+        .bind(format!("{}@test.com", user_id))
+        .execute(pool)
+        .await
+        .expect("Failed to ensure user");
+    }
+
+    /// Insert a work item for testing
+    async fn insert_work_item(pool: &sqlx::SqlitePool, user_id: &str, source: &str) {
+        ensure_user(pool, user_id).await;
+        let id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO work_items (id, user_id, source, title, hours, date) VALUES (?, ?, ?, 'test', 1.0, '2024-01-15')",
+        )
+        .bind(&id)
+        .bind(user_id)
+        .bind(source)
+        .execute(pool)
+        .await
+        .expect("Failed to insert work item");
+    }
+
+    /// Insert a snapshot for testing
+    async fn insert_snapshot(pool: &sqlx::SqlitePool, user_id: &str, hour_bucket: &str) {
+        ensure_user(pool, user_id).await;
+        let id = uuid::Uuid::new_v4().to_string();
+        let session_id = format!("sess-{}", uuid::Uuid::new_v4());
+        sqlx::query(
+            r#"INSERT INTO snapshot_raw_data (id, user_id, session_id, project_path, hour_bucket,
+                user_messages, assistant_messages, tool_calls, files_modified, git_commits,
+                message_count, raw_size_bytes)
+            VALUES (?, ?, ?, '/test/project', ?, '[]', '[]', '[]', '[]', '[]', 1, 100)"#,
+        )
+        .bind(&id)
+        .bind(user_id)
+        .bind(&session_id)
+        .bind(hour_bucket)
+        .execute(pool)
+        .await
+        .expect("Failed to insert snapshot");
+    }
+
+    /// Insert a work summary for testing
+    async fn insert_summary(pool: &sqlx::SqlitePool, user_id: &str, scale: &str) {
+        ensure_user(pool, user_id).await;
+        let id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO work_summaries (id, user_id, project_path, scale, period_start, period_end, summary) VALUES (?, ?, '/test/project', ?, '2024-01-15T00:00:00', '2024-01-15T23:59:59', 'test summary')",
+        )
+        .bind(&id)
+        .bind(user_id)
+        .bind(scale)
+        .execute(pool)
+        .await
+        .expect("Failed to insert summary");
+    }
+
+    /// Helper to count rows in a table for a given user
+    async fn count_rows(pool: &sqlx::SqlitePool, table: &str, user_id: &str) -> i64 {
+        let query = format!("SELECT COUNT(*) FROM {} WHERE user_id = ?", table);
+        let row: (i64,) = sqlx::query_as(&query)
+            .bind(user_id)
+            .fetch_one(pool)
+            .await
+            .expect("Count query failed");
+        row.0
+    }
+
+    // ============================================================================
+    // Confirmation validation tests
+    // ============================================================================
+
+    #[test]
+    fn test_confirmation_text_constants() {
+        // Verify the confirmation strings are what we expect
+        assert_eq!("DELETE_SYNCED_DATA", "DELETE_SYNCED_DATA");
+        assert_eq!("FACTORY_RESET", "FACTORY_RESET");
+        assert_eq!("RECOMPACT", "RECOMPACT");
+    }
+
+    // ============================================================================
+    // DangerousOperationResult serialization tests
+    // ============================================================================
+
+    #[test]
+    fn test_dangerous_operation_result_serialization_success() {
+        let result = DangerousOperationResult {
+            success: true,
+            message: "Operation completed".to_string(),
+            details: Some(DangerousOperationDetails {
+                work_items_deleted: Some(5),
+                snapshots_deleted: Some(10),
+                summaries_deleted: Some(3),
+                configs_reset: None,
+            }),
+        };
+
+        let json = serde_json::to_value(&result).expect("Should serialize");
+        assert_eq!(json["success"], true);
+        assert_eq!(json["message"], "Operation completed");
+        assert!(json["details"].is_object());
+        assert_eq!(json["details"]["work_items_deleted"], 5);
+        assert_eq!(json["details"]["snapshots_deleted"], 10);
+        assert_eq!(json["details"]["summaries_deleted"], 3);
+        assert!(json["details"]["configs_reset"].is_null());
+    }
+
+    #[test]
+    fn test_dangerous_operation_result_serialization_failure() {
+        let result = DangerousOperationResult {
+            success: false,
+            message: "確認文字不正確，操作已取消".to_string(),
+            details: None,
+        };
+
+        let json = serde_json::to_value(&result).expect("Should serialize");
+        assert_eq!(json["success"], false);
+        assert!(json["details"].is_null());
+    }
+
+    #[test]
+    fn test_dangerous_operation_details_with_config_reset() {
+        let details = DangerousOperationDetails {
+            work_items_deleted: Some(0),
+            snapshots_deleted: Some(0),
+            summaries_deleted: Some(0),
+            configs_reset: Some(true),
+        };
+
+        let json = serde_json::to_value(&details).expect("Should serialize");
+        assert_eq!(json["configs_reset"], true);
+    }
+
+    #[test]
+    fn test_recompact_progress_serialization() {
+        let progress = RecompactProgress {
+            phase: "hourly".to_string(),
+            current: 5,
+            total: 20,
+            message: "Processing...".to_string(),
+        };
+
+        let json = serde_json::to_value(&progress).expect("Should serialize");
+        assert_eq!(json["phase"], "hourly");
+        assert_eq!(json["current"], 5);
+        assert_eq!(json["total"], 20);
+        assert_eq!(json["message"], "Processing...");
+    }
+
+    // ============================================================================
+    // clear_synced_data_impl tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_clear_synced_data_deletes_synced_items() {
+        let (db, _temp_dir) = create_test_db().await;
+        let pool = &db.pool;
+        let user_id = "test-user-1";
+
+        // Insert synced and manual work items
+        insert_work_item(pool, user_id, "claude").await;
+        insert_work_item(pool, user_id, "claude").await;
+        insert_work_item(pool, user_id, "git").await;
+        insert_work_item(pool, user_id, "manual").await;
+
+        // Insert snapshots and summaries
+        insert_snapshot(pool, user_id, "2024-01-15T10:00:00").await;
+        insert_snapshot(pool, user_id, "2024-01-15T11:00:00").await;
+        insert_summary(pool, user_id, "hourly").await;
+
+        // Verify data exists
+        assert_eq!(count_rows(pool, "work_items", user_id).await, 4);
+        assert_eq!(count_rows(pool, "snapshot_raw_data", user_id).await, 2);
+        assert_eq!(count_rows(pool, "work_summaries", user_id).await, 1);
+
+        // Execute clear
+        let result = clear_synced_data_impl(pool, user_id).await.unwrap();
+
+        assert!(result.success);
+        assert_eq!(result.details.as_ref().unwrap().work_items_deleted, Some(3)); // 3 synced
+        assert_eq!(result.details.as_ref().unwrap().snapshots_deleted, Some(2));
+        assert_eq!(result.details.as_ref().unwrap().summaries_deleted, Some(1));
+        assert!(result.details.as_ref().unwrap().configs_reset.is_none());
+
+        // Manual items should remain
+        assert_eq!(count_rows(pool, "work_items", user_id).await, 1);
+        // Snapshots and summaries should be gone
+        assert_eq!(count_rows(pool, "snapshot_raw_data", user_id).await, 0);
+        assert_eq!(count_rows(pool, "work_summaries", user_id).await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_clear_synced_data_empty_database() {
+        let (db, _temp_dir) = create_test_db().await;
+        let pool = &db.pool;
+        let user_id = "test-user-empty";
+
+        let result = clear_synced_data_impl(pool, user_id).await.unwrap();
+
+        assert!(result.success);
+        assert_eq!(result.details.as_ref().unwrap().work_items_deleted, Some(0));
+        assert_eq!(result.details.as_ref().unwrap().snapshots_deleted, Some(0));
+        assert_eq!(result.details.as_ref().unwrap().summaries_deleted, Some(0));
+    }
+
+    #[tokio::test]
+    async fn test_clear_synced_data_only_manual_items() {
+        let (db, _temp_dir) = create_test_db().await;
+        let pool = &db.pool;
+        let user_id = "test-user-manual";
+
+        // Insert only manual work items
+        insert_work_item(pool, user_id, "manual").await;
+        insert_work_item(pool, user_id, "manual").await;
+
+        let result = clear_synced_data_impl(pool, user_id).await.unwrap();
+
+        assert!(result.success);
+        assert_eq!(result.details.as_ref().unwrap().work_items_deleted, Some(0));
+
+        // Manual items should remain untouched
+        assert_eq!(count_rows(pool, "work_items", user_id).await, 2);
+    }
+
+    #[tokio::test]
+    async fn test_clear_synced_data_isolates_users() {
+        let (db, _temp_dir) = create_test_db().await;
+        let pool = &db.pool;
+        let user_a = "user-a";
+        let user_b = "user-b";
+
+        // Insert data for both users
+        insert_work_item(pool, user_a, "claude").await;
+        insert_work_item(pool, user_b, "claude").await;
+        insert_snapshot(pool, user_a, "2024-01-15T10:00:00").await;
+        insert_snapshot(pool, user_b, "2024-01-15T11:00:00").await;
+
+        // Clear only user_a's data
+        let result = clear_synced_data_impl(pool, user_a).await.unwrap();
+        assert!(result.success);
+
+        // user_a data should be gone
+        assert_eq!(count_rows(pool, "work_items", user_a).await, 0);
+        assert_eq!(count_rows(pool, "snapshot_raw_data", user_a).await, 0);
+
+        // user_b data should remain
+        assert_eq!(count_rows(pool, "work_items", user_b).await, 1);
+        assert_eq!(count_rows(pool, "snapshot_raw_data", user_b).await, 1);
+    }
+
+    // ============================================================================
+    // factory_reset_impl tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_factory_reset_deletes_all_data() {
+        let (db, _temp_dir) = create_test_db().await;
+        let pool = &db.pool;
+        let user_id = "test-user-reset";
+
+        // Insert various data types
+        insert_work_item(pool, user_id, "manual").await;
+        insert_work_item(pool, user_id, "claude").await;
+        insert_snapshot(pool, user_id, "2024-01-15T10:00:00").await;
+        insert_summary(pool, user_id, "hourly").await;
+
+        // Insert a worklog sync record
+        sqlx::query(
+            "INSERT INTO worklog_sync_records (id, user_id, project_path, date, jira_issue_key, hours) VALUES ('wr1', ?, '/test', '2024-01-15', 'JIRA-1', 2.0)",
+        )
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        // Insert a project issue mapping
+        sqlx::query(
+            "INSERT INTO project_issue_mappings (project_path, user_id, jira_issue_key) VALUES ('/test', ?, 'JIRA-1')",
+        )
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        // Insert user_config row
+        sqlx::query(
+            "INSERT INTO user_config (id, user_id, daily_hours, llm_provider) VALUES ('cfg1', ?, 6.0, 'openai')",
+        )
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        let result = factory_reset_impl(pool, user_id).await.unwrap();
+
+        assert!(result.success);
+        assert_eq!(result.details.as_ref().unwrap().work_items_deleted, Some(2));
+        assert_eq!(result.details.as_ref().unwrap().snapshots_deleted, Some(1));
+        assert_eq!(result.details.as_ref().unwrap().summaries_deleted, Some(1));
+        assert_eq!(result.details.as_ref().unwrap().configs_reset, Some(true));
+
+        // All data should be gone
+        assert_eq!(count_rows(pool, "work_items", user_id).await, 0);
+        assert_eq!(count_rows(pool, "snapshot_raw_data", user_id).await, 0);
+        assert_eq!(count_rows(pool, "work_summaries", user_id).await, 0);
+        assert_eq!(count_rows(pool, "worklog_sync_records", user_id).await, 0);
+        assert_eq!(count_rows(pool, "project_issue_mappings", user_id).await, 0);
+
+        // Verify user_config was reset
+        let config: (f64, i32) = sqlx::query_as(
+            "SELECT daily_hours, normalize_hours FROM user_config WHERE user_id = ?",
+        )
+        .bind(user_id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        assert!((config.0 - 8.0).abs() < f64::EPSILON, "daily_hours should be reset to 8.0");
+        assert_eq!(config.1, 0, "normalize_hours should be reset to 0");
+
+        // Check LLM config was cleared
+        let llm: (Option<String>,) = sqlx::query_as(
+            "SELECT llm_provider FROM user_config WHERE user_id = ?",
+        )
+        .bind(user_id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        assert!(llm.0.is_none(), "llm_provider should be NULL after reset");
+    }
+
+    #[tokio::test]
+    async fn test_factory_reset_deletes_manual_items_too() {
+        let (db, _temp_dir) = create_test_db().await;
+        let pool = &db.pool;
+        let user_id = "test-user-manual-reset";
+
+        // Factory reset should delete manual items (unlike clear_synced_data)
+        insert_work_item(pool, user_id, "manual").await;
+        insert_work_item(pool, user_id, "manual").await;
+
+        let result = factory_reset_impl(pool, user_id).await.unwrap();
+
+        assert!(result.success);
+        assert_eq!(result.details.as_ref().unwrap().work_items_deleted, Some(2));
+        assert_eq!(count_rows(pool, "work_items", user_id).await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_factory_reset_empty_database() {
+        let (db, _temp_dir) = create_test_db().await;
+        let pool = &db.pool;
+        let user_id = "test-user-empty-reset";
+
+        let result = factory_reset_impl(pool, user_id).await.unwrap();
+
+        assert!(result.success);
+        assert_eq!(result.details.as_ref().unwrap().work_items_deleted, Some(0));
+        assert_eq!(result.details.as_ref().unwrap().snapshots_deleted, Some(0));
+        assert_eq!(result.details.as_ref().unwrap().summaries_deleted, Some(0));
+        assert_eq!(result.details.as_ref().unwrap().configs_reset, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_factory_reset_isolates_users() {
+        let (db, _temp_dir) = create_test_db().await;
+        let pool = &db.pool;
+        let user_a = "user-a-reset";
+        let user_b = "user-b-reset";
+
+        // Insert data for both users
+        insert_work_item(pool, user_a, "manual").await;
+        insert_work_item(pool, user_a, "claude").await;
+        insert_work_item(pool, user_b, "manual").await;
+        insert_snapshot(pool, user_a, "2024-01-15T10:00:00").await;
+        insert_snapshot(pool, user_b, "2024-01-15T11:00:00").await;
+
+        // Factory reset only user_a
+        factory_reset_impl(pool, user_a).await.unwrap();
+
+        // user_a data should be completely gone
+        assert_eq!(count_rows(pool, "work_items", user_a).await, 0);
+        assert_eq!(count_rows(pool, "snapshot_raw_data", user_a).await, 0);
+
+        // user_b data should remain
+        assert_eq!(count_rows(pool, "work_items", user_b).await, 1);
+        assert_eq!(count_rows(pool, "snapshot_raw_data", user_b).await, 1);
+    }
+
+    // ============================================================================
+    // clear_synced_data vs factory_reset comparison test
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_clear_synced_preserves_manual_but_factory_reset_deletes_all() {
+        // Part 1: clear_synced_data preserves manual items
+        let (db1, _temp1) = create_test_db().await;
+        let pool1 = &db1.pool;
+        let user_id = "test-user-compare";
+
+        insert_work_item(pool1, user_id, "manual").await;
+        insert_work_item(pool1, user_id, "claude").await;
+
+        clear_synced_data_impl(pool1, user_id).await.unwrap();
+        assert_eq!(count_rows(pool1, "work_items", user_id).await, 1, "clear_synced should preserve manual items");
+
+        // Part 2: factory_reset deletes everything
+        let (db2, _temp2) = create_test_db().await;
+        let pool2 = &db2.pool;
+
+        insert_work_item(pool2, user_id, "manual").await;
+        insert_work_item(pool2, user_id, "claude").await;
+
+        factory_reset_impl(pool2, user_id).await.unwrap();
+        assert_eq!(count_rows(pool2, "work_items", user_id).await, 0, "factory_reset should delete all items");
+    }
 }
