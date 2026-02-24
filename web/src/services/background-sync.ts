@@ -30,6 +30,7 @@ export interface BackgroundSyncStatus {
   is_running: boolean
   is_syncing: boolean
   is_compacting: boolean
+  syncing_started_at: string | null
   last_sync_at: string | null
   last_compaction_at: string | null
   next_sync_at: string | null
@@ -100,6 +101,14 @@ export async function start(): Promise<void> {
  */
 export async function stop(): Promise<void> {
   return invokeAuth<void>('stop_background_sync')
+}
+
+/**
+ * Force-cancel a stuck sync operation.
+ * Returns true if a sync was actually cancelled.
+ */
+export async function cancelSync(): Promise<boolean> {
+  return invokeAuth<boolean>('cancel_background_sync')
 }
 
 /**

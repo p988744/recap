@@ -79,6 +79,7 @@ pub struct BackgroundSyncStatusResponse {
     pub is_running: bool,
     pub is_syncing: bool,
     pub is_compacting: bool,
+    pub syncing_started_at: Option<String>,
     pub last_sync_at: Option<String>,
     pub last_compaction_at: Option<String>,
     pub next_sync_at: Option<String>,
@@ -93,6 +94,7 @@ impl From<SyncServiceStatus> for BackgroundSyncStatusResponse {
             is_running: status.is_running,
             is_syncing: status.is_syncing,
             is_compacting: status.is_compacting,
+            syncing_started_at: status.syncing_started_at,
             last_sync_at: status.last_sync_at,
             last_compaction_at: status.last_compaction_at,
             next_sync_at: status.next_sync_at,
@@ -340,6 +342,24 @@ pub async fn stop_background_sync(
     Ok(())
 }
 
+/// Force-cancel a stuck sync operation
+#[tauri::command]
+pub async fn cancel_background_sync(
+    state: State<'_, AppState>,
+    token: String,
+) -> Result<bool, String> {
+    verify_token(&token).map_err(|e| e.to_string())?;
+
+    let cancelled = state.background_sync.cancel_sync().await;
+    if cancelled {
+        log::info!("Sync operation force-cancelled by user");
+    } else {
+        log::info!("No sync operation to cancel");
+    }
+
+    Ok(cancelled)
+}
+
 /// Trigger an immediate sync
 #[tauri::command]
 pub async fn trigger_background_sync(
@@ -479,6 +499,9 @@ pub async fn trigger_sync_with_progress(
     // Phase 3: Run compaction cycle
     log::info!("========== 開始資料壓縮 ==========");
     emit("compaction", None, 0, 100, "正在處理摘要...");
+
+    // Acquire compaction guard (mutual exclusion with scheduled compaction)
+    let _compaction_guard = state.background_sync.begin_compaction().await;
 
     if config.sync_claude {
         let llm = recap_core::services::llm::create_llm_service(&pool, &user_id)
@@ -717,6 +740,7 @@ mod tests {
             is_running: true,
             is_syncing: false,
             is_compacting: false,
+            syncing_started_at: None,
             last_sync_at: Some("2026-01-16T12:00:00Z".to_string()),
             last_compaction_at: Some("2026-01-16T10:00:00Z".to_string()),
             next_sync_at: Some("2026-01-16T12:15:00Z".to_string()),

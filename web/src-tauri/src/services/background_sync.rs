@@ -7,6 +7,7 @@
 //! to dynamically discover and sync work items from multiple data sources.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::pin::Pin;
 use std::future::Future;
 use tokio::sync::{Mutex, RwLock};
@@ -14,6 +15,35 @@ use tokio::time::Duration;
 use tokio_cron_scheduler::{Job, JobScheduler};
 
 use recap_core::services::sources::{SyncConfig, SourceSyncResult};
+
+// =============================================================================
+// Compaction Guard (panic safety)
+// =============================================================================
+
+/// RAII guard that resets `is_compacting` to false on drop.
+/// Ensures the flag is cleared even if the compaction task panics.
+pub struct CompactionGuard {
+    flag: Arc<AtomicBool>,
+    started_at: Arc<RwLock<Option<String>>>,
+}
+
+impl CompactionGuard {
+    fn new(flag: Arc<AtomicBool>, started_at: Arc<RwLock<Option<String>>>) -> Self {
+        flag.store(true, Ordering::SeqCst);
+        // started_at is set by the caller before creating the guard
+        Self { flag, started_at }
+    }
+}
+
+impl Drop for CompactionGuard {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::SeqCst);
+        // Clear started_at — use try_write to avoid blocking in Drop
+        if let Ok(mut started) = self.started_at.try_write() {
+            *started = None;
+        }
+    }
+}
 
 // =============================================================================
 // Configuration
@@ -263,6 +293,8 @@ pub struct SyncServiceStatus {
     pub is_syncing: bool,
     /// Whether compaction is in progress
     pub is_compacting: bool,
+    /// When the current sync started (ISO 8601), None if not syncing
+    pub syncing_started_at: Option<String>,
     /// Last data sync timestamp (ISO 8601)
     pub last_sync_at: Option<String>,
     /// Last compaction timestamp (ISO 8601)
@@ -287,10 +319,15 @@ impl SyncServiceStatus {
         last_result: Option<String>,
         last_error: Option<String>,
     ) -> Self {
+        let syncing_started_at = match lifecycle {
+            ServiceLifecycle::Syncing { started_at } => Some(started_at.clone()),
+            _ => None,
+        };
         Self {
             is_running: lifecycle.is_running(),
             is_syncing: lifecycle.is_syncing(),
             is_compacting,
+            syncing_started_at,
             last_sync_at: lifecycle.last_sync_at().map(|s| s.to_string()),
             last_compaction_at,
             next_sync_at: lifecycle.next_sync_at().map(|s| s.to_string()),
@@ -368,8 +405,10 @@ pub struct BackgroundSyncService {
     db: Arc<Mutex<recap_core::Database>>,
     /// User ID for sync operations
     user_id: Arc<RwLock<Option<String>>>,
-    /// Whether compaction is currently in progress
-    is_compacting: Arc<RwLock<bool>>,
+    /// Whether compaction is currently in progress (AtomicBool for sync-safe Drop)
+    is_compacting: Arc<AtomicBool>,
+    /// When compaction started (for stuck detection)
+    compaction_started_at: Arc<RwLock<Option<String>>>,
 }
 
 impl BackgroundSyncService {
@@ -388,13 +427,31 @@ impl BackgroundSyncService {
             compaction_job_id: Arc::new(RwLock::new(None)),
             db,
             user_id: Arc::new(RwLock::new(None)),
-            is_compacting: Arc::new(RwLock::new(false)),
+            is_compacting: Arc::new(AtomicBool::new(false)),
+            compaction_started_at: Arc::new(RwLock::new(None)),
         }
     }
 
     /// Get last compaction timestamp
     pub async fn get_last_compaction_at(&self) -> Option<String> {
         self.last_compaction_at.read().await.clone()
+    }
+
+    /// Begin a compaction operation (for use by manual sync commands).
+    /// Returns a guard that auto-resets `is_compacting` on drop.
+    /// Returns None if compaction is already running.
+    pub async fn begin_compaction(&self) -> Option<CompactionGuard> {
+        if self.is_compacting.load(Ordering::SeqCst) {
+            return None;
+        }
+        {
+            let mut sa = self.compaction_started_at.write().await;
+            *sa = Some(chrono::Utc::now().to_rfc3339());
+        }
+        Some(CompactionGuard::new(
+            Arc::clone(&self.is_compacting),
+            Arc::clone(&self.compaction_started_at),
+        ))
     }
 
     /// Record compaction completion
@@ -537,12 +594,18 @@ impl BackgroundSyncService {
         let next_compaction_at = self.next_compaction_at.read().await.clone();
         let last_result = self.last_result.read().await.clone();
         let last_error = self.last_error.read().await.clone();
-        let is_compacting = *self.is_compacting.read().await;
+        let is_compacting = self.is_compacting.load(Ordering::SeqCst);
+
+        let syncing_started_at = match &*lifecycle {
+            ServiceLifecycle::Syncing { started_at } => Some(started_at.clone()),
+            _ => None,
+        };
 
         SyncServiceStatus {
             is_running: lifecycle.is_running(),
             is_syncing: lifecycle.is_syncing(),
             is_compacting,
+            syncing_started_at,
             last_sync_at,
             last_compaction_at,
             next_sync_at: lifecycle.next_sync_at().map(|s| s.to_string()),
@@ -583,6 +646,39 @@ impl BackgroundSyncService {
     /// Get the current lifecycle state
     pub async fn get_lifecycle(&self) -> ServiceLifecycle {
         self.lifecycle.read().await.clone()
+    }
+
+    /// Force-cancel a stuck sync operation.
+    /// Transitions lifecycle from Syncing back to Idle.
+    /// Returns true if a sync was actually cancelled.
+    pub async fn cancel_sync(&self) -> bool {
+        let mut lifecycle = self.lifecycle.write().await;
+        if lifecycle.is_syncing() {
+            let interval = self.config.read().await.interval_minutes;
+            *lifecycle = ServiceLifecycle::Idle {
+                last_sync_at: self.last_sync_at.read().await.clone(),
+                next_sync_at: Some(Self::calculate_next_sync(interval)),
+            };
+            log::warn!("Sync operation force-cancelled by user");
+
+            // Also clear compaction state if stuck
+            if self.is_compacting.load(Ordering::SeqCst) {
+                self.is_compacting.store(false, Ordering::SeqCst);
+                let mut sa = self.compaction_started_at.write().await;
+                *sa = None;
+                log::warn!("Compaction state also force-cleared");
+            }
+
+            // Record the cancellation
+            {
+                let mut error = self.last_error.write().await;
+                *error = Some("同步被使用者取消".to_string());
+            }
+
+            true
+        } else {
+            false
+        }
     }
 
     /// Begin a sync operation (transition to Syncing state)
@@ -858,6 +954,8 @@ impl BackgroundSyncService {
                 *nca = Some(next);
             }
 
+            let compaction_started_at = Arc::clone(&self.compaction_started_at);
+
             let compaction_job = Job::new_repeated_async(
                 Duration::from_secs(compaction_interval_minutes as u64 * 60),
                 move |_uuid, _lock| {
@@ -867,6 +965,7 @@ impl BackgroundSyncService {
                     let last_compaction_at = Arc::clone(&last_compaction_at);
                     let next_compaction_at = Arc::clone(&next_compaction_at);
                     let is_compacting = Arc::clone(&is_compacting);
+                    let compaction_started_at = Arc::clone(&compaction_started_at);
                     let scheduler_ref = Arc::clone(&scheduler_ref);
                     let compaction_job_id_ref = Arc::clone(&compaction_job_id_ref);
 
@@ -889,20 +988,46 @@ impl BackgroundSyncService {
                             }
                         };
 
-                        // Overlap prevention: skip if already compacting
-                        {
-                            let compacting = is_compacting.read().await;
-                            if *compacting {
-                                log::warn!("Previous compaction still running, skipping this tick");
-                                return;
+                        // Overlap prevention: skip if already compacting (with stuck recovery)
+                        if is_compacting.load(Ordering::SeqCst) {
+                            // Check if stuck (>60 minutes)
+                            let started = compaction_started_at.read().await.clone();
+                            if let Some(ref started_str) = started {
+                                if let Ok(started_dt) = chrono::DateTime::parse_from_rfc3339(started_str) {
+                                    let elapsed = chrono::Utc::now() - started_dt.with_timezone(&chrono::Utc);
+                                    if elapsed > chrono::Duration::minutes(60) {
+                                        log::warn!(
+                                            "Compaction stuck for {} min (started {}), force-recovering",
+                                            elapsed.num_minutes(), started_str
+                                        );
+                                        is_compacting.store(false, Ordering::SeqCst);
+                                        let mut sa = compaction_started_at.write().await;
+                                        *sa = None;
+                                        // Fall through to run compaction
+                                    } else {
+                                        log::warn!(
+                                            "Previous compaction still running ({}min), skipping this tick",
+                                            elapsed.num_minutes()
+                                        );
+                                        return;
+                                    }
+                                } else {
+                                    log::warn!("Previous compaction still running (bad timestamp), skipping this tick");
+                                    return;
+                                }
+                            } else {
+                                log::warn!("Previous compaction still running (no timestamp), force-recovering");
+                                is_compacting.store(false, Ordering::SeqCst);
+                                // Fall through to run compaction
                             }
                         }
 
-                        // Perform compaction
+                        // Perform compaction (guard ensures is_compacting resets on panic)
                         Self::perform_compaction(
                             &db,
                             &last_compaction_at,
                             &is_compacting,
+                            &compaction_started_at,
                             &uid,
                         ).await;
 
@@ -1302,14 +1427,21 @@ impl BackgroundSyncService {
     async fn perform_compaction(
         db: &Arc<Mutex<recap_core::Database>>,
         last_compaction_at: &Arc<RwLock<Option<String>>>,
-        is_compacting: &Arc<RwLock<bool>>,
+        is_compacting: &Arc<AtomicBool>,
+        compaction_started_at: &Arc<RwLock<Option<String>>>,
         user_id: &str,
     ) {
-        // Set compacting state
+        // Set started_at timestamp before creating the guard
         {
-            let mut compacting = is_compacting.write().await;
-            *compacting = true;
+            let mut sa = compaction_started_at.write().await;
+            *sa = Some(chrono::Utc::now().to_rfc3339());
         }
+
+        // Guard: sets is_compacting=true now, resets to false on drop (even on panic)
+        let _guard = CompactionGuard::new(
+            Arc::clone(is_compacting),
+            Arc::clone(compaction_started_at),
+        );
 
         log::info!("Starting data compaction for user: {}", user_id);
 
@@ -1374,12 +1506,7 @@ impl BackgroundSyncService {
             *compaction_time = Some(chrono::Utc::now().to_rfc3339());
         }
 
-        // Clear compacting state
-        {
-            let mut compacting = is_compacting.write().await;
-            *compacting = false;
-        }
-
+        // is_compacting is cleared automatically by CompactionGuard drop
         log::info!("Data compaction completed");
     }
 
@@ -1896,6 +2023,7 @@ mod tests {
         assert!(status.is_running);
         assert!(!status.is_syncing);
         assert!(!status.is_compacting);
+        assert!(status.syncing_started_at.is_none()); // Not syncing, so no started_at
         assert_eq!(status.next_compaction_at, Some("2026-01-30T17:00:00Z".to_string()));
         assert_eq!(status.last_sync_at, Some("2026-01-30T12:00:00Z".to_string()));
         assert_eq!(status.last_compaction_at, Some("2026-01-30T11:00:00Z".to_string()));

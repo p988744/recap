@@ -118,6 +118,7 @@ pub fn run() {
             commands::background_sync::get_background_sync_status,
             commands::background_sync::start_background_sync,
             commands::background_sync::stop_background_sync,
+            commands::background_sync::cancel_background_sync,
             commands::background_sync::trigger_background_sync,
             commands::background_sync::trigger_sync_with_progress,
             // Notifications

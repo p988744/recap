@@ -69,6 +69,7 @@ export function useSyncForm() {
           is_running: false,
           is_syncing: true,
           is_compacting: false,
+          syncing_started_at: null,
           last_sync_at: null,
           last_compaction_at: null,
           next_sync_at: null,
