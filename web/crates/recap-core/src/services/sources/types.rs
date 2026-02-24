@@ -18,7 +18,7 @@ pub struct SourceProject {
 /// Result of a sync operation
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SourceSyncResult {
-    /// Source identifier (e.g., "claude_code", "antigravity")
+    /// Source identifier (e.g., "claude_code")
     pub source: String,
     /// Number of projects scanned
     pub projects_scanned: usize,
@@ -58,7 +58,7 @@ impl SourceSyncResult {
 pub struct WorkItemParams {
     /// User ID owning this work item
     pub user_id: String,
-    /// Source identifier (e.g., "claude_code", "antigravity", "git")
+    /// Source identifier (e.g., "claude_code", "git")
     pub source: String,
     /// Source-specific item ID
     pub source_id: String,
@@ -149,8 +149,8 @@ mod tests {
 
     #[test]
     fn test_source_sync_result_with_error() {
-        let result = SourceSyncResult::with_error("antigravity", "Connection failed".to_string());
-        assert_eq!(result.source, "antigravity");
+        let result = SourceSyncResult::with_error("test_source", "Connection failed".to_string());
+        assert_eq!(result.source, "test_source");
         assert_eq!(result.error, Some("Connection failed".to_string()));
     }
 

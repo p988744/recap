@@ -94,13 +94,6 @@ pub struct ClaudeSessionPathResponse {
     pub is_default: bool,
 }
 
-/// Antigravity (Gemini Code) session path response
-#[derive(Debug, Serialize)]
-pub struct AntigravitySessionPathResponse {
-    pub path: String,
-    pub is_default: bool,
-}
-
 /// Project description for AI context
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProjectDescription {
@@ -190,7 +183,7 @@ pub struct TimelineGroup {
 #[derive(Debug, Serialize)]
 pub struct TimelineSession {
     pub id: String,
-    pub source: String, // "claude_code" | "antigravity"
+    pub source: String, // "claude_code"
     pub title: String,
     pub start_time: String,
     pub end_time: String,
@@ -269,7 +262,7 @@ mod tests {
             project_name: "recap".to_string(),
             project_path: Some("/home/user/recap".to_string()),
             source: "claude_code".to_string(),
-            sources: vec!["claude_code".to_string(), "antigravity".to_string()],
+            sources: vec!["claude_code".to_string()],
             work_item_count: 10,
             total_hours: 24.5,
             latest_date: Some("2024-01-15".to_string()),
@@ -279,7 +272,7 @@ mod tests {
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"project_name\":\"recap\""));
         assert!(json.contains("\"work_item_count\":10"));
-        assert!(json.contains("\"sources\":[\"claude_code\",\"antigravity\"]"));
+        assert!(json.contains("\"sources\":[\"claude_code\"]"));
     }
 
     #[test]
@@ -311,28 +304,6 @@ mod tests {
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("\"path\":\"/home/user/.claude\""));
         assert!(json.contains("\"is_default\":true"));
-    }
-
-    #[test]
-    fn test_antigravity_session_path_response_serialize() {
-        let response = AntigravitySessionPathResponse {
-            path: "/home/user/.gemini/antigravity".to_string(),
-            is_default: true,
-        };
-        let json = serde_json::to_string(&response).unwrap();
-        assert!(json.contains("\"path\":\"/home/user/.gemini/antigravity\""));
-        assert!(json.contains("\"is_default\":true"));
-    }
-
-    #[test]
-    fn test_antigravity_session_path_response_custom_path() {
-        let response = AntigravitySessionPathResponse {
-            path: "/custom/path/antigravity".to_string(),
-            is_default: false,
-        };
-        let json = serde_json::to_string(&response).unwrap();
-        assert!(json.contains("\"path\":\"/custom/path/antigravity\""));
-        assert!(json.contains("\"is_default\":false"));
     }
 
     #[test]

@@ -21,11 +21,11 @@
 //! │   fn sync_sessions() -> SourceSyncResult            │
 //! └─────────────────────────────────────────────────────┘
 //!          │
-//!     ┌────┼────┐
-//!     ▼    ▼    ▼
-//! ┌──────┐┌──────┐┌──────┐
-//! │Claude││Antig.││ Git  │
-//! └──────┘└──────┘└──────┘
+//!     ┌────┴────┐
+//!     ▼         ▼
+//! ┌──────┐  ┌──────┐
+//! │Claude│  │ Git  │
+//! └──────┘  └──────┘
 //! ```
 //!
 //! # Adding a New Source
@@ -37,14 +37,11 @@
 pub mod types;
 pub mod work_item;
 pub mod claude;
-pub mod antigravity;
-pub mod antigravity_session;
 pub mod registry;
 
 pub use types::{SourceProject, SourceSyncResult, WorkItemParams};
 pub use work_item::{upsert_work_item, UpsertResult};
 pub use claude::ClaudeSource;
-pub use antigravity::AntigravitySource;
 pub use registry::{get_enabled_sources, SyncConfig};
 
 use async_trait::async_trait;
@@ -56,14 +53,14 @@ use sqlx::SqlitePool;
 /// Sources can discover projects and sync sessions/items to work items.
 #[async_trait]
 pub trait SyncSource: Send + Sync {
-    /// Unique identifier for this source (e.g., "claude_code", "antigravity")
+    /// Unique identifier for this source (e.g., "claude_code")
     ///
     /// This is stored in the `source` column of work_items.
     fn source_name(&self) -> &'static str;
 
     /// Human-readable display name
     ///
-    /// Used in UI and logs (e.g., "Claude Code", "Antigravity (Gemini Code)")
+    /// Used in UI and logs (e.g., "Claude Code")
     fn display_name(&self) -> &'static str;
 
     /// Check if this source is currently available

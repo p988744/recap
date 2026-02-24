@@ -28,7 +28,6 @@ const mockConfig: BackgroundSyncConfig = {
   compaction_interval_minutes: 60,
   sync_git: true,
   sync_claude: true,
-  sync_antigravity: false,
   sync_gitlab: false,
   sync_jira: false,
   auto_generate_summaries: true,

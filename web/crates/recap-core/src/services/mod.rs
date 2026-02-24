@@ -57,6 +57,6 @@ pub use llm_batch::{
 };
 pub use sources::{
     SyncSource, SourceProject, SourceSyncResult, WorkItemParams,
-    ClaudeSource, AntigravitySource, SyncConfig,
+    ClaudeSource, SyncConfig,
     get_enabled_sources, upsert_work_item, UpsertResult,
 };

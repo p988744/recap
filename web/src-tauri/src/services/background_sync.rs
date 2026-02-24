@@ -74,8 +74,6 @@ pub struct BackgroundSyncConfig {
     pub sync_git: bool,
     /// Sync Claude Code sessions
     pub sync_claude: bool,
-    /// Sync Antigravity (Gemini Code) sessions
-    pub sync_antigravity: bool,
     /// Sync GitLab (requires configuration)
     pub sync_gitlab: bool,
     /// Sync Jira/Tempo (requires configuration)
@@ -98,7 +96,6 @@ impl Default for BackgroundSyncConfig {
             compaction_interval_minutes: 30,
             sync_git: true,
             sync_claude: true,
-            sync_antigravity: true,
             sync_gitlab: false,
             sync_jira: false,
             auto_generate_summaries: true,
@@ -116,7 +113,6 @@ impl BackgroundSyncConfig {
             self.enabled,
             self.interval_minutes,
             self.sync_claude,
-            self.sync_antigravity,
             self.sync_git,
             self.sync_gitlab,
             self.sync_jira,
@@ -1274,8 +1270,8 @@ impl BackgroundSyncService {
     ) -> Vec<SyncOperationResult> {
         log::info!("========== 開始資料同步 ==========");
         log::info!("使用者: {}", user_id);
-        log::info!("同步設定: Git={}, Claude={}, Antigravity={}, GitLab={}, Jira={}",
-            config.sync_git, config.sync_claude, config.sync_antigravity,
+        log::info!("同步設定: Git={}, Claude={}, GitLab={}, Jira={}",
+            config.sync_git, config.sync_claude,
             config.sync_gitlab, config.sync_jira);
 
         // Transition to Syncing

@@ -96,7 +96,7 @@ export function useWorklog(isAuthenticated: boolean) {
   const [ganttDate, setGanttDate] = useState(() => new Date().toISOString().split('T')[0])
   const [ganttSessions, setGanttSessions] = useState<TimelineSession[]>([])
   const [ganttLoading, setGanttLoading] = useState(false)
-  const [ganttSources, setGanttSources] = useState<string[]>(['claude_code', 'antigravity'])
+  const [ganttSources, setGanttSources] = useState<string[]>(['claude_code'])
 
   // CRUD state
   const [selectedItem, setSelectedItem] = useState<WorkItem | null>(null)
@@ -144,9 +144,7 @@ export function useWorklog(isAuthenticated: boolean) {
     async function fetchTimeline() {
       setGanttLoading(true)
       try {
-        // Pass sources filter (undefined if all sources selected to use backend defaults)
-        const sourcesToPass = ganttSources.length === 2 ? undefined : ganttSources
-        const result = await workItems.getTimeline(ganttDate, sourcesToPass)
+        const result = await workItems.getTimeline(ganttDate, ganttSources)
         const sessions: TimelineSession[] = result.sessions.map(s => ({
           id: s.id,
           project: s.project,

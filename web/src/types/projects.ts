@@ -72,11 +72,6 @@ export interface ClaudeSessionPathResponse {
   is_default: boolean
 }
 
-export interface AntigravitySessionPathResponse {
-  path: string
-  is_default: boolean
-}
-
 // Project description for AI context
 export interface ProjectDescription {
   project_name: string
@@ -134,7 +129,7 @@ export interface TimelineGroup {
 
 export interface TimelineSessionDetail {
   id: string
-  source: string // 'claude_code' | 'antigravity'
+  source: string // 'claude_code'
   title: string
   start_time: string
   end_time: string

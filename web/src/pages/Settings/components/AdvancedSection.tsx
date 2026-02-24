@@ -88,7 +88,7 @@ const operationConfigs: Record<Exclude<OperationType, null>, OperationConfig> = 
   },
   clear_synced: {
     title: '清除所有同步資料',
-    description: '此操作將刪除所有從資料來源同步的工作紀錄（Claude Code、Antigravity、Git 等），以及所有快照和摘要資料。',
+    description: '此操作將刪除所有從資料來源同步的工作紀錄（Claude Code、Git 等），以及所有快照和摘要資料。',
     warning: '手動建立的工作紀錄將保留，但所有自動同步的資料都會永久刪除且無法復原。',
     confirmText: 'DELETE_SYNCED_DATA',
     confirmPlaceholder: '輸入 DELETE_SYNCED_DATA 確認',

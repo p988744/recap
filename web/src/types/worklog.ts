@@ -14,7 +14,7 @@ export interface HourlyBreakdownItem {
   summary: string
   files_modified: string[]
   git_commits: GitCommitRef[]
-  /** Data source: "claude_code" or "antigravity" */
+  /** Data source: "claude_code" */
   source: string
 }
 

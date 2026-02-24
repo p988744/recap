@@ -69,11 +69,6 @@ pub fn run() {
             commands::claude::import_claude_sessions,
             commands::claude::summarize_claude_session,
             commands::claude::sync_claude_projects,
-            // Antigravity (Gemini Code)
-            commands::antigravity::check_antigravity_installed,
-            commands::antigravity::check_antigravity_api_status,
-            commands::antigravity::list_antigravity_sessions,
-            commands::antigravity::sync_antigravity_projects,
             // Reports - queries
             commands::reports::queries::get_personal_report,
             commands::reports::queries::get_summary_report,
@@ -151,8 +146,6 @@ pub fn run() {
             commands::projects::queries::get_project_directories,
             commands::projects::queries::get_claude_session_path,
             commands::projects::queries::update_claude_session_path,
-            commands::projects::queries::get_antigravity_session_path,
-            commands::projects::queries::update_antigravity_session_path,
             commands::projects::queries::add_manual_project,
             commands::projects::queries::remove_manual_project,
             commands::projects::queries::get_project_readme,

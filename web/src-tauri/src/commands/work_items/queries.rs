@@ -233,10 +233,10 @@ pub async fn get_timeline_data(
     let db = state.db.lock().await;
 
     // Determine which sources to filter by
-    // Default to both claude_code and antigravity if not specified or empty
+    // Default to claude_code if not specified or empty
     let sources = match &query.sources {
         Some(s) if !s.is_empty() => s.clone(),
-        _ => vec!["claude_code".to_string(), "antigravity".to_string()],
+        _ => vec!["claude_code".to_string()],
     };
 
     // Build the source placeholders for SQL IN clause

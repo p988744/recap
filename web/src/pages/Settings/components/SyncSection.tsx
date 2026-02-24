@@ -58,8 +58,6 @@ interface SyncSectionProps {
   setSyncGit: (v: boolean) => void
   syncClaude: boolean
   setSyncClaude: (v: boolean) => void
-  syncAntigravity: boolean
-  setSyncAntigravity: (v: boolean) => void
   // Sync UI
   loading: boolean
   saving: boolean
@@ -135,8 +133,6 @@ export function SyncSection({
   setSyncGit,
   syncClaude,
   setSyncClaude,
-  syncAntigravity: _syncAntigravity,
-  setSyncAntigravity: _setSyncAntigravity,
   loading,
   saving,
   onSave,

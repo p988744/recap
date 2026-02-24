@@ -18,7 +18,6 @@ interface DataSyncStatusProps {
   syncProgress: SyncProgress | null
   onTriggerSync: () => void
   onRefreshStatus?: () => Promise<void>
-  antigravityConnected?: boolean
 }
 
 function formatDateTime(isoString: string | null): string {
@@ -117,7 +116,6 @@ export function DataSyncStatus({
   syncProgress,
   onTriggerSync,
   onRefreshStatus,
-  antigravityConnected: _antigravityConnected,
 }: DataSyncStatusProps) {
   const [elapsedMs, setElapsedMs] = useState(0)
   const [cancelling, setCancelling] = useState(false)
