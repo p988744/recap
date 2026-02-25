@@ -965,7 +965,7 @@ pub async fn run_compaction_cycle(
     if llm.is_some() {
         let deleted = sqlx::query(
             r#"DELETE FROM work_summaries
-               WHERE user_id = ? AND scale IN ('daily', 'weekly', 'monthly')
+               WHERE user_id = ? AND scale IN ('hourly', 'daily', 'weekly', 'monthly')
                AND (summary GLOB '[0-9]* 筆 commit*' OR summary GLOB '[0-9][0-9]* 筆 commit*')
                AND project_path NOT LIKE '%manual-projects%'"#,
         )
