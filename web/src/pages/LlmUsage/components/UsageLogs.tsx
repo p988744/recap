@@ -24,6 +24,23 @@ function formatDuration(ms: number | null): string {
   return `${(ms / 1000).toFixed(1)}s`
 }
 
+function formatLocalTime(utcString: string): string {
+  try {
+    // SQLite CURRENT_TIMESTAMP stores UTC; append 'Z' if missing to parse as UTC
+    const iso = utcString.includes('Z') || utcString.includes('+') ? utcString : utcString + 'Z'
+    const date = new Date(iso)
+    if (isNaN(date.getTime())) return utcString.replace('T', ' ').slice(0, 16)
+    const y = date.getFullYear()
+    const m = String(date.getMonth() + 1).padStart(2, '0')
+    const d = String(date.getDate()).padStart(2, '0')
+    const h = String(date.getHours()).padStart(2, '0')
+    const min = String(date.getMinutes()).padStart(2, '0')
+    return `${y}-${m}-${d} ${h}:${min}`
+  } catch {
+    return utcString.replace('T', ' ').slice(0, 16)
+  }
+}
+
 function formatPurpose(purpose: string): string {
   const map: Record<string, string> = {
     'hourly_compaction': '小時壓縮',
@@ -69,7 +86,7 @@ export function UsageLogs({ logs }: UsageLogsProps) {
                 <>
                   <tr key={log.id} className="border-b border-border/50 hover:bg-muted/30">
                     <td className="py-2 pr-4 text-muted-foreground tabular-nums whitespace-nowrap">
-                      {log.created_at.replace('T', ' ').slice(0, 16)}
+                      {formatLocalTime(log.created_at)}
                     </td>
                     <td className="py-2 pr-4">{formatPurpose(log.purpose)}</td>
                     <td className="py-2 pr-4 text-muted-foreground">{log.model}</td>

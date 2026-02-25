@@ -234,8 +234,10 @@ pub struct LlmService {
     client: reqwest::Client,
 }
 
-/// Default timeout for LLM API calls (30 seconds)
-const LLM_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Default timeout for LLM API calls.
+/// Monthly compaction requests up to 8000 output tokens which can take 60-90s on
+/// smaller models (e.g. gpt-5-nano), so 120s provides adequate headroom.
+const LLM_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 impl LlmService {
     pub fn new(config: LlmConfig) -> Self {
