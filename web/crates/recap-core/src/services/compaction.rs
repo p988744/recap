@@ -28,7 +28,7 @@ use super::llm_usage::save_usage_log;
 use super::snapshot::{CommitSnapshot, ToolCallRecord};
 
 /// Maximum number of concurrent compaction tasks (limits LLM API parallelism)
-pub const COMPACTION_CONCURRENCY: usize = 5;
+pub const COMPACTION_CONCURRENCY: usize = 10;
 
 // ============ Types ============
 
@@ -954,20 +954,9 @@ pub async fn run_compaction_cycle(
         latest_compacted_date: None,
     };
 
-    // Check if LLM is available and working
-    if let Some(llm_service) = llm {
-        // Test LLM connection before starting compaction
-        match llm_service.test_connection().await {
-            Ok(test_result) => {
-                if !test_result.success {
-                    result.llm_warnings.push(format!("LLM 連線失敗: {}，使用規則摘要", test_result.message));
-                }
-            }
-            Err(e) => {
-                result.llm_warnings.push(format!("LLM 連線錯誤: {}，使用規則摘要", e));
-            }
-        }
-    } else {
+    // Skip test_connection() — if LLM is unavailable, individual summarize calls
+    // will fail and fallback to rule-based summaries automatically.
+    if llm.is_none() {
         result.llm_warnings.push("LLM 未設定，使用規則摘要".to_string());
     }
 

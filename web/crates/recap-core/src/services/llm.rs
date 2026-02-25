@@ -428,15 +428,18 @@ Git Commits:
         scale: &str,
     ) -> Result<(String, LlmUsageRecord), String> {
         let base = self.config.summary_max_chars;
-        // (prompt length hint, input data truncation, API max output tokens)
-        // Chinese text ≈ 1-2 tokens/char; use ~2x char count for safe token budget
-        let (length_hint, input_max_chars, output_max_tokens) = match scale {
-            "hourly" => (format!("{}-{}字", base / 4, base / 2), 4000, std::cmp::max(500, base)),
-            "daily" => (format!("{}-{}字", base / 2, base), 6000, std::cmp::max(1000, base * 2)),
-            "weekly" => (format!("{}-{}字", base, base * 2), 8000, std::cmp::max(2000, base * 3)),
-            "monthly" => (format!("{}-{}字", base * 3 / 2, base * 5 / 2), 10000, std::cmp::max(3000, base * 4)),
-            _ => (format!("{}-{}字", base / 2, base), 6000, std::cmp::max(1000, base * 2)),
+        // base = summary_max_chars from Settings (default 2000).
+        // Scale output proportionally: hourly is brief, monthly uses the full budget.
+        // Chinese ≈ 1.5 tokens/char, so multiply char target by 2 for token budget.
+        let (char_limit, input_max_chars) = match scale {
+            "hourly"  => (base / 8,      4000_u32),   // base=2000 → 250字
+            "daily"   => (base / 4,      6000),       // base=2000 → 500字
+            "weekly"  => (base / 2,      8000),       // base=2000 → 1000字
+            "monthly" => (base * 3 / 4, 10000),       // base=2000 → 1500字
+            _         => (base / 4,      6000),
         };
+        let length_hint = format!("{}字以內", char_limit);
+        let output_max_tokens = char_limit * 2; // 1 Chinese char ≈ 1.5-2 tokens
 
         let context_section = if context.is_empty() {
             String::new()
@@ -447,7 +450,7 @@ Git Commits:
             )
         };
 
-        let data = current_data.chars().take(input_max_chars).collect::<String>();
+        let data = current_data.chars().take(input_max_chars as usize).collect::<String>();
 
         let prompt = if let Some(ref custom_prompt) = self.config.summary_prompt {
             // User-provided custom prompt with placeholder substitution
@@ -457,27 +460,26 @@ Git Commits:
                 .replace("{data}", &data)
         } else {
             format!(
-                r#"你是工作報告助手。請根據以下工作資料，產生專業的工作摘要（{length_hint}）。
+                r#"你是工作報告助手。請根據以下工作資料，產生精簡的工作摘要（嚴格控制在{length_hint}）。
 {context_section}
 本時段的工作資料：
 {data}
 
-安全規則（最高優先，務必遵守）：
-- 絕對不要在摘要中出現任何機密資訊，包括：IP 位址、密碼、API Key、Token、Secret、帳號密碼組合、伺服器位址、內部 URL、資料庫連線字串
-- 如果原始資料包含這些機密資訊，請完全省略或用泛稱替代（如「更新伺服器認證設定」而非列出實際 IP 或密碼）
+安全規則（最高優先）：
+- 不要出現 IP、密碼、API Key、Token、內部 URL 等機密資訊
 
 撰寫風格：
-- 以「成果導向」撰寫，描述完成了什麼、推進了什麼、解決了什麼問題
-- 避免「流水帳」式的步驟列舉（不要寫「使用 grep 搜尋」、「透過 bash 登入」這類操作細節）
-- 每個要點應能讓主管或同事理解你的工作貢獻和價值
-- 若有 git commit，以 commit 訊息作為成果總結的依據
-- 程式碼中的檔名、函式名、變數名請用 `backtick` 包裹
+- 只寫「成果」：完成了什麼、解決了什麼問題、推進了什麼目標
+- 嚴禁流水帳：不要寫操作步驟（如「搜尋程式碼」「修改檔案」「執行測試」「閱讀文件」）
+- 合併同類工作，不要逐項列舉每個小改動
+- 若有 git commit，以 commit 訊息歸納成果
+- 程式碼名稱用 `backtick` 包裹
 
-請用繁體中文回答，格式如下：
-1. 第一行是一句話的總結摘要，點出核心成果或貢獻（不要加前綴）
-2. 空一行後，用條列式列出關鍵成果，每個要點以「- 」開頭
+格式：
+1. 一句話總結核心成果（不加前綴）
+2. 空一行後，用 3-5 個要點列出關鍵成果（以「- 」開頭）
 
-重要：請直接輸出完整的工作摘要內容，不要只回覆「OK」或「好的」。"#,
+重要：嚴格遵守字數限制，寧可精簡也不要冗長。直接輸出摘要。"#,
                 length_hint = length_hint,
                 context_section = context_section,
                 data = data
@@ -693,12 +695,15 @@ Git Commits:
             effort: effort.clone(),
         });
 
-        // For Responses API, reasoning tokens are separate from output tokens,
-        // so max_output_tokens directly controls text output length
+        // For Responses API, max_output_tokens covers BOTH reasoning + text tokens.
+        // Add headroom so reasoning doesn't consume the entire budget.
+        let reasoning_headroom: u32 = if reasoning.is_some() { 2000 } else { 0 };
+        let effective_max_tokens = max_tokens + reasoning_headroom;
+
         let request = ResponsesApiRequest {
             model: self.config.model.clone(),
             input: prompt.to_string(),
-            max_output_tokens: Some(max_tokens),
+            max_output_tokens: Some(effective_max_tokens),
             text: Some(ResponsesTextConfig {
                 format: ResponsesTextFormat {
                     format_type: "text".to_string(),
