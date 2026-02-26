@@ -5,6 +5,7 @@
 //!   work_summaries (hourly)    → work_summaries (daily)
 //!   work_summaries (daily)     → work_summaries (weekly)
 //!   work_summaries (weekly)    → work_summaries (monthly)
+//!   work_summaries (monthly)   → work_summaries (yearly)
 //!
 //! Each level uses the previous period's summary as context for LLM generation.
 //! Falls back to rule-based summarization when LLM is unavailable.
@@ -39,6 +40,7 @@ pub struct CompactionResult {
     pub daily_compacted: usize,
     pub weekly_compacted: usize,
     pub monthly_compacted: usize,
+    pub yearly_compacted: usize,
     pub errors: Vec<String>,
     /// LLM-related warnings (API errors that were handled with fallback)
     pub llm_warnings: Vec<String>,
@@ -337,6 +339,7 @@ pub async fn compact_period(
     let source_scale = match scale {
         "weekly" => "daily",
         "monthly" => "weekly",
+        "yearly" => "monthly",
         _ => return Err(format!("Invalid scale for compact_period: {}", scale)),
     };
     log::trace!("  Source scale: {}", source_scale);
@@ -556,11 +559,12 @@ pub async fn force_recompact(
     let compaction_result = run_compaction_cycle(pool, llm, user_id).await?;
 
     log::info!(
-        "Force recompaction complete: deleted {} summaries, created {} hourly + {} daily + {} monthly",
+        "Force recompaction complete: deleted {} summaries, created {} hourly + {} daily + {} monthly + {} yearly",
         summaries_to_delete,
         compaction_result.hourly_compacted,
         compaction_result.daily_compacted,
-        compaction_result.monthly_compacted
+        compaction_result.monthly_compacted,
+        compaction_result.yearly_compacted
     );
 
     Ok(ForceRecompactResult {
@@ -949,6 +953,7 @@ pub async fn run_compaction_cycle(
         daily_compacted: 0,
         weekly_compacted: 0,
         monthly_compacted: 0,
+        yearly_compacted: 0,
         errors: Vec::new(),
         llm_warnings: Vec::new(),
         latest_compacted_date: None,
@@ -965,7 +970,7 @@ pub async fn run_compaction_cycle(
     if llm.is_some() {
         let deleted = sqlx::query(
             r#"DELETE FROM work_summaries
-               WHERE user_id = ? AND scale IN ('hourly', 'daily', 'weekly', 'monthly')
+               WHERE user_id = ? AND scale IN ('hourly', 'daily', 'weekly', 'monthly', 'yearly')
                AND (summary GLOB '[0-9]* 筆 commit*' OR summary GLOB '[0-9][0-9]* 筆 commit*')
                AND project_path NOT LIKE '%manual-projects%'"#,
         )
@@ -1230,43 +1235,77 @@ pub async fn run_compaction_cycle(
     }
 
     // 7. Monthly compaction for the current month (re-compact while month is in progress)
-    log::debug!("Step 9: Finding projects for monthly compaction...");
-    let month_start = now.format("%Y-%m-01T00:00:00+00:00").to_string();
-    let month_end = {
+    // 9. Monthly compaction - find all months with weekly summaries but no monthly summary
+    log::debug!("Step 9: Finding uncompacted months...");
+
+    let uncompacted_months: Vec<(String, String, String)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT
+            ws.project_path,
+            STRFTIME('%Y-%m-01', ws.period_start) as month_start,
+            CASE WHEN CAST(STRFTIME('%m', ws.period_start) AS INTEGER) = 12
+                THEN STRFTIME('%Y', ws.period_start, '+1 year') || '-01-01'
+                ELSE STRFTIME('%Y-', ws.period_start) || PRINTF('%02d', CAST(STRFTIME('%m', ws.period_start) AS INTEGER) + 1) || '-01'
+            END as month_end
+        FROM work_summaries ws
+        LEFT JOIN work_summaries wm ON wm.user_id = ws.user_id
+            AND wm.project_path = ws.project_path
+            AND wm.scale = 'monthly'
+            AND STRFTIME('%Y-%m', wm.period_start) = STRFTIME('%Y-%m', ws.period_start)
+        WHERE ws.user_id = ? AND ws.scale = 'weekly' AND wm.id IS NULL
+            AND ws.project_path NOT LIKE '%manual-projects%'
+        ORDER BY month_start
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to find uncompacted months: {}", e))?;
+
+    // Also include the current month for re-compaction
+    let current_month_start = now.format("%Y-%m-01").to_string();
+    let current_month_end = {
         let year = now.format("%Y").to_string().parse::<i32>().unwrap_or(2026);
         let month = now.format("%m").to_string().parse::<u32>().unwrap_or(1);
-        let (next_year, next_month) = if month == 12 { (year + 1, 1) } else { (year, month + 1) };
-        format!("{:04}-{:02}-01T00:00:00+00:00", next_year, next_month)
+        let (ny, nm) = if month == 12 { (year + 1, 1) } else { (year, month + 1) };
+        format!("{:04}-{:02}-01", ny, nm)
     };
-    log::debug!("  Month period: {} to {}", month_start, month_end);
-
-    // Find all projects that have weekly summaries this month
-    let monthly_projects: Vec<(String,)> = sqlx::query_as(
+    let in_progress_months: Vec<(String,)> = sqlx::query_as(
         r#"
         SELECT DISTINCT ws.project_path
         FROM work_summaries ws
         WHERE ws.user_id = ? AND ws.scale = 'weekly'
-            AND ws.period_start >= ? AND ws.period_start < ?
+            AND STRFTIME('%Y-%m', ws.period_start) = ?
             AND ws.project_path NOT LIKE '%manual-projects%'
         "#,
     )
     .bind(user_id)
-    .bind(&month_start)
-    .bind(&month_end)
+    .bind(&current_month_start[..7]) // "YYYY-MM"
     .fetch_all(pool)
     .await
-    .map_err(|e| format!("Failed to find monthly projects: {}", e))?;
+    .map_err(|e| format!("Failed to find in-progress months: {}", e))?;
 
-    log::debug!("Found {} projects with weekly summaries for monthly compaction", monthly_projects.len());
-    log::info!("Step 10: Compacting {} monthly summaries...", monthly_projects.len());
+    let mut all_months = uncompacted_months;
+    for (project_path,) in in_progress_months {
+        let entry = (project_path, current_month_start.clone(), current_month_end.clone());
+        if !all_months.iter().any(|(p, s, _)| p == &entry.0 && s == &entry.1) {
+            all_months.push(entry);
+        }
+    }
 
-    for chunk in monthly_projects.chunks(COMPACTION_CONCURRENCY) {
-        let futs: Vec<_> = chunk.iter().map(|(project_path,)| {
-            log::debug!("  Compacting monthly: {}", project_path);
-            compact_period(pool, llm, user_id, Some(project_path.as_str()), "monthly", &month_start, &month_end)
+    log::info!("Step 10: Compacting {} monthly summaries...", all_months.len());
+
+    for chunk in all_months.chunks(COMPACTION_CONCURRENCY) {
+        let futs: Vec<_> = chunk.iter().map(|(project_path, month_start, month_end)| {
+            log::debug!("  Compacting monthly: {} @ {} to {}", project_path, month_start, month_end);
+            let period_start = format!("{}T00:00:00+00:00", month_start);
+            let period_end = format!("{}T00:00:00+00:00", month_end);
+            async move {
+                compact_period(pool, llm, user_id, Some(project_path.as_str()), "monthly", &period_start, &period_end).await
+            }
         }).collect();
         let chunk_results = futures::future::join_all(futs).await;
-        for (r, (project_path,)) in chunk_results.into_iter().zip(chunk.iter()) {
+        for (r, (project_path, month_start, _)) in chunk_results.into_iter().zip(chunk.iter()) {
             match r {
                 Ok(()) => {
                     log::debug!("    ✓ Monthly compaction successful");
@@ -1274,18 +1313,95 @@ pub async fn run_compaction_cycle(
                 }
                 Err(e) => {
                     log::warn!("    ✗ Monthly compaction failed: {}", e);
-                    result.errors.push(format!("monthly {}: {}", project_path, e));
+                    result.errors.push(format!("monthly {}/{}: {}", project_path, month_start, e));
+                }
+            }
+        }
+    }
+
+    // 10. Yearly compaction - find all years with monthly summaries but no yearly summary
+    log::debug!("Step 11: Finding uncompacted years...");
+
+    let uncompacted_years: Vec<(String, String, String)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT
+            ws.project_path,
+            STRFTIME('%Y', ws.period_start) || '-01-01' as year_start,
+            CAST(CAST(STRFTIME('%Y', ws.period_start) AS INTEGER) + 1 AS TEXT) || '-01-01' as year_end
+        FROM work_summaries ws
+        LEFT JOIN work_summaries wy ON wy.user_id = ws.user_id
+            AND wy.project_path = ws.project_path
+            AND wy.scale = 'yearly'
+            AND STRFTIME('%Y', wy.period_start) = STRFTIME('%Y', ws.period_start)
+        WHERE ws.user_id = ? AND ws.scale = 'monthly' AND wy.id IS NULL
+            AND ws.project_path NOT LIKE '%manual-projects%'
+        ORDER BY year_start
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to find uncompacted years: {}", e))?;
+
+    // Also include the current year for re-compaction
+    let current_year_start = now.format("%Y-01-01").to_string();
+    let current_year_end = format!("{}-01-01", now.format("%Y").to_string().parse::<i32>().unwrap_or(2026) + 1);
+    let in_progress_years: Vec<(String,)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT ws.project_path
+        FROM work_summaries ws
+        WHERE ws.user_id = ? AND ws.scale = 'monthly'
+            AND STRFTIME('%Y', ws.period_start) = ?
+            AND ws.project_path NOT LIKE '%manual-projects%'
+        "#,
+    )
+    .bind(user_id)
+    .bind(&current_year_start[..4]) // "YYYY"
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to find in-progress years: {}", e))?;
+
+    let mut all_years = uncompacted_years;
+    for (project_path,) in in_progress_years {
+        let entry = (project_path, current_year_start.clone(), current_year_end.clone());
+        if !all_years.iter().any(|(p, s, _)| p == &entry.0 && s == &entry.1) {
+            all_years.push(entry);
+        }
+    }
+
+    log::info!("Step 12: Compacting {} yearly summaries...", all_years.len());
+
+    for chunk in all_years.chunks(COMPACTION_CONCURRENCY) {
+        let futs: Vec<_> = chunk.iter().map(|(project_path, year_start, year_end)| {
+            log::debug!("  Compacting yearly: {} @ {} to {}", project_path, year_start, year_end);
+            let period_start = format!("{}T00:00:00+00:00", year_start);
+            let period_end = format!("{}T00:00:00+00:00", year_end);
+            async move {
+                compact_period(pool, llm, user_id, Some(project_path.as_str()), "yearly", &period_start, &period_end).await
+            }
+        }).collect();
+        let chunk_results = futures::future::join_all(futs).await;
+        for (r, (project_path, year_start, _)) in chunk_results.into_iter().zip(chunk.iter()) {
+            match r {
+                Ok(()) => {
+                    log::debug!("    ✓ Yearly compaction successful");
+                    result.yearly_compacted += 1;
+                }
+                Err(e) => {
+                    log::warn!("    ✗ Yearly compaction failed: {}", e);
+                    result.errors.push(format!("yearly {}/{}: {}", project_path, year_start, e));
                 }
             }
         }
     }
 
     log::info!(
-        "Compaction cycle complete: {} hourly, {} daily, {} weekly, {} monthly, {} errors",
+        "Compaction cycle complete: {} hourly, {} daily, {} weekly, {} monthly, {} yearly, {} errors",
         result.hourly_compacted,
         result.daily_compacted,
         result.weekly_compacted,
         result.monthly_compacted,
+        result.yearly_compacted,
         result.errors.len()
     );
 
