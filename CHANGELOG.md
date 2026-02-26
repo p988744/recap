@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0-beta.4] - 2026-02-26
+
+### Added
+
+- **年度壓縮（Yearly Compaction）** - 新增 yearly 級別摘要，從 monthly summaries 彙總產生年度工作摘要
+- **歷史月份補壓縮** - Monthly compaction 現在會發現所有缺少摘要的歷史月份（之前只壓縮當月）
+- **Smart Re-compact** - Compaction 自動偵測 rule-based 摘要（"N 筆 commit" 格式）並用 LLM 重新生成
+
+### Fixed
+
+- **LLM 超時問題** - API timeout 從 30s 增至 120s，解決月度壓縮逾時失敗
+- **GPT-5 Reasoning Token 預算** - Responses API 加入 +2000 reasoning headroom，避免 reasoning 吃光 output budget
+- **LLM 輸出過於冗長** - Token budget 改為依 Settings 頁面 `summary_max_chars` 按比例縮放，prompt 強制精簡風格
+- **Usage Logs 時區錯誤** - SQLite UTC 時間戳改為顯示本地時間
+
+### Improved
+
+- **Compaction 並行度** - `COMPACTION_CONCURRENCY` 從 5 提升至 10
+- **移除冗餘 API 呼叫** - Compaction 不再於每次 cycle 呼叫 `test_connection()`
+
 ## [2.2.0-beta.3] - 2026-02-24
 
 ### Removed
