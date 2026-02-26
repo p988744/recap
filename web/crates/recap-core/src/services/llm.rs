@@ -436,6 +436,7 @@ Git Commits:
             "daily"   => (base / 4,      6000),       // base=2000 → 500字
             "weekly"  => (base / 2,      8000),       // base=2000 → 1000字
             "monthly" => (base * 3 / 4, 10000),       // base=2000 → 1500字
+            "yearly"  => (base,         12000),       // base=2000 → 2000字
             _         => (base / 4,      6000),
         };
         let length_hint = format!("{}字以內", char_limit);

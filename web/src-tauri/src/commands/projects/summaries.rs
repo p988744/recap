@@ -308,6 +308,7 @@ pub async fn get_cached_summaries_batch(
         "day" => "daily",
         "week" => "weekly",
         "month" => "monthly",
+        "year" => "yearly",
         _ => &time_unit,
     };
 
