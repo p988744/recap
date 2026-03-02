@@ -163,10 +163,14 @@ jobs:
           elif [[ "${{ matrix.platform }}" == "ubuntu-22.04" ]]; then
             BUNDLE_DIR="web/target/release/bundle"
 
-            # Upload .AppImage
+            # Upload .AppImage + updater sig (Tauri v2 uses .AppImage directly, not .AppImage.tar.gz)
             APPIMAGE=$(find "$BUNDLE_DIR/appimage" -name "*.AppImage" -not -name "*.sig" -not -name "*.tar.gz" 2>/dev/null | head -1)
+            SIG=$(find "$BUNDLE_DIR/appimage" -name "*.AppImage.sig" 2>/dev/null | head -1)
             if [ -n "$APPIMAGE" ]; then
               gh release upload "$TAG" "$APPIMAGE"
+            fi
+            if [ -n "$SIG" ]; then
+              gh release upload "$TAG" "$SIG"
             fi
 
             # Upload .deb
@@ -175,27 +179,17 @@ jobs:
               gh release upload "$TAG" "$DEB"
             fi
 
-            # Upload updater .tar.gz + .sig
-            TARGZ=$(find "$BUNDLE_DIR/appimage" -name "*.AppImage.tar.gz" -not -name "*.sig" 2>/dev/null | head -1)
-            SIG=$(find "$BUNDLE_DIR/appimage" -name "*.AppImage.tar.gz.sig" 2>/dev/null | head -1)
-            if [ -n "$TARGZ" ] && [ -n "$SIG" ]; then
-              gh release upload "$TAG" "$TARGZ" "$SIG"
-            fi
-
           elif [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
             BUNDLE_DIR="web/target/release/bundle"
 
-            # Upload .exe installer
+            # Upload .exe installer + updater sig (Tauri v2 uses .exe directly, not .nsis.zip)
             EXE=$(find "$BUNDLE_DIR/nsis" -name "*-setup.exe" -not -name "*.sig" 2>/dev/null | head -1)
+            SIG=$(find "$BUNDLE_DIR/nsis" -name "*-setup.exe.sig" 2>/dev/null | head -1)
             if [ -n "$EXE" ]; then
               gh release upload "$TAG" "$EXE"
             fi
-
-            # Upload updater .nsis.zip + .sig
-            NSIS=$(find "$BUNDLE_DIR/nsis" -name "*.nsis.zip" -not -name "*.sig" 2>/dev/null | head -1)
-            SIG=$(find "$BUNDLE_DIR/nsis" -name "*.nsis.zip.sig" 2>/dev/null | head -1)
-            if [ -n "$NSIS" ] && [ -n "$SIG" ]; then
-              gh release upload "$TAG" "$NSIS" "$SIG"
+            if [ -n "$SIG" ]; then
+              gh release upload "$TAG" "$SIG"
             fi
           fi
 
@@ -278,8 +272,8 @@ jobs:
               }
             }
 
-            // Linux - updater uses .AppImage.tar.gz
-            const linuxName = `Recap_${version}_amd64.AppImage.tar.gz`;
+            // Linux - updater uses .AppImage directly (Tauri v2 format)
+            const linuxName = `Recap_${version}_amd64.AppImage`;
             if (hasAsset(linuxName)) {
               const sig = await getAssetSig(`${linuxName}.sig`);
               if (sig) {
@@ -290,8 +284,8 @@ jobs:
               }
             }
 
-            // Windows - updater uses .nsis.zip
-            const winName = `Recap_${version}_x64-setup.nsis.zip`;
+            // Windows - updater uses .exe directly (Tauri v2 format)
+            const winName = `Recap_${version}_x64-setup.exe`;
             if (hasAsset(winName)) {
               const sig = await getAssetSig(`${winName}.sig`);
               if (sig) {
