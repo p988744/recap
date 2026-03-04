@@ -54,6 +54,9 @@ jobs:
 
       - name: Build Tauri app (debug)
         working-directory: web
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           cargo install tauri-cli --version "^2" --locked
           cargo tauri build --debug
