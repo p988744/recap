@@ -112,11 +112,20 @@ pub struct SummarizeDescriptionResponse {
     pub summary: String,
 }
 
+/// Resolved Jira/Tempo config with auth type determined from stored credentials
+struct JiraConfig {
+    jira_url: String,
+    jira_email: Option<String>,
+    jira_pat: String,
+    tempo_token: Option<String>,
+    auth_type: JiraAuthType,
+}
+
 // Helper function to get user's Jira/Tempo config
 async fn get_user_config(
     pool: &sqlx::SqlitePool,
     user_id: &str,
-) -> Result<(String, Option<String>, Option<String>, Option<String>), String> {
+) -> Result<JiraConfig, String> {
     let row = sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>, Option<String>)>(
         "SELECT jira_url, jira_email, jira_pat, tempo_token FROM users WHERE id = ?",
     )
@@ -127,12 +136,22 @@ async fn get_user_config(
     .ok_or_else(|| "User not found".to_string())?;
 
     let jira_url = row.0.ok_or_else(|| "Jira URL not configured".to_string())?;
+    let jira_pat = row.2.ok_or_else(|| "Jira token not configured".to_string())?;
 
-    if row.2.is_none() {
-        return Err("Jira PAT not configured".to_string());
-    }
+    // Determine auth type: if email is set alongside token, it's Basic Auth (Jira Cloud)
+    let auth_type = if row.1.is_some() {
+        JiraAuthType::Basic
+    } else {
+        JiraAuthType::Pat
+    };
 
-    Ok((jira_url, row.1, row.2, row.3))
+    Ok(JiraConfig {
+        jira_url,
+        jira_email: row.1,
+        jira_pat,
+        tempo_token: row.3,
+        auth_type,
+    })
 }
 
 // Helpers
@@ -247,13 +266,13 @@ pub async fn test_tempo_connection(
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
     let db = state.db.lock().await;
 
-    let (jira_url, jira_email, jira_pat, _tempo_token) = get_user_config(&db.pool, &claims.sub).await?;
+    let cfg = get_user_config(&db.pool, &claims.sub).await?;
 
     let client = JiraClient::new(
-        &jira_url,
-        &jira_pat.unwrap(),
-        jira_email.as_deref(),
-        JiraAuthType::Pat,
+        &cfg.jira_url,
+        &cfg.jira_pat,
+        cfg.jira_email.as_deref(),
+        cfg.auth_type,
     )
     .map_err(|e| e.to_string())?;
 
@@ -281,13 +300,13 @@ pub async fn validate_jira_issue(
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
     let db = state.db.lock().await;
 
-    let (jira_url, jira_email, jira_pat, _tempo_token) = get_user_config(&db.pool, &claims.sub).await?;
+    let cfg = get_user_config(&db.pool, &claims.sub).await?;
 
     let client = JiraClient::new(
-        &jira_url,
-        &jira_pat.unwrap(),
-        jira_email.as_deref(),
-        JiraAuthType::Pat,
+        &cfg.jira_url,
+        &cfg.jira_pat,
+        cfg.jira_email.as_deref(),
+        cfg.auth_type,
     )
     .map_err(|e| e.to_string())?;
 
@@ -334,16 +353,20 @@ pub async fn sync_worklogs_to_tempo(
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
     let db = state.db.lock().await;
 
-    let (jira_url, jira_email, jira_pat, tempo_token) = get_user_config(&db.pool, &claims.sub).await?;
+    let cfg = get_user_config(&db.pool, &claims.sub).await?;
 
-    let use_tempo = tempo_token.is_some();
+    let use_tempo = cfg.tempo_token.is_some();
+    let auth_type_str = match cfg.auth_type {
+        JiraAuthType::Basic => "basic",
+        JiraAuthType::Pat => "pat",
+    };
 
     let mut uploader = WorklogUploader::new(
-        &jira_url,
-        &jira_pat.unwrap(),
-        jira_email.as_deref(),
-        "pat",
-        tempo_token.as_deref(),
+        &cfg.jira_url,
+        &cfg.jira_pat,
+        cfg.jira_email.as_deref(),
+        auth_type_str,
+        cfg.tempo_token.as_deref(),
     )
     .map_err(|e| e.to_string())?;
 
@@ -456,11 +479,11 @@ pub async fn get_tempo_worklogs(
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
     let db = state.db.lock().await;
 
-    let (jira_url, _jira_email, _jira_pat, tempo_token) = get_user_config(&db.pool, &claims.sub).await?;
+    let cfg = get_user_config(&db.pool, &claims.sub).await?;
 
-    let tempo_token = tempo_token.ok_or_else(|| "Tempo token not configured".to_string())?;
+    let tempo_token = cfg.tempo_token.ok_or_else(|| "Tempo token not configured".to_string())?;
 
-    let tempo = TempoClient::new(&jira_url, &tempo_token)
+    let tempo = TempoClient::new(&cfg.jira_url, &tempo_token)
         .map_err(|e| e.to_string())?;
 
     tempo.get_worklogs(&request.date_from, &request.date_to).await
@@ -477,13 +500,13 @@ pub async fn search_jira_issues(
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
     let db = state.db.lock().await;
 
-    let (jira_url, jira_email, jira_pat, _tempo_token) = get_user_config(&db.pool, &claims.sub).await?;
+    let cfg = get_user_config(&db.pool, &claims.sub).await?;
 
     let client = JiraClient::new(
-        &jira_url,
-        &jira_pat.unwrap(),
-        jira_email.as_deref(),
-        JiraAuthType::Pat,
+        &cfg.jira_url,
+        &cfg.jira_pat,
+        cfg.jira_email.as_deref(),
+        cfg.auth_type,
     )
     .map_err(|e| e.to_string())?;
 
@@ -522,13 +545,13 @@ pub async fn batch_get_jira_issues(
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
     let db = state.db.lock().await;
 
-    let (jira_url, jira_email, jira_pat, _tempo_token) = get_user_config(&db.pool, &claims.sub).await?;
+    let cfg = get_user_config(&db.pool, &claims.sub).await?;
 
     let client = JiraClient::new(
-        &jira_url,
-        &jira_pat.unwrap(),
-        jira_email.as_deref(),
-        JiraAuthType::Pat,
+        &cfg.jira_url,
+        &cfg.jira_pat,
+        cfg.jira_email.as_deref(),
+        cfg.auth_type,
     )
     .map_err(|e| e.to_string())?;
 

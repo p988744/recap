@@ -74,7 +74,8 @@ export function useJiraForm(config: ConfigResponse | null) {
       const result = await tempo.testConnection()
       setMessage({ type: 'success', text: result.message })
     } catch (err) {
-      setMessage({ type: 'error', text: err instanceof Error ? err.message : '連線失敗' })
+      const msg = err instanceof Error ? err.message : typeof err === 'string' ? err : '連線失敗'
+      setMessage({ type: 'error', text: msg })
     } finally {
       setTesting(false)
     }
