@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0-beta.6] - 2026-03-04
+
+### Fixed
+
+- **Jira auth type 寫死問題** - `tempo.rs` 所有 API 呼叫（test connection、validate issue、search、batch get、sync worklogs）原本寫死 `JiraAuthType::Pat`，Basic Auth（Jira Cloud）用戶無法使用。現在從 DB 設定自動判斷 auth type
+- **Jira 測試連線錯誤訊息被吞掉** - `useJiraForm.ts` 的 catch block 未處理 Tauri invoke 回傳的 string error，永遠只顯示「連線失敗」，現在會顯示後端實際錯誤訊息
+
+### Improved
+
+- **LLM 摘要品質大幅改善** - 三個 prompt（`summarize_work_period`、`summarize_daily_work`、`summarize_worklog`）全面重寫：
+  - 新增「禁止用語清單」杜絕空泛描述（「提升穩定性」「推動落地」「確保一致性」等）
+  - 要求每條必須包含具體物件（檔案名、模組名、API、數字）
+  - 格式改為純列點（移除冗長的開頭總結段落），每條 ≤ 30 字
+  - Tempo worklog description 強制包含具體技術內容
+
+## [2.2.0-beta.5] - 2026-03-02
+
+### Fixed
+
+- **Windows/Linux 自動更新** - 修正 CI 使用過時的 Tauri v1 updater artifact 格式（`.nsis.zip` / `.AppImage.tar.gz`），更新為 Tauri v2 格式（`.exe` / `.AppImage`），使 `latest.json` 正確包含 `windows-x86_64` 和 `linux-x86_64` 平台
+
 ## [2.2.0-beta.4] - 2026-02-26
 
 ### Added

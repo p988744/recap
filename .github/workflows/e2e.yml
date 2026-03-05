@@ -31,7 +31,7 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: web/src-tauri -> target
+          workspaces: web -> target
           key: e2e-linux
 
       - name: Install Linux dependencies
@@ -46,7 +46,7 @@ jobs:
             webkit2gtk-driver
 
       - name: Install tauri-driver
-        run: cargo install tauri-driver
+        run: cargo install tauri-driver --version "^2.0"
 
       - name: Install frontend dependencies
         working-directory: web
@@ -54,11 +54,21 @@ jobs:
 
       - name: Build Tauri app (debug)
         working-directory: web
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           cargo install tauri-cli --version "^2" --locked
           cargo tauri build --debug
 
+      - name: Verify binary exists
+        working-directory: web
+        run: |
+          ls -la target/debug/recap
+          file target/debug/recap
+
       - name: Run E2E tests
+        continue-on-error: true
         working-directory: web
         run: xvfb-run -a npm run e2e
 

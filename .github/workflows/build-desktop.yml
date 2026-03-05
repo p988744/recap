@@ -1,10 +1,6 @@
 name: Build Desktop App
 
 on:
-  # Nightly build - 每天凌晨 2 點 (UTC+8 = UTC 18:00)
-  schedule:
-    - cron: '0 18 * * *'
-
   # 手動觸發（v* tag push 由 release.yml 處理）
   workflow_dispatch:
     inputs:
@@ -171,6 +167,8 @@ jobs:
         timeout-minutes: 30
         working-directory: web
         env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -183,6 +181,9 @@ jobs:
       - name: Build Tauri app (Linux/Windows)
         if: steps.should_run.outputs.should_run == 'true' && !startsWith(matrix.platform, 'macos')
         working-directory: web
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           cargo install tauri-cli --version "^2" --locked
           cargo tauri build --target ${{ matrix.target }}
@@ -219,7 +220,7 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
-    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all'
+    if: inputs.platform == 'all'
     permissions:
       contents: write
 
@@ -320,21 +321,3 @@ jobs:
           prerelease: ${{ steps.version.outputs.prerelease }}
           body_path: release_body.md
           files: release-files/*
-
-  # 清理舊的 nightly releases（保留最近 7 個）
-  cleanup:
-    needs: release
-    runs-on: ubuntu-latest
-    if: github.ref_type != 'tag'
-    permissions:
-      contents: write
-
-    steps:
-      - name: Delete old nightly releases
-        uses: dev-drprasad/delete-older-releases@v0.3.4
-        with:
-          keep_latest: 7
-          delete_tag_pattern: nightly-
-          delete_tags: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

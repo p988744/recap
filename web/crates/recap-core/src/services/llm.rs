@@ -392,7 +392,7 @@ Session 內容：
     /// Generate a daily work summary
     pub async fn summarize_daily_work(&self, sessions_info: &str, commits_info: &str) -> Result<(String, LlmUsageRecord), String> {
         let prompt = format!(
-            r#"請根據以下工作記錄整理成每日工作摘要（100-200字）。
+            r#"請根據以下工作記錄整理成每日工作摘要（3-5 條，每條 ≤ 30 字）。
 
 Claude Code Sessions:
 {}
@@ -400,16 +400,16 @@ Claude Code Sessions:
 Git Commits:
 {}
 
-請用繁體中文撰寫摘要，著重於：
-1. 今日達成的關鍵成果或里程碑
-2. 對專案的具體推進（如：完成某功能、解決某問題、提升某指標）
-3. 避免流水帳式的步驟描述，應以成果和貢獻為主
+安全規則：不要出現 IP、密碼、API Key、Token、內部 URL。
 
-安全規則（務必遵守）：
-- 絕對不要出現任何 IP 位址、密碼、API Key、Token、帳號密碼、伺服器位址、內部 URL
-- 用泛稱替代機密資訊
+撰寫規則：
+- 每條必須包含具體物件（檔案名、模組名、API、數字）
+- 格式：動詞 + 具體物件 + 結果（如：修正 `auth.rs` JWT 過期判斷邏輯）
+- 禁止空泛用語：「提升穩定性」「確保一致性」「推動落地」「奠定基礎」
+- 合併同類工作，不要逐條列舉小改動
+- 程式碼名稱用 `backtick` 包裹
 
-直接輸出摘要內容，不要加任何前綴。"#,
+格式：直接列出要點（以「- 」開頭），不要寫開頭總結段落。"#,
             sessions_info.chars().take(2000).collect::<String>(),
             commits_info.chars().take(1000).collect::<String>()
         );
@@ -469,18 +469,23 @@ Git Commits:
 安全規則（最高優先）：
 - 不要出現 IP、密碼、API Key、Token、內部 URL 等機密資訊
 
+禁止用語（出現即不合格）：
+- 「提升穩定性」「確保一致性」「推動落地」「強化控管」「奠定基礎」「長期化之路」
+- 「提升可追蹤性」「確保向後相容」「推進目標」「穩固流程」
+- 任何不帶具體對象的空泛動詞短語
+
 撰寫風格：
-- 只寫「成果」：完成了什麼、解決了什麼問題、推進了什麼目標
-- 嚴禁流水帳：不要寫操作步驟（如「搜尋程式碼」「修改檔案」「執行測試」「閱讀文件」）
+- 每一條都必須包含「具體物件」：檔案名、函數名、API 路徑、模組名、數字
+- 格式：動詞 + 具體物件 + 結果/數量（如：修正 `tempo.rs` auth type 寫死問題、新增 1,447 筆繁體技能翻譯）
 - 合併同類工作，不要逐項列舉每個小改動
 - 若有 git commit，以 commit 訊息歸納成果
 - 程式碼名稱用 `backtick` 包裹
 
 格式：
-1. 一句話總結核心成果（不加前綴）
-2. 空一行後，用 3-5 個要點列出關鍵成果（以「- 」開頭）
+- 直接列出 3-5 個要點（以「- 」開頭），不要寫開頭總結段落
+- 每條 ≤ 30 字，寧短勿長
 
-重要：嚴格遵守字數限制，寧可精簡也不要冗長。直接輸出摘要。"#,
+直接輸出摘要。"#,
                 length_hint = length_hint,
                 context_section = context_section,
                 data = data
@@ -495,19 +500,19 @@ Git Commits:
     /// Produces a concise single-line summary (max ~50 chars) suitable for Tempo worklog description.
     pub async fn summarize_worklog(&self, description: &str) -> Result<(String, LlmUsageRecord), String> {
         let prompt = format!(
-            r#"請將以下工作日誌濃縮成一句簡短摘要（最多50字），適合作為 Tempo 工作紀錄的 description。
+            r#"將以下工作日誌濃縮成一句 Jira worklog 描述（最多 50 字）。
 
-要求：
-1. 只輸出一行文字，不要換行、不要編號、不要 markdown
-2. 使用繁體中文
-3. 用動詞開頭描述主要完成的成果（如：完成、建立、修復、優化）
-4. 省略操作步驟細節，保留核心成果和貢獻
-5. 絕對不要出現任何 IP 位址、密碼、API Key、Token、伺服器位址等機密資訊
+規則：
+- 只輸出一行，不換行、不編號、不加 markdown
+- 格式：動詞 + 具體物件（如：修正 `tempo.rs` auth type 判斷、新增批次匯出功能）
+- 必須包含具體的檔案名、模組名或功能名
+- 禁止空泛用語（「提升穩定性」「優化流程」「強化控管」）
+- 不要出現 IP、密碼、API Key、Token 等機密
 
 工作日誌：
 {}
 
-直接輸出摘要，不要加任何前綴或說明。"#,
+直接輸出。"#,
             description.chars().take(2000).collect::<String>()
         );
 

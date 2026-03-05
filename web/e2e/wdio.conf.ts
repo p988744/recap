@@ -7,7 +7,7 @@ let tauriDriver: ChildProcess | undefined
 // WebdriverIO config for Tauri E2E testing via tauri-driver
 // Type assertion needed because tauri:options is not in standard WDIO types
 export const config = {
-  specs: ['./e2e/specs/**/*.e2e.ts'],
+  specs: ['./specs/**/*.e2e.ts'],
   exclude: [],
 
   maxInstances: 1,
@@ -74,24 +74,20 @@ export const config = {
 
 function getBinaryPath(): string {
   const os = platform()
+  // process.cwd() is web/ when running via `npm run e2e` from web/
+  const webRoot = process.cwd()
 
   if (os === 'linux') {
-    return resolve(
-      __dirname,
-      'src-tauri/target/debug/recap'
-    )
+    return resolve(webRoot, 'target/debug/recap')
   }
 
   if (os === 'win32') {
-    return resolve(
-      __dirname,
-      'src-tauri/target/debug/recap.exe'
-    )
+    return resolve(webRoot, 'target/debug/recap.exe')
   }
 
   // macOS — tauri-driver doesn't support macOS, but keep path for reference
   return resolve(
-    __dirname,
-    'src-tauri/target/debug/bundle/macos/Recap.app/Contents/MacOS/Recap'
+    webRoot,
+    'target/debug/bundle/macos/Recap.app/Contents/MacOS/Recap'
   )
 }
