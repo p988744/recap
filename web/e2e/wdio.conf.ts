@@ -10,7 +10,7 @@ let tauriDriver: ChildProcess | undefined
 // WebdriverIO config for Tauri E2E testing via tauri-driver
 // Type assertion needed because tauri:options is not in standard WDIO types
 export const config = {
-  specs: ['./e2e/specs/**/*.e2e.ts'],
+  specs: ['./specs/**/*.e2e.ts'],
   exclude: [],
 
   maxInstances: 1,
