@@ -1,6 +1,9 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { platform } from 'node:os'
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
 
 let tauriDriver: ChildProcess | undefined
 
@@ -74,24 +77,19 @@ export const config = {
 
 function getBinaryPath(): string {
   const os = platform()
+  const webRoot = resolve(__dirname, '..')
 
   if (os === 'linux') {
-    return resolve(
-      __dirname,
-      'src-tauri/target/debug/recap'
-    )
+    return resolve(webRoot, 'src-tauri/target/debug/recap')
   }
 
   if (os === 'win32') {
-    return resolve(
-      __dirname,
-      'src-tauri/target/debug/recap.exe'
-    )
+    return resolve(webRoot, 'src-tauri/target/debug/recap.exe')
   }
 
   // macOS — tauri-driver doesn't support macOS, but keep path for reference
   return resolve(
-    __dirname,
+    webRoot,
     'src-tauri/target/debug/bundle/macos/Recap.app/Contents/MacOS/Recap'
   )
 }
