@@ -1,9 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { platform } from 'node:os'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-
-const __dirname = dirname(fileURLToPath(import.meta.url))
+import { resolve } from 'node:path'
 
 let tauriDriver: ChildProcess | undefined
 
@@ -77,7 +74,8 @@ export const config = {
 
 function getBinaryPath(): string {
   const os = platform()
-  const webRoot = resolve(__dirname, '..')
+  // process.cwd() is web/ when running via `npm run e2e` from web/
+  const webRoot = process.cwd()
 
   if (os === 'linux') {
     return resolve(webRoot, 'target/debug/recap')
