@@ -80,16 +80,16 @@ function getBinaryPath(): string {
   const webRoot = resolve(__dirname, '..')
 
   if (os === 'linux') {
-    return resolve(webRoot, 'src-tauri/target/debug/recap')
+    return resolve(webRoot, 'target/debug/recap')
   }
 
   if (os === 'win32') {
-    return resolve(webRoot, 'src-tauri/target/debug/recap.exe')
+    return resolve(webRoot, 'target/debug/recap.exe')
   }
 
   // macOS — tauri-driver doesn't support macOS, but keep path for reference
   return resolve(
     webRoot,
-    'src-tauri/target/debug/bundle/macos/Recap.app/Contents/MacOS/Recap'
+    'target/debug/bundle/macos/Recap.app/Contents/MacOS/Recap'
   )
 }
