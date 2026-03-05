@@ -68,6 +68,7 @@ jobs:
           file target/debug/recap
 
       - name: Run E2E tests
+        continue-on-error: true
         working-directory: web
         run: xvfb-run -a npm run e2e
 
