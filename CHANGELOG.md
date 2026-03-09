@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0-beta.8] - 2026-03-09
+
+### Fixed
+
+- **進階設定不生效** - `batch_compaction.rs` 的 `get_llm_config()` 只查 4 個 DB 欄位，將 `summary_max_chars`、`reasoning_effort`、`summary_prompt` 寫死為預設值，導致用戶在設定頁調整的摘要字數上限和自訂 Prompt 在 compaction 時被忽略。同步修正 `test_llm_connection()` 的相同問題
+
 ## [2.2.0-beta.7] - 2026-03-09
 
 ### Improved
