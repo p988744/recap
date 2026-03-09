@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0-beta.9] - 2026-03-09
+
+### Added
+
+- **單一專案摘要重新計算** - 在工作日誌每個專案卡片的 Export 按鈕旁新增重新計算按鈕（RotateCcw 圖示），可針對指定專案 + 日期重新產生摘要，無需重算全部資料。新增 `recompact_project_day` Tauri command
+
 ## [2.2.0-beta.8] - 2026-03-09
 
 ### Fixed

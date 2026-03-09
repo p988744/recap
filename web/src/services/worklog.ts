@@ -86,3 +86,14 @@ export async function forceRecompact(options: ForceRecompactOptions = {}): Promi
     scales: options.scales,
   })
 }
+
+/**
+ * Recompact summaries for a specific project on a specific date.
+ * Deletes hourly + daily summaries and regenerates them.
+ */
+export async function recompactProjectDay(projectPath: string, date: string): Promise<ForceRecompactResult> {
+  return invokeAuth<ForceRecompactResult>('recompact_project_day', {
+    project_path: projectPath,
+    date,
+  })
+}

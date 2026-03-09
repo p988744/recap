@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useCallback, useMemo } from 'react'
 import { Plus, Upload, CalendarDays } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -12,6 +12,7 @@ import {
 import { Card, CardContent } from '@/components/ui/card'
 import { WorkGanttChart } from '@/components/WorkGanttChart'
 import { useAuth } from '@/lib/auth'
+import { worklog as worklogService } from '@/services'
 import { useWorklog, useTempoSync } from './hooks'
 import { useHttpExport } from '../WorkItems/hooks/useHttpExport'
 import { DateRangeBar, DaySection, TempoSyncModal, TempoBatchSyncModal, TempoWeekSyncModal } from './components'
@@ -149,6 +150,12 @@ export function WorklogPage() {
     }
     return rows
   }, [wl.days, ts.getSyncRecord, ts.getMappedIssueKey])
+
+  // Recompact a single project's summary for a given date
+  const handleRecompactProject = useCallback(async (projectPath: string, date: string) => {
+    await worklogService.recompactProjectDay(projectPath, date)
+    await wl.fetchOverview()
+  }, [wl.fetchOverview])
 
   // Loading state
   if (wl.loading) {
@@ -300,6 +307,7 @@ export function WorklogPage() {
               onSyncDay={wl.jiraConfigured ? ts.openBatchSyncModal : undefined}
               getMappedIssueKey={wl.jiraConfigured ? ts.getMappedIssueKey : undefined}
               onIssueKeyChange={wl.jiraConfigured ? ts.updateIssueKey : undefined}
+              onRecompactProject={handleRecompactProject}
             />
           ))
         )}

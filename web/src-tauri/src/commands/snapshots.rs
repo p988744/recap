@@ -839,6 +839,67 @@ pub async fn force_recompact(
     })
 }
 
+/// Recompact summaries for a specific project on a specific date.
+///
+/// Deletes hourly + daily summaries for the given project_path + date,
+/// then re-runs the compaction cycle to regenerate them.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn recompact_project_day(
+    state: State<'_, AppState>,
+    token: String,
+    project_path: String,
+    date: String,
+) -> Result<ForceRecompactResponse, String> {
+    let claims = verify_token(&token).map_err(|e| e.to_string())?;
+    let db = state.db.lock().await;
+
+    // Delete hourly + daily summaries for this project + date
+    let from_ts = format!("{}T00:00:00", date);
+    let to_ts = format!("{}T23:59:59", date);
+
+    let deleted = sqlx::query(
+        r#"DELETE FROM work_summaries
+           WHERE user_id = ? AND project_path = ?
+             AND scale IN ('hourly', 'daily')
+             AND period_start >= ? AND period_start <= ?"#,
+    )
+    .bind(&claims.sub)
+    .bind(&project_path)
+    .bind(&from_ts)
+    .bind(&to_ts)
+    .execute(&db.pool)
+    .await
+    .map_err(|e| format!("Failed to delete summaries: {}", e))?;
+
+    let summaries_deleted = deleted.rows_affected() as usize;
+    log::info!(
+        "Recompact project day: deleted {} summaries for {} on {}",
+        summaries_deleted, project_path, date
+    );
+
+    // Re-run compaction cycle (will detect gaps and regenerate)
+    let llm = recap_core::services::llm::create_llm_service(&db.pool, &claims.sub)
+        .await
+        .ok();
+
+    let result = recap_core::services::compaction::run_compaction_cycle(
+        &db.pool,
+        llm.as_ref(),
+        &claims.sub,
+    )
+    .await?;
+
+    Ok(ForceRecompactResponse {
+        summaries_deleted,
+        hourly_compacted: result.hourly_compacted,
+        daily_compacted: result.daily_compacted,
+        weekly_compacted: result.weekly_compacted,
+        monthly_compacted: result.monthly_compacted,
+        errors: result.errors,
+        latest_compacted_date: result.latest_compacted_date,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

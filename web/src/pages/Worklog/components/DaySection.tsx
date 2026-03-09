@@ -20,6 +20,7 @@ interface DaySectionProps {
   onSyncDay?: (date: string, weekday: string) => void
   getMappedIssueKey?: (path: string) => string
   onIssueKeyChange?: (path: string, key: string) => void
+  onRecompactProject?: (projectPath: string, date: string) => Promise<void>
 }
 
 export function DaySection({
@@ -36,6 +37,7 @@ export function DaySection({
   onSyncDay,
   getMappedIssueKey,
   onIssueKeyChange,
+  onRecompactProject,
 }: DaySectionProps) {
   const isEmpty = day.projects.length === 0 && day.manual_items.length === 0
 
@@ -108,6 +110,7 @@ export function DaySection({
                         })
                     : undefined
                 }
+                onRecompact={onRecompactProject ? () => onRecompactProject(project.project_path, day.date) : undefined}
                 mappedIssueKey={getMappedIssueKey?.(project.project_path)}
                 onIssueKeyChange={onIssueKeyChange ? (key) => onIssueKeyChange(project.project_path, key) : undefined}
               />

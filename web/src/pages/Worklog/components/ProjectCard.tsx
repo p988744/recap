@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronDown, ChevronRight, GitCommit, FileCode, Upload, RefreshCw, Link, FileText, Pencil, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, GitCommit, FileCode, Upload, RefreshCw, Link, FileText, Pencil, Trash2, RotateCcw, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { WorklogDayProject, HourlyBreakdownItem, ManualWorkItem } from '@/types/worklog'
 import type { WorklogSyncRecord, TempoSyncTarget } from '@/types'
@@ -19,6 +19,7 @@ interface ProjectCardProps {
   onSyncToTempo?: () => void
   mappedIssueKey?: string
   onIssueKeyChange?: (issueKey: string) => void
+  onRecompact?: () => Promise<void>
   // Manual project support
   manualItems?: ManualWorkItem[]
   onEditManualItem?: (id: string) => void
@@ -38,6 +39,7 @@ export function ProjectCard({
   onToggleHourly,
   syncRecord,
   onSyncToTempo,
+  onRecompact,
   mappedIssueKey,
   onIssueKeyChange,
   manualItems,
@@ -53,6 +55,7 @@ export function ProjectCard({
   const isSynced = !!syncRecord
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState('')
+  const [recompacting, setRecompacting] = useState(false)
   const displayKey = syncRecord?.jira_issue_key ?? mappedIssueKey ?? ''
 
   return (
@@ -169,21 +172,43 @@ export function ProjectCard({
           </div>
         </div>
 
-        {/* Sync button for automatic projects */}
-        {!isManualProject && onSyncToTempo && (
-          <div className="px-2 py-3">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 text-xs text-muted-foreground hover:text-foreground"
-              onClick={(e) => { e.stopPropagation(); onSyncToTempo() }}
-            >
-              {isSynced ? (
-                <><RefreshCw className="w-3 h-3 mr-1" strokeWidth={1.5} />Re-export</>
-              ) : (
-                <><Upload className="w-3 h-3 mr-1" strokeWidth={1.5} />Export</>
-              )}
-            </Button>
+        {/* Action buttons for automatic projects */}
+        {!isManualProject && (
+          <div className="flex items-center px-2 py-3 gap-1">
+            {onRecompact && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                title="重新計算摘要"
+                disabled={recompacting}
+                onClick={async (e) => {
+                  e.stopPropagation()
+                  setRecompacting(true)
+                  try { await onRecompact() } finally { setRecompacting(false) }
+                }}
+              >
+                {recompacting ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={1.5} />
+                ) : (
+                  <RotateCcw className="w-3.5 h-3.5" strokeWidth={1.5} />
+                )}
+              </Button>
+            )}
+            {onSyncToTempo && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                onClick={(e) => { e.stopPropagation(); onSyncToTempo() }}
+              >
+                {isSynced ? (
+                  <><RefreshCw className="w-3 h-3 mr-1" strokeWidth={1.5} />Re-export</>
+                ) : (
+                  <><Upload className="w-3 h-3 mr-1" strokeWidth={1.5} />Export</>
+                )}
+              </Button>
+            )}
           </div>
         )}
       </div>

@@ -125,6 +125,7 @@ pub fn run() {
             commands::snapshots::get_snapshot_detail,
             commands::snapshots::trigger_compaction,
             commands::snapshots::force_recompact,
+            commands::snapshots::recompact_project_day,
             // Worklog
             commands::snapshots::get_worklog_overview,
             commands::snapshots::get_hourly_breakdown,
