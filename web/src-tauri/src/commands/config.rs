@@ -609,9 +609,9 @@ pub async fn test_llm_connection(
     let claims = verify_token(&token).map_err(|e| e.to_string())?;
     let db = state.db.lock().await;
 
-    // Get saved LLM config from DB as fallback
-    let row: (Option<String>, Option<String>, Option<String>, Option<String>) = sqlx::query_as(
-        "SELECT llm_provider, llm_model, llm_api_key, llm_base_url FROM users WHERE id = ?"
+    // Get saved LLM config from DB as fallback (including summary settings)
+    let row: (Option<String>, Option<String>, Option<String>, Option<String>, Option<i32>, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT llm_provider, llm_model, llm_api_key, llm_base_url, summary_max_chars, summary_reasoning_effort, summary_prompt FROM users WHERE id = ?"
     )
     .bind(&claims.sub)
     .fetch_optional(&db.pool)
@@ -643,9 +643,9 @@ pub async fn test_llm_connection(
         model,
         api_key,
         base_url,
-        summary_max_chars: 2000,
-        reasoning_effort: None,
-        summary_prompt: None,
+        summary_max_chars: row.4.unwrap_or(2000) as u32,
+        reasoning_effort: row.5,
+        summary_prompt: row.6.filter(|s| !s.is_empty()),
     };
 
     // Check if configured

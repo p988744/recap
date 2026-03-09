@@ -73,8 +73,8 @@ pub struct BatchAvailabilityResponse {
 // =============================================================================
 
 async fn get_llm_config(pool: &sqlx::SqlitePool, user_id: &str) -> Result<LlmConfig, String> {
-    let row: (Option<String>, Option<String>, Option<String>, Option<String>) = sqlx::query_as(
-        "SELECT llm_provider, llm_model, llm_api_key, llm_base_url FROM users WHERE id = ?",
+    let row: (Option<String>, Option<String>, Option<String>, Option<String>, Option<i32>, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT llm_provider, llm_model, llm_api_key, llm_base_url, summary_max_chars, summary_reasoning_effort, summary_prompt FROM users WHERE id = ?",
     )
     .bind(user_id)
     .fetch_optional(pool)
@@ -87,9 +87,9 @@ async fn get_llm_config(pool: &sqlx::SqlitePool, user_id: &str) -> Result<LlmCon
         model: row.1.unwrap_or_else(|| "gpt-5-nano".to_string()),
         api_key: row.2,
         base_url: row.3,
-        summary_max_chars: 2000,
-        reasoning_effort: None,
-        summary_prompt: None,
+        summary_max_chars: row.4.unwrap_or(2000) as u32,
+        reasoning_effort: row.5,
+        summary_prompt: row.6.filter(|s| !s.is_empty()),
     })
 }
 
