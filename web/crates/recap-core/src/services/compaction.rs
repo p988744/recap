@@ -687,7 +687,7 @@ fn build_hourly_prompt(context: &Option<String>, current_data: &str) -> String {
     };
 
     format!(
-        r#"你是工作記錄助手。請根據以下工作資料，產生簡潔的工作摘要（50-100字）。
+        r#"你是工作記錄助手。請根據以下工作資料，產生詳細的工作摘要（100-300字）。
 {context_section}
 本時段的工作資料：
 {data}
@@ -696,9 +696,12 @@ fn build_hourly_prompt(context: &Option<String>, current_data: &str) -> String {
 1. 第一行是一句話的總結摘要（不要加前綴）
 2. 空一行後，用條列式列出具體細節，每個要點以「- 」開頭
 
-重點描述完成了什麼、使用什麼技術、解決什麼問題。
-若有 git commit，優先以 commit 訊息作為成果總結。
-程式碼中的檔名、函式名、變數名請用 `backtick` 包裹。
+撰寫要求：
+- 重點描述完成了什麼、使用什麼技術、解決什麼問題
+- 不要只寫「修改了 N 個檔案」或「新增 N 個參數」，要列出具體的檔名、參數名、函數名
+- 若有 git commit，優先以 commit 訊息作為成果總結，保留關鍵細節
+- 程式碼中的檔名、函式名、變數名請用 `backtick` 包裹
+- 每個要點可以包含完整描述，不限字數但要精煉
 直接輸出內容，不要加標題。"#,
         context_section = context_section,
         data = current_data.chars().take(4000).collect::<String>()

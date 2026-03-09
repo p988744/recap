@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0-beta.7] - 2026-03-09
+
+### Improved
+
+- **LLM 摘要細節大幅增加** - 用戶反映摘要只有「修改 X 新增 N 個參數」看不到具體內容：
+  - 字數上限加倍：hourly 250→500字、daily 500→1000字、weekly 1000→2000字
+  - 移除「每條 ≤ 30 字」和「3-5 個要點」限制，改為 3-8 條不限字數
+  - 要求列出具體參數名、函數名、變更內容，而非只寫數量
+  - Hourly prompt 從 50-100 字提升至 100-300 字
+
+### Fixed
+
+- **E2E 測試基礎設施** - 修正 binary path、spec pattern、ESM 相容性，E2E 標記為 non-blocking (continue-on-error)
+
 ## [2.2.0-beta.6] - 2026-03-04
 
 ### Fixed

@@ -432,12 +432,12 @@ Git Commits:
         // Scale output proportionally: hourly is brief, monthly uses the full budget.
         // Chinese ≈ 1.5 tokens/char, so multiply char target by 2 for token budget.
         let (char_limit, input_max_chars) = match scale {
-            "hourly"  => (base / 8,      4000_u32),   // base=2000 → 250字
-            "daily"   => (base / 4,      6000),       // base=2000 → 500字
-            "weekly"  => (base / 2,      8000),       // base=2000 → 1000字
-            "monthly" => (base * 3 / 4, 10000),       // base=2000 → 1500字
-            "yearly"  => (base,         12000),       // base=2000 → 2000字
-            _         => (base / 4,      6000),
+            "hourly"  => (base / 4,      6000_u32),   // base=2000 → 500字
+            "daily"   => (base / 2,      8000),       // base=2000 → 1000字
+            "weekly"  => (base,          10000),      // base=2000 → 2000字
+            "monthly" => (base * 3 / 2,  12000),      // base=2000 → 3000字
+            "yearly"  => (base * 2,      15000),      // base=2000 → 4000字
+            _         => (base / 2,      8000),
         };
         let length_hint = format!("{}字以內", char_limit);
         let output_max_tokens = char_limit * 2; // 1 Chinese char ≈ 1.5-2 tokens
@@ -476,14 +476,16 @@ Git Commits:
 
 撰寫風格：
 - 每一條都必須包含「具體物件」：檔案名、函數名、API 路徑、模組名、數字
-- 格式：動詞 + 具體物件 + 結果/數量（如：修正 `tempo.rs` auth type 寫死問題、新增 1,447 筆繁體技能翻譯）
-- 合併同類工作，不要逐項列舉每個小改動
-- 若有 git commit，以 commit 訊息歸納成果
+- 格式：動詞 + 具體物件 + 具體變更內容（如：修正 `tempo.rs` auth type 從 hardcode 改為讀取 config；在 `queries.py` 新增 embedding、similarity、clustering 三種查詢模板）
+- 不要只寫「新增 N 個參數」，要列出參數名或說明用途
+- 若有 git commit，以 commit 訊息歸納成果，保留關鍵細節
 - 程式碼名稱用 `backtick` 包裹
+- 相關的小改動可以合併成一條，但要保留具體內容
 
 格式：
-- 直接列出 3-5 個要點（以「- 」開頭），不要寫開頭總結段落
-- 每條 ≤ 30 字，寧短勿長
+- 直接列出要點（以「- 」開頭），不要寫開頭總結段落
+- 每條可包含完整描述，不限字數，但要精煉不囉嗦
+- 要點數量視工作量而定，通常 3-8 條
 
 直接輸出摘要。"#,
                 length_hint = length_hint,
